@@ -1,10 +1,9 @@
 use std::{
-    mem::ManuallyDrop,
     rc::Rc,
     task::{RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::task::Task;
+use crate::runtime::task::Task;
 
 pub fn waker(task: Rc<Task>) -> Waker {
     let raw = Rc::into_raw(task).cast::<()>();
@@ -20,7 +19,8 @@ impl WakerHelper {
 
     unsafe fn clone(ptr: *const ()) -> RawWaker {
         let rc = Rc::from_raw(ptr.cast::<Task>());
-        std::mem::forget(Rc::clone(&rc));
+        std::mem::forget(rc.clone());
+        std::mem::forget(rc);
         RawWaker::new(ptr, &Self::VTABLE)
     }
 
@@ -30,8 +30,9 @@ impl WakerHelper {
     }
 
     unsafe fn wake_by_ref(ptr: *const ()) {
-        let rc = ManuallyDrop::new(Rc::from_raw(ptr.cast::<Task>()));
+        let rc = Rc::from_raw(ptr.cast::<Task>());
         rc.schedule();
+        std::mem::forget(rc);
     }
 
     unsafe fn drop(ptr: *const ()) {

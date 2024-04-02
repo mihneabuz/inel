@@ -1,27 +1,15 @@
-pub(crate) mod executor;
 pub(crate) mod reactor;
-pub(crate) mod task;
-pub(crate) mod waker;
+pub(crate) mod runtime;
 
 pub mod io;
 pub mod net;
 
-use std::future::Future;
+pub use runtime::{
+    executor::{block_on, run, spawn},
+    join::JoinHandle,
+};
 
-pub fn block_on<F>(future: F) -> F::Output
-where
-    F: Future + 'static,
-{
-    executor::EXECUTOR.with_borrow(|executor| executor.block_on(future))
-}
-
-pub fn spawn<F>(future: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    executor::EXECUTOR.with_borrow(|executor| executor.spawn(future))
-}
-
-pub fn run() {
-    executor::EXECUTOR.with_borrow(|executor| executor.run())
-}
+pub use reactor::{
+    read::{AsyncRingRead, RingRead},
+    write::{AsyncRingWrite, RingWrite},
+};

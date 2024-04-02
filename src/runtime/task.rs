@@ -1,13 +1,23 @@
-use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
+use std::{
+    cell::RefCell,
+    future::Future,
+    pin::Pin,
+    rc::Rc,
+    task::{Context, Poll},
+};
 
 use flume::{Receiver, Sender};
 
 pub struct Task {
-    pub future: RefCell<Pin<Box<dyn Future<Output = ()>>>>,
-    pub queue: Sender<Rc<Task>>,
+    future: RefCell<Pin<Box<dyn Future<Output = ()>>>>,
+    queue: Sender<Rc<Task>>,
 }
 
 impl Task {
+    pub fn poll(&self, cx: &mut Context) -> Poll<()> {
+        self.future.borrow_mut().as_mut().poll(cx)
+    }
+
     pub fn schedule(self: &Rc<Self>) {
         self.queue.send(Rc::clone(self)).unwrap()
     }
@@ -16,7 +26,6 @@ impl Task {
 pub struct TaskQueue {
     sender: Sender<Rc<Task>>,
     receiver: Receiver<Rc<Task>>,
-    tasks: RefCell<Vec<Rc<Task>>>,
 }
 
 impl Default for TaskQueue {
@@ -28,15 +37,7 @@ impl Default for TaskQueue {
 impl TaskQueue {
     pub fn new() -> Self {
         let (sender, receiver) = flume::unbounded();
-        Self {
-            sender,
-            receiver,
-            tasks: RefCell::new(Vec::new()),
-        }
-    }
-
-    pub fn collect(&self) {
-        self.tasks.borrow_mut().extend(self.receiver.try_iter());
+        Self { sender, receiver }
     }
 
     pub fn schedule<F>(&self, future: F)
@@ -52,14 +53,10 @@ impl TaskQueue {
     }
 
     pub fn pop(&self) -> Option<Rc<Task>> {
-        self.tasks.borrow_mut().pop()
+        self.receiver.try_recv().ok()
     }
 
-    pub fn len(&self) -> usize {
-        self.tasks.borrow().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tasks.borrow().is_empty()
+    pub fn is_done(&self) -> bool {
+        self.receiver.is_empty()
     }
 }
