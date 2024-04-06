@@ -1,11 +1,11 @@
 use futures::{SinkExt, StreamExt};
-use tracing_subscriber::EnvFilter;
+use tracing::level_filters::LevelFilter;
 
 use inel::{AsyncRingRead, AsyncRingWrite};
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_max_level(LevelFilter::INFO)
         .init();
 
     inel::block_on(async {
@@ -15,12 +15,13 @@ fn main() {
             let mut stdin = std::io::stdin();
             let mut buf = vec![0u8; 1024];
 
-            while let Ok((read, len)) = stdin.ring_read(buf).await {
-                if len <= 1 {
+            loop {
+                let (read, len) = stdin.ring_read(buf).await;
+                if !len.as_ref().is_ok_and(|len| *len > 1) {
                     break;
                 }
 
-                let line = String::from_utf8_lossy(&read[0..len]).to_string();
+                let line = String::from_utf8_lossy(&read[0..len.unwrap()]).to_string();
 
                 sender.send(line).await.unwrap();
 
@@ -33,7 +34,8 @@ fn main() {
 
             while let Some(line) = receiver.next().await {
                 let message = format!("Echo: {line}");
-                stdout.ring_write(message.into()).await.unwrap();
+                let (_, len) = stdout.ring_write(message.into()).await;
+                len.unwrap();
             }
         });
     });

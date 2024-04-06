@@ -156,9 +156,10 @@ where
         let mut len = std::mem::size_of::<libc::sockaddr_in6>() as u32;
         let ptr = (&mut this.addr) as *mut libc::sockaddr_in6;
 
-        let sock = ready!(this
-            .ring
-            .accept(cx, fd, ptr.cast::<libc::sockaddr>(), &mut len))?;
+        let sock = ready!(unsafe {
+            this.ring
+                .accept(cx, fd, ptr.cast::<libc::sockaddr>(), &mut len)
+        })?;
 
         let addr = match this.addr.sin6_family as i32 {
             libc::AF_INET => {
@@ -248,7 +249,7 @@ impl Future for Connect {
         let ptr = ptr_in6.cast::<libc::sockaddr>();
         let len = this.len;
 
-        let ret = ready!(this.ring.connect(cx, sock, ptr, len))?;
+        let ret = ready!(unsafe { this.ring.connect(cx, sock, ptr, len) })?;
 
         assert_eq!(ret, 0);
 

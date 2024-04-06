@@ -177,6 +177,7 @@ dependencies = [
  "io-uring",
  "libc",
  "oneshot",
+ "pin-project-lite",
  "rand",
  "tracing",
  "tracing-subscriber",

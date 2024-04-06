@@ -12,5 +12,5 @@ pub use runtime::{
 
 pub use reactor::{
     read::{AsyncRingRead, RingRead},
-    write::{AsyncRingWrite, RingWrite},
+    write::{AsyncRingWrite, AsyncRingWriteExt, RingWrite},
 };

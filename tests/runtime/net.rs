@@ -36,15 +36,17 @@ fn listener() {
         debug!(?peer, "Received connection");
 
         let buf = vec![0u8; 128];
-        let (mut buf, len) = stream.ring_read(buf).await?;
+        let (mut buf, len) = stream.ring_read(buf).await;
 
-        let s = String::from_utf8_lossy(&buf[0..len]).to_string();
+        let s = String::from_utf8_lossy(&buf[0..len?]).to_string();
         assert_eq!(&s, MESSAGE);
 
         buf.truncate(MESSAGE.len());
         buf.copy_from_slice(MESSAGE.as_bytes());
 
-        stream.ring_write(buf).await?;
+        let (_, len) = stream.ring_write(buf).await;
+        assert!(len.is_ok());
+        assert_eq!(len.unwrap(), MESSAGE.len());
 
         Ok(())
     });
@@ -83,12 +85,14 @@ fn stream() {
         let mut stream = inel::net::TcpStream::connect(("127.0.0.1", port)).await?;
 
         let buf = MESSAGE.as_bytes().to_vec();
-        stream.ring_write(buf).await?;
+        let (_, len) = stream.ring_write(buf).await;
+        assert!(len.is_ok());
+        assert_eq!(len.unwrap(), MESSAGE.len());
 
         let buf = vec![0u8; 128];
-        let (buf, len) = stream.ring_read(buf).await?;
+        let (buf, len) = stream.ring_read(buf).await;
 
-        let s = String::from_utf8_lossy(&buf[0..len]).to_string();
+        let s = String::from_utf8_lossy(&buf[0..len?]).to_string();
 
         assert_eq!(&s, MESSAGE);
 
@@ -116,15 +120,17 @@ fn both() {
         debug!(?peer, "Received connection");
 
         let buf = vec![0u8; 128];
-        let (mut buf, len) = stream.ring_read(buf).await?;
+        let (mut buf, len) = stream.ring_read(buf).await;
 
-        let s = String::from_utf8_lossy(&buf[0..len]).to_string();
+        let s = String::from_utf8_lossy(&buf[0..len?]).to_string();
         assert_eq!(&s, MESSAGE);
 
         buf.truncate(MESSAGE.len());
         buf.copy_from_slice(MESSAGE.as_bytes());
 
-        stream.ring_write(buf).await?;
+        let (_, len) = stream.ring_write(buf).await;
+        assert!(len.is_ok());
+        assert_eq!(len.unwrap(), MESSAGE.len());
 
         Ok::<(), Error>(())
     });
@@ -133,12 +139,14 @@ fn both() {
         let mut stream = inel::net::TcpStream::connect(("127.0.0.1", port)).await?;
 
         let buf = MESSAGE.as_bytes().to_vec();
-        stream.ring_write(buf).await?;
+        let (_, len) = stream.ring_write(buf).await;
+        assert!(len.is_ok());
+        assert_eq!(len.unwrap(), MESSAGE.len());
 
         let buf = vec![0u8; 128];
-        let (buf, len) = stream.ring_read(buf).await?;
+        let (buf, len) = stream.ring_read(buf).await;
 
-        let s = String::from_utf8_lossy(&buf[0..len]).to_string();
+        let s = String::from_utf8_lossy(&buf[0..len?]).to_string();
 
         assert_eq!(&s, MESSAGE);
 

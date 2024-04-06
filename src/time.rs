@@ -1,6 +1,6 @@
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
     time::Duration,
 };
 
@@ -50,7 +50,7 @@ impl Future for Timeout {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        this.ring.timeout(cx, &this.time).map(|_| ())
+        unsafe { this.ring.timeout(cx, &this.time) }
     }
 }
 
@@ -79,6 +79,7 @@ impl Stream for Interval {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        this.ring.timeout(cx, &this.time).map(|_| Some(()))
+        ready!(unsafe { this.ring.timeout(cx, &this.time) });
+        Poll::Ready(Some(()))
     }
 }

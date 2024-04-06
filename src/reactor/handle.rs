@@ -39,10 +39,9 @@ where
 }
 
 impl RingHandle {
-    pub fn submit<E, T>(&mut self, cx: &mut Context, entry: E) -> Poll<Result<T>>
+    pub fn submit<E>(&mut self, cx: &mut Context, entry: E) -> Poll<i32>
     where
         E: FnOnce() -> Entry,
-        T: TryFrom<i32>,
     {
         if self.inner.is_none() {
             let (sender, receiver) = oneshot::channel();
@@ -55,7 +54,7 @@ impl RingHandle {
         match self.inner.as_ref().unwrap().0.try_recv() {
             Ok(ret) => {
                 self.inner.take();
-                Poll::Ready(from_ret(ret))
+                Poll::Ready(ret)
             }
             Err(_) => Poll::Pending,
         }
@@ -71,31 +70,42 @@ impl RingHandle {
         }
     }
 
-    pub fn read(&mut self, cx: &mut Context, fd: RawFd, buf: &mut [u8]) -> Poll<Result<usize>> {
+    // buf must live until the RingHandle is dropped
+    pub unsafe fn read(
+        &mut self,
+        cx: &mut Context,
+        fd: RawFd,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize>> {
         let read = || opcode::Read::new(types::Fd(fd), buf.as_mut_ptr(), buf.len() as _).build();
 
-        self.submit(cx, read)
+        self.submit(cx, read).map(from_ret)
     }
 
-    pub fn write(&mut self, cx: &mut Context, fd: RawFd, buf: &[u8]) -> Poll<Result<usize>> {
+    // buf must live until the RingHandle is dropped
+    pub unsafe fn write(&mut self, cx: &mut Context, fd: RawFd, buf: &[u8]) -> Poll<Result<usize>> {
         let read = || opcode::Write::new(types::Fd(fd), buf.as_ptr(), buf.len() as _).build();
 
-        self.submit(cx, read)
+        self.submit(cx, read).map(from_ret)
     }
 
-    pub fn timeout(&mut self, cx: &mut Context, time: *const Timespec) -> Poll<Result<i32>> {
+    // time must live until the RingHandle is dropped
+    pub unsafe fn timeout(&mut self, cx: &mut Context, time: *const Timespec) -> Poll<()> {
         let timeout = || opcode::Timeout::new(time).build();
 
-        self.submit(cx, timeout)
+        self.submit(cx, timeout).map(|ret| {
+            assert_eq!(ret, -libc::ETIME);
+        })
     }
 
     pub fn socket(&mut self, cx: &mut Context, domain: i32, stype: i32) -> Poll<Result<RawFd>> {
         let socket = || opcode::Socket::new(domain, stype, 0).build();
 
-        self.submit(cx, socket)
+        self.submit(cx, socket).map(from_ret)
     }
 
-    pub fn accept(
+    // sockaddr and socklen must live until the RingHandle is dropped
+    pub unsafe fn accept(
         &mut self,
         cx: &mut Context,
         fd: i32,
@@ -104,10 +114,11 @@ impl RingHandle {
     ) -> Poll<Result<i32>> {
         let socket = || opcode::Accept::new(types::Fd(fd), sockaddr, socklen).build();
 
-        self.submit(cx, socket)
+        self.submit(cx, socket).map(from_ret)
     }
 
-    pub fn connect(
+    // sockaddr and socklen must live until the RingHandle is dropped
+    pub unsafe fn connect(
         &mut self,
         cx: &mut Context,
         fd: i32,
@@ -116,7 +127,7 @@ impl RingHandle {
     ) -> Poll<Result<i32>> {
         let socket = || opcode::Connect::new(types::Fd(fd), sockaddr, socklen).build();
 
-        self.submit(cx, socket)
+        self.submit(cx, socket).map(from_ret)
     }
 }
 
