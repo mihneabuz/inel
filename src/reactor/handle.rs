@@ -4,7 +4,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use io_uring::{opcode, squeue::Entry, types};
+use io_uring::{
+    opcode,
+    squeue::Entry,
+    types::{self, Timespec},
+};
 use oneshot::Receiver;
 use tracing::warn;
 
@@ -77,6 +81,12 @@ impl RingHandle {
         let read = || opcode::Write::new(types::Fd(fd), buf.as_ptr(), buf.len() as _).build();
 
         self.submit(cx, read)
+    }
+
+    pub fn timeout(&mut self, cx: &mut Context, time: *const Timespec) -> Poll<Result<i32>> {
+        let timeout = || opcode::Timeout::new(time).build();
+
+        self.submit(cx, timeout)
     }
 
     pub fn socket(&mut self, cx: &mut Context, domain: i32, stype: i32) -> Poll<Result<RawFd>> {

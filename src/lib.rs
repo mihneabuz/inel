@@ -3,6 +3,7 @@ pub(crate) mod runtime;
 
 pub mod io;
 pub mod net;
+pub mod time;
 
 pub use runtime::{
     executor::{block_on, run, spawn},
