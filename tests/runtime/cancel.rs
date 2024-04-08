@@ -58,3 +58,22 @@ fn sleep() {
 
     assert_eq!(x, 10);
 }
+
+#[test]
+fn timeout() {
+    setup_tracing();
+
+    let x = inel::block_on(async move {
+        select! {
+            _ = std::io::stdin().ring_read(vec![0; 256]).fuse() => {
+                2
+            },
+
+            _ = inel::time::sleep(Duration::from_millis(20)).fuse() => {
+                10
+            }
+        }
+    });
+
+    assert_eq!(x, 10);
+}

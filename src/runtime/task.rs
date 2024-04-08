@@ -52,8 +52,11 @@ impl TaskQueue {
         self.sender.send(Rc::new(task)).unwrap();
     }
 
-    pub fn pop(&self) -> Option<Rc<Task>> {
-        self.receiver.try_recv().ok()
+    pub fn drain(&self) -> impl Iterator<Item = Rc<Task>> + '_ {
+        self.receiver
+            .recv()
+            .into_iter()
+            .chain(self.receiver.try_iter())
     }
 
     pub fn is_done(&self) -> bool {

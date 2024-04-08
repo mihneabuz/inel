@@ -65,7 +65,7 @@ impl Executor {
     fn run(&self) {
         while !self.queue.is_done() {
             debug!("Executing tasks");
-            while let Some(task) = self.queue.pop() {
+            for task in self.queue.drain() {
                 let waker = waker(task.clone());
                 let mut cx = Context::from_waker(&waker);
                 let _ = task.poll(&mut cx);

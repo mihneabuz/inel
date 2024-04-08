@@ -174,26 +174,3 @@ fn channel_join() {
 
     assert_eq!(total, 10);
 }
-
-#[test]
-#[should_panic]
-fn channel_deadlock() {
-    setup_tracing();
-
-    // let (mut sender, mut receiver) = futures::channel::mpsc::channel(5);
-    // inel::block_on(async move {
-    //     let sender_handle = inel::spawn(async move {
-    //         for i in 0..10 {
-    //             sender.send(i).await.unwrap();
-    //         }
-    //     });
-    //
-    //     sender_handle.join().await;
-    //
-    //     while let Some(value) = receiver.next().await {
-    //         let _ = value;
-    //     }
-    //
-    //     unreachable!();
-    // });
-}
