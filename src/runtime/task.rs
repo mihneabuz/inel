@@ -57,6 +57,6 @@ impl TaskQueue {
     }
 
     pub fn is_done(&self) -> bool {
-        self.receiver.is_empty()
+        self.receiver.sender_count() == 1
     }
 }

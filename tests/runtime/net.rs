@@ -10,14 +10,10 @@ fn listener() {
     setup_tracing();
 
     const MESSAGE: &str = "hello world!";
-
-    let mut port: u16 = 0;
-    while port < 2000 {
-        port = rand::random();
-    }
+    let (port_sender, port_receiver) = oneshot::channel();
 
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        let port = port_receiver.recv().unwrap();
         let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
 
         debug!(to =? stream.local_addr(), "Connected");
@@ -30,7 +26,11 @@ fn listener() {
     });
 
     let res: Result<()> = inel::block_on(async move {
-        let listener = inel::net::TcpListener::bind(("127.0.0.1", port)).await?;
+        let listener = inel::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        port_sender
+            .send(listener.local_addr().unwrap().port())
+            .unwrap();
+
         let (mut stream, peer) = listener.accept().await?;
 
         debug!(?peer, "Received connection");
@@ -59,14 +59,14 @@ fn stream() {
     setup_tracing();
 
     const MESSAGE: &str = "hello world!";
-
-    let mut port: u16 = 0;
-    while port < 2000 {
-        port = rand::random();
-    }
+    let (port_sender, port_receiver) = futures::channel::oneshot::channel();
 
     std::thread::spawn(move || {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        port_sender
+            .send(listener.local_addr().unwrap().port())
+            .unwrap();
+
         let (mut stream, peer) = listener.accept().unwrap();
 
         debug!(?peer, "Received connection");
@@ -82,6 +82,7 @@ fn stream() {
     });
 
     let res: Result<()> = inel::block_on(async move {
+        let port = port_receiver.await.unwrap();
         let mut stream = inel::net::TcpStream::connect(("127.0.0.1", port)).await?;
 
         let buf = MESSAGE.as_bytes().to_vec();
@@ -99,6 +100,8 @@ fn stream() {
         Ok(())
     });
 
+    debug!(?res);
+
     assert!(res.is_ok());
 }
 
@@ -107,14 +110,14 @@ fn both() {
     setup_tracing();
 
     const MESSAGE: &str = "hello world!";
-
-    let mut port: u16 = 0;
-    while port < 2000 {
-        port = rand::random();
-    }
+    let (port_sender, port_receiver) = futures::channel::oneshot::channel();
 
     inel::spawn(async move {
-        let listener = inel::net::TcpListener::bind(("127.0.0.1", port)).await?;
+        let listener = inel::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        port_sender
+            .send(listener.local_addr().unwrap().port())
+            .unwrap();
+
         let (mut stream, peer) = listener.accept().await?;
 
         debug!(?peer, "Received connection");
@@ -136,6 +139,7 @@ fn both() {
     });
 
     inel::spawn(async move {
+        let port = port_receiver.await.unwrap();
         let mut stream = inel::net::TcpStream::connect(("127.0.0.1", port)).await?;
 
         let buf = MESSAGE.as_bytes().to_vec();

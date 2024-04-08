@@ -1,10 +1,13 @@
-use std::task::{Context, Waker};
+use std::{
+    cmp::min,
+    task::{Context, Waker},
+};
 
 use io_uring::{opcode, squeue::Entry, IoUring};
 use oneshot::Sender;
 use tracing::debug;
 
-const CANCEL_KEY: u64 = 420;
+const CANCEL: u64 = 420;
 
 struct CompletionNotifier {
     waker: Waker,
@@ -31,7 +34,7 @@ impl CancelHandle {
 }
 
 pub struct Reactor {
-    active: u64,
+    active: usize,
     ring: IoUring,
     cancel_sender: flume::Sender<u64>,
     cancel_receiver: flume::Receiver<u64>,
@@ -74,45 +77,36 @@ impl Reactor {
     }
 
     pub fn wait(&mut self) {
-        let canceled = self.recv_cancels();
-
-        if self.active - canceled == 0 {
+        if self.active == 0 {
             return;
         }
 
-        self.ring
-            .submit_and_wait(canceled as usize * 2 + 1)
-            .unwrap();
+        let canceled = self.recv_cancels();
+        let count = min(2 * canceled + 1, canceled + self.active);
+        self.ring.submit_and_wait(count).unwrap();
 
-        for entry in self.ring.completion() {
+        for entry in self.ring.completion().filter(|e| e.user_data() != CANCEL) {
             debug!(?entry, "Ring completion");
-
-            if entry.user_data() == CANCEL_KEY {
-                continue;
-            }
-
-            self.active -= 1;
 
             let (key, result) = (entry.user_data(), entry.result());
             let completion = unsafe { Box::from_raw(key as *mut CompletionNotifier) };
             completion.notify(result);
+
+            self.active -= 1;
         }
     }
 
-    fn recv_cancels(&mut self) -> u64 {
-        let mut count = 0;
+    fn recv_cancels(&mut self) -> usize {
+        self.cancel_receiver
+            .try_iter()
+            .map(|key| {
+                debug!(?key, "Cancel");
 
-        while let Ok(key) = self.cancel_receiver.try_recv() {
-            debug!(?key, "Cancel");
-
-            let cancel = opcode::AsyncCancel::new(key).build().user_data(CANCEL_KEY);
-            unsafe {
-                self.ring.submission().push(&cancel).unwrap();
-            }
-
-            count += 1;
-        }
-
-        count
+                let cancel = opcode::AsyncCancel::new(key).build().user_data(CANCEL);
+                unsafe {
+                    self.ring.submission().push(&cancel).unwrap();
+                }
+            })
+            .count()
     }
 }
