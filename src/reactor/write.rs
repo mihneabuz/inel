@@ -10,15 +10,20 @@ use futures::Future;
 use crate::reactor::handle::RingHandle;
 
 pub trait AsyncRingWrite {
-    fn ring_write(&mut self, buf: Vec<u8>) -> RingWrite;
-    fn ring_write_at(&mut self, buf: Vec<u8>, start: usize) -> RingWrite;
+    fn ring_write<Buf>(&mut self, buf: Buf) -> RingWrite<Buf>
+    where
+        Buf: AsRef<[u8]>;
+
+    fn ring_write_at<Buf>(&mut self, buf: Buf, start: usize) -> RingWrite<Buf>
+    where
+        Buf: AsRef<[u8]>;
 }
 
 impl<T> AsyncRingWrite for T
 where
     T: AsRawFd,
 {
-    fn ring_write(&mut self, buf: Vec<u8>) -> RingWrite {
+    fn ring_write<Buf>(&mut self, buf: Buf) -> RingWrite<Buf> {
         RingWrite {
             fd: self.as_raw_fd(),
             buf: Some(buf),
@@ -27,7 +32,7 @@ where
         }
     }
 
-    fn ring_write_at(&mut self, buf: Vec<u8>, start: usize) -> RingWrite {
+    fn ring_write_at<Buf>(&mut self, buf: Buf, start: usize) -> RingWrite<Buf> {
         RingWrite {
             fd: self.as_raw_fd(),
             buf: Some(buf),
@@ -37,19 +42,22 @@ where
     }
 }
 
-pub struct RingWrite {
+pub struct RingWrite<Buf> {
     fd: RawFd,
-    buf: Option<Vec<u8>>,
+    buf: Option<Buf>,
     start: usize,
     ring: RingHandle,
 }
 
-impl Future for RingWrite {
-    type Output = (Vec<u8>, Result<usize>);
+impl<Buf> Future for RingWrite<Buf>
+where
+    Buf: AsRef<[u8]> + Unpin,
+{
+    type Output = (Buf, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let buf = &this.buf.as_mut().unwrap()[this.start..];
+        let buf = this.buf.as_mut().unwrap().as_ref()[this.start..];
         let len = ready!(unsafe { this.ring.write(cx, this.fd, buf) });
         Poll::Ready((this.buf.take().unwrap(), len))
     }

@@ -1,7 +1,4 @@
-use std::{
-    cmp::min,
-    task::{Context, Waker},
-};
+use std::task::{Context, Waker};
 
 use io_uring::{opcode, squeue::Entry, IoUring};
 use oneshot::Sender;
@@ -81,9 +78,8 @@ impl Reactor {
             return;
         }
 
-        let canceled = self.recv_cancels();
-        let count = min(2 * canceled + 1, canceled + self.active);
-        self.ring.submit_and_wait(count).unwrap();
+        self.recv_cancels();
+        self.ring.submit_and_wait(1).unwrap();
 
         for entry in self.ring.completion().filter(|e| e.user_data() != CANCEL) {
             debug!(?entry, "Ring completion");

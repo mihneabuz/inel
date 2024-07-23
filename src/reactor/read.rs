@@ -11,15 +11,20 @@ use pin_project_lite::pin_project;
 use crate::reactor::handle::RingHandle;
 
 pub trait AsyncRingRead {
-    fn ring_read(&mut self, buf: Vec<u8>) -> RingRead;
-    fn ring_read_at(&mut self, buf: Vec<u8>, start: usize) -> RingRead;
+    fn ring_read<Buf>(&mut self, buf: Buf) -> RingRead<Buf>
+    where
+        Buf: AsMut<[u8]>;
+
+    fn ring_read_at<Buf>(&mut self, buf: Buf, start: usize) -> RingRead<Buf>
+    where
+        Buf: AsMut<[u8]>;
 }
 
 impl<T> AsyncRingRead for T
 where
     T: AsRawFd,
 {
-    fn ring_read(&mut self, buf: Vec<u8>) -> RingRead {
+    fn ring_read<Buf>(&mut self, buf: Buf) -> RingRead<Buf> {
         RingRead {
             fd: self.as_raw_fd(),
             buf: Some(buf),
@@ -28,7 +33,7 @@ where
         }
     }
 
-    fn ring_read_at(&mut self, buf: Vec<u8>, start: usize) -> RingRead {
+    fn ring_read_at<Buf>(&mut self, buf: Buf, start: usize) -> RingRead<Buf> {
         RingRead {
             fd: self.as_raw_fd(),
             buf: Some(buf),
@@ -38,19 +43,22 @@ where
     }
 }
 
-pub struct RingRead {
+pub struct RingRead<Buf> {
     fd: RawFd,
-    buf: Option<Vec<u8>>,
+    buf: Option<Buf>,
     start: usize,
     ring: RingHandle,
 }
 
-impl Future for RingRead {
-    type Output = (Vec<u8>, Result<usize>);
+impl<Buf> Future for RingRead<Buf>
+where
+    Buf: AsMut<[u8]> + Unpin,
+{
+    type Output = (Buf, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let buf = &mut this.buf.as_mut().unwrap()[this.start..];
+        let buf = &mut this.buf.as_mut().unwrap().as_mut()[this.start..];
         let len = ready!(unsafe { this.ring.read(cx, this.fd, buf) });
         Poll::Ready((this.buf.take().unwrap(), len))
     }
@@ -76,6 +84,16 @@ where
             inner,
             ring: RingHandle::default(),
             buf: vec![0u8; 4096],
+            pos: 0,
+            cap: 0,
+        }
+    }
+
+    pub fn with_buf_size(buf_size: usize, inner: T) -> Self {
+        Self {
+            inner,
+            ring: RingHandle::default(),
+            buf: vec![0u8; buf_size],
             pos: 0,
             cap: 0,
         }

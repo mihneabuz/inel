@@ -1,3 +1,4 @@
+pub mod buffer;
 pub mod handle;
 pub mod read;
 pub mod ring;
