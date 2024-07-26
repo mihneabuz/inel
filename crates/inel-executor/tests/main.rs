@@ -6,7 +6,9 @@ use inel_executor::Executor;
 static TRACING: Once = Once::new();
 pub fn setup_tracing() {
     TRACING.call_once(|| {
-        tracing_subscriber::fmt().init();
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
     });
 }
 

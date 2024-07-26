@@ -3,6 +3,7 @@ resolver = "2"
 
 members = [
   "crates/inel",
+  "crates/inel-interface",
   "crates/inel-executor",
   "crates/inel-reactor",
 ]
@@ -15,3 +16,4 @@ libc = "0.2"
 oneshot = "0.1"
 tracing = "0.1"
 pin-project-lite = "0.2"
+slab = "0.4"

@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+inel-interface = { path = "../inel-interface" }
 flume = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tracing-subscriber = "0.3.18"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }

@@ -2,3 +2,15 @@
 name = "inel-reactor"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+inel-interface = { path = "../inel-interface" }
+io-uring = { workspace = true }
+futures = { workspace = true }
+libc = { workspace = true }
+tracing = { workspace = true }
+pin-project-lite = { workspace = true }
+slab = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }

@@ -5,6 +5,7 @@ mod waker;
 use std::{future::Future, task::Context};
 
 use futures::channel::oneshot;
+use inel_interface::{NopReactor, Reactor};
 use tracing::debug;
 
 pub use join::JoinHandle;
@@ -45,17 +46,17 @@ impl Executor {
     where
         F: Future + 'static,
     {
-        self.block_on_with_wait(future, || {})
+        self.block_on_with_reactor(NopReactor, future)
     }
 
-    pub fn block_on_with_wait<F, W>(&self, future: F, wait: W) -> F::Output
+    pub fn block_on_with_reactor<R, F>(&self, reactor: R, future: F) -> F::Output
     where
         F: Future + 'static,
-        W: Fn(),
+        R: Reactor,
     {
         let mut handle = self.spawn(future);
 
-        self.run_with_wait(wait);
+        self.run_with_reactor(reactor);
 
         handle
             .try_join()
@@ -63,12 +64,12 @@ impl Executor {
     }
 
     pub fn run(&self) {
-        self.run_with_wait(|| {})
+        self.run_with_reactor(NopReactor)
     }
 
-    pub fn run_with_wait<W>(&self, wait: W)
+    pub fn run_with_reactor<R>(&self, reactor: R)
     where
-        W: Fn(),
+        R: Reactor,
     {
         while !self.queue.is_done() {
             debug!("Executing tasks");
@@ -79,6 +80,6 @@ impl Executor {
             }
         }
 
-        (wait)();
+        reactor.wait();
     }
 }
