@@ -3,7 +3,7 @@ use std::{
     task::{RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::runtime::task::Task;
+use crate::task::Task;
 
 pub fn waker(task: Rc<Task>) -> Waker {
     let raw = Rc::into_raw(task).cast::<()>();

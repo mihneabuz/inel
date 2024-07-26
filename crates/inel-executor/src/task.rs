@@ -28,12 +28,6 @@ pub struct TaskQueue {
     receiver: Receiver<Rc<Task>>,
 }
 
-impl Default for TaskQueue {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TaskQueue {
     pub fn new() -> Self {
         let (sender, receiver) = flume::unbounded();
