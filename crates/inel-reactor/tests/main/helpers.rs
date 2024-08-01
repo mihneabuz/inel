@@ -2,6 +2,8 @@ use futures::task::{self, ArcWake};
 use inel_reactor::Ring;
 use std::{
     cell::RefCell,
+    fs::{self, File},
+    os::fd::{AsRawFd, RawFd},
     rc::Rc,
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -98,4 +100,55 @@ pub fn runtime() -> (ScopedReactor, WakeNotifier) {
     let notifier = WakeNotifier::new();
 
     (reactor, notifier)
+}
+
+macro_rules! poll {
+    ($fut:expr, $notifier:expr) => {{
+        let waker = $notifier.waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        std::future::Future::poll($fut.as_mut(), &mut context)
+    }};
+}
+
+pub(crate) use poll;
+
+pub struct TempFile {
+    name: String,
+    inner: Option<File>,
+}
+
+impl TempFile {
+    pub fn empty() -> Self {
+        let name = format!("/tmp/inel_reactor_test_{}", uuid::Uuid::new_v4());
+        let file = File::create_new(&name).unwrap();
+        Self {
+            name,
+            inner: Some(file),
+        }
+    }
+
+    pub fn fd(&self) -> RawFd {
+        self.inner.as_ref().unwrap().as_raw_fd()
+    }
+
+    pub fn with_content(content: impl AsRef<str>) -> Self {
+        let mut file = Self::empty();
+        file.write(content);
+        file
+    }
+
+    pub fn write(&mut self, content: impl AsRef<str>) {
+        fs::write(&self.name, content.as_ref()).unwrap()
+    }
+
+    pub fn read(&mut self) -> String {
+        fs::read_to_string(&self.name).unwrap()
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = self.inner.take();
+        fs::remove_file(&self.name).unwrap();
+    }
 }

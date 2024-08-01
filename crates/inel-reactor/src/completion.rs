@@ -47,6 +47,12 @@ impl<T> From<Box<[T]>> for Cancellation {
     }
 }
 
+impl<T> From<Vec<T>> for Cancellation {
+    fn from(value: Vec<T>) -> Self {
+        Cancellation::from(value.into_boxed_slice())
+    }
+}
+
 enum CompletionInner {
     Active(Waker),
     Finished(i32),
