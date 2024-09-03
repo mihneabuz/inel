@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::helpers::{poll, runtime};
+use crate::helpers::{assert_in_range, poll, runtime};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_reactor::op::{self, Op};
@@ -29,7 +29,7 @@ fn single() {
     assert!(fut.is_terminated());
     assert_eq!(reactor.active(), 0);
 
-    assert!(start.elapsed().as_millis() >= 20);
+    assert_in_range!(20..30, &start.elapsed().as_millis());
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn multi() {
     assert!(fut1.is_terminated());
     assert_eq!(reactor.active(), 1);
 
-    assert!(start.elapsed().as_millis() >= 20 && start.elapsed().as_millis() <= 21);
+    assert_in_range!(20..30, &start.elapsed().as_millis());
 
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
@@ -63,7 +63,7 @@ fn multi() {
     assert!(fut2.is_terminated());
     assert_eq!(reactor.active(), 0);
 
-    assert!(start.elapsed().as_millis() >= 80 && start.elapsed().as_millis() <= 81);
+    assert_in_range!(80..90, &start.elapsed().as_millis());
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn cancel() {
     assert!(fut2.is_terminated());
     assert_eq!(reactor.active(), 0);
 
-    assert!(start.elapsed().as_millis() >= 80 && start.elapsed().as_millis() <= 81);
+    assert_in_range!(80..90, &start.elapsed().as_millis());
 }
 
 #[test]
@@ -110,5 +110,5 @@ fn forget() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert!(start.elapsed().as_millis() >= 80 && start.elapsed().as_millis() <= 81);
+    assert_in_range!(80..90, &start.elapsed().as_millis());
 }

@@ -152,3 +152,15 @@ impl Drop for TempFile {
         fs::remove_file(&self.name).unwrap();
     }
 }
+
+macro_rules! assert_in_range {
+    ($range:expr, $value:expr) => {{
+        let range = $range;
+        let value = $value;
+        if (!range.contains(value)) {
+            panic!("assertion `value in range` failed\n value: {value:?}\n range: {range:?}");
+        }
+    }};
+}
+
+pub(crate) use assert_in_range;

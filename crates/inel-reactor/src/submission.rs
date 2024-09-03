@@ -76,8 +76,6 @@ where
 
                 *this.state = SubmissionState::Submitted(key);
 
-                cx.waker().wake_by_ref();
-
                 Poll::Pending
             }
 
@@ -94,7 +92,7 @@ where
             }
 
             SubmissionState::Completed => {
-                panic!("Polled completed Submission");
+                panic!("Polled already completed Submission");
             }
         }
     }
