@@ -1,6 +1,7 @@
 pub mod helpers;
 mod read;
 mod timeout;
+mod write;
 
 use std::{
     pin::{pin, Pin},

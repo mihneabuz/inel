@@ -2,31 +2,31 @@ use std::{io::Result, os::fd::RawFd};
 
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
-use crate::{buffer::StableMutBuffer, completion::Cancellation, op::Op};
+use crate::{buffer::StableBuffer, completion::Cancellation, op::Op};
 
-pub struct Read<Buf: StableMutBuffer> {
+pub struct Write<Buf: StableBuffer> {
     buf: Option<Buf>,
     fd: RawFd,
 }
 
-impl<Buf> Read<Buf>
+impl<Buf> Write<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, buf: Buf) -> Self {
         Self { buf: Some(buf), fd }
     }
 }
 
-unsafe impl<Buf> Op for Read<Buf>
+unsafe impl<Buf> Op for Write<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     type Output = (Buf, Result<usize>);
 
     fn entry(&mut self) -> Entry {
         let buf = self.buf.as_mut().unwrap();
-        opcode::Read::new(Fd(self.fd), buf.stable_mut_ptr(), buf.size() as u32).build()
+        opcode::Write::new(Fd(self.fd), buf.stable_ptr(), buf.size() as u32).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {

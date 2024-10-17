@@ -9,10 +9,10 @@ use crate::helpers::{poll, runtime, TempFile, MESSAGE};
 #[test]
 fn single() {
     let (reactor, notifier) = runtime();
-    let file = TempFile::with_content(&MESSAGE);
+    let mut file = TempFile::with_content("");
 
-    let mut read = op::Read::new(file.fd(), Box::new([0; 1024])).run_on(reactor.clone());
-    let mut fut = pin!(&mut read);
+    let mut write = op::Write::new(file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut fut = pin!(&mut write);
 
     assert!(poll!(fut, notifier).is_pending());
     assert_eq!(reactor.active(), 1);
@@ -25,12 +25,13 @@ fn single() {
         panic!("poll not ready");
     };
 
-    let Ok(read) = res else {
-        panic!("read failed");
+    let Ok(wrote) = res else {
+        panic!("write failed");
     };
 
-    assert_eq!(read, MESSAGE.as_bytes().len());
-    assert_eq!(&buf[..read], MESSAGE.as_bytes());
+    assert_eq!(wrote, MESSAGE.as_bytes().len());
+    assert_eq!(&buf, MESSAGE.as_bytes());
+    assert_eq!(file.read(), MESSAGE.to_string());
 
     assert!(fut.is_terminated());
     assert_eq!(reactor.active(), 0);

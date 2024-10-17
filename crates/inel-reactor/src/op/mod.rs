@@ -1,5 +1,6 @@
 mod read;
 mod time;
+mod write;
 
 use io_uring::{opcode, squeue::Entry};
 
@@ -7,6 +8,7 @@ use crate::{completion::Cancellation, Ring, Submission};
 
 pub use read::*;
 pub use time::*;
+pub use write::*;
 
 /// This trait allows implementing safe operations over a [crate::Ring].
 ///
