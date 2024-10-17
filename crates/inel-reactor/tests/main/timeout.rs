@@ -27,7 +27,8 @@ fn single() {
 
     assert_eq!(poll!(fut, notifier), Poll::Ready(()));
     assert!(fut.is_terminated());
-    assert_eq!(reactor.active(), 0);
+
+    assert!(reactor.is_done());
 
     assert_in_range!(20..30, &start.elapsed().as_millis());
 }
@@ -88,7 +89,8 @@ fn cancel() {
 
     assert_eq!(poll!(fut2, notifier), Poll::Ready(()));
     assert!(fut2.is_terminated());
-    assert_eq!(reactor.active(), 0);
+
+    assert!(reactor.is_done());
 
     assert_in_range!(80..90, &start.elapsed().as_millis());
 }

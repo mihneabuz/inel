@@ -3,7 +3,8 @@ use std::task::Waker;
 use io_uring::{squeue::Entry, IoUring};
 use tracing::debug;
 
-use crate::completion::{Cancellation, CompletionSet, Key};
+use crate::cancellation::Cancellation;
+use crate::completion::{CompletionSet, Key};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -42,12 +43,16 @@ impl Ring {
         self.active
     }
 
+    pub fn is_done(&self) -> bool {
+        self.active == 0 && self.completions.is_empty()
+    }
+
     /// # Safety
     /// Caller must ensure that the entry is valid until the waker is called
     pub unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
         let key = self.completions.insert(waker);
 
-        debug!(?entry, "Ring submission");
+        debug!(key = key.as_u64(), ?entry, "Ring submission");
 
         self.ring
             .submission()
@@ -66,9 +71,11 @@ impl Ring {
     /// # Safety
     /// Caller must ensure that the entry is valid until the waker is called
     pub unsafe fn cancel(&mut self, entry: Entry, key: Key, cancel: Cancellation) {
-        self.completions.cancel(key, cancel);
+        if !self.completions.cancel(key, cancel) {
+            return;
+        }
 
-        debug!(?entry, "Cancel submission");
+        debug!(key = key.as_u64(), ?entry, "Cancel submission");
 
         self.ring
             .submission()
@@ -107,7 +114,7 @@ impl Ring {
 
     fn handle_completions(&mut self) {
         for entry in self.ring.completion() {
-            debug!(?entry, "Ring completion");
+            debug!(key = entry.user_data(), ?entry, "Ring completion");
 
             if entry.user_data() == CANCEL_KEY {
                 continue;

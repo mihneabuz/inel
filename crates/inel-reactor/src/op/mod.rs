@@ -4,7 +4,7 @@ mod write;
 
 use io_uring::{opcode, squeue::Entry};
 
-use crate::{completion::Cancellation, Ring, Submission};
+use crate::{cancellation::Cancellation, Ring, Submission};
 
 pub use read::*;
 pub use time::*;

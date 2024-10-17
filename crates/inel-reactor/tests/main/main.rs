@@ -28,7 +28,8 @@ fn sanity() {
 
     assert_eq!(poll!(nop, notifier), Poll::Ready(()));
     assert!(nop.is_terminated());
-    assert_eq!(reactor.active(), 0);
+
+    assert!(reactor.is_done());
 }
 
 #[test]
@@ -54,5 +55,6 @@ fn nops() {
         assert_eq!(poll!(nop, notifier), Poll::Ready(()));
         assert!(nop.is_terminated());
     }
-    assert_eq!(reactor.active(), 0);
+
+    assert!(reactor.is_done());
 }

@@ -2,56 +2,7 @@ use std::{mem, task::Waker};
 
 use slab::Slab;
 
-pub struct Cancellation {
-    data: *mut (),
-    metadata: usize,
-    drop: unsafe fn(*mut (), usize),
-}
-
-impl Cancellation {
-    pub fn empty() -> Self {
-        Self {
-            data: std::ptr::null_mut(),
-            metadata: 0,
-            drop: |_, _| {},
-        }
-    }
-
-    pub fn drop_raw(self) {
-        unsafe { (self.drop)(self.data, self.metadata) }
-    }
-}
-
-impl<T> From<Box<T>> for Cancellation {
-    fn from(value: Box<T>) -> Self {
-        Self {
-            data: Box::into_raw(value) as *mut (),
-            metadata: 0,
-            drop: |data, _len| unsafe {
-                drop(Box::from_raw(data));
-            },
-        }
-    }
-}
-
-impl<T> From<Box<[T]>> for Cancellation {
-    fn from(value: Box<[T]>) -> Self {
-        let len = value.len();
-        Self {
-            data: Box::into_raw(value) as *mut (),
-            metadata: len,
-            drop: |data, len| unsafe {
-                drop(Vec::from_raw_parts(data as *mut T, len, len).into_boxed_slice());
-            },
-        }
-    }
-}
-
-impl<T> From<Vec<T>> for Cancellation {
-    fn from(value: Vec<T>) -> Self {
-        Cancellation::from(value.into_boxed_slice())
-    }
-}
+use crate::cancellation::Cancellation;
 
 enum CompletionInner {
     Active(Waker),
@@ -122,6 +73,10 @@ impl CompletionSet {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
+
     pub fn insert(&mut self, waker: Waker) -> Key {
         Key {
             value: self.slab.insert(Completion::new(waker)),
@@ -141,12 +96,12 @@ impl CompletionSet {
         value
     }
 
-    pub fn cancel(&mut self, key: Key, cancel: Cancellation) {
-        self.with_completion(key, move |comp| comp.try_cancel(cancel), |&success| success);
+    pub fn cancel(&mut self, key: Key, cancel: Cancellation) -> bool {
+        !self.with_completion(key, move |comp| comp.try_cancel(cancel), |&success| success)
     }
 
-    pub fn notify(&mut self, key: Key, ret: i32) {
-        self.with_completion(key, move |comp| comp.try_notify(ret), |&remove| remove);
+    pub fn notify(&mut self, key: Key, ret: i32) -> bool {
+        !self.with_completion(key, move |comp| comp.try_notify(ret), |&remove| remove)
     }
 
     pub fn result(&mut self, key: Key) -> Option<i32> {
@@ -154,7 +109,7 @@ impl CompletionSet {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Key {
     value: usize,
 }
