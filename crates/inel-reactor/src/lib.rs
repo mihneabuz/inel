@@ -1,3 +1,4 @@
+pub mod buffer;
 mod completion;
 pub mod op;
 mod ring;

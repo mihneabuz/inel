@@ -103,7 +103,7 @@ impl Completion {
         }
     }
 
-    pub fn result(&self) -> Option<i32> {
+    pub fn take_result(&self) -> Option<i32> {
         match &self.state {
             CompletionInner::Finished(ret) => Some(*ret),
             _ => None,
@@ -128,27 +128,29 @@ impl CompletionSet {
         }
     }
 
-    fn with_completion<F>(&mut self, key: Key, f: F)
+    fn with_completion<T, F, G>(&mut self, key: Key, fun: F, should_remove: G) -> T
     where
-        F: FnOnce(&mut Completion) -> bool,
+        F: FnOnce(&mut Completion) -> T,
+        G: FnOnce(&T) -> bool,
     {
-        let completion = unsafe { self.slab.get_unchecked_mut(key.as_usize()) };
-        let should_remove = f(completion);
-        if should_remove {
+        let completion = self.slab.get_mut(key.as_usize()).expect("this is bad");
+        let value = fun(completion);
+        if should_remove(&value) {
             self.slab.remove(key.as_usize());
         }
+        value
     }
 
     pub fn cancel(&mut self, key: Key, cancel: Cancellation) {
-        self.with_completion(key, move |comp| comp.try_cancel(cancel));
+        self.with_completion(key, move |comp| comp.try_cancel(cancel), |&success| success);
     }
 
     pub fn notify(&mut self, key: Key, ret: i32) {
-        self.with_completion(key, move |comp| comp.try_notify(ret));
+        self.with_completion(key, move |comp| comp.try_notify(ret), |&remove| remove);
     }
 
-    pub fn result(&self, key: Key) -> Option<i32> {
-        unsafe { self.slab.get_unchecked(key.as_usize()).result() }
+    pub fn result(&mut self, key: Key) -> Option<i32> {
+        self.with_completion(key, move |comp| comp.take_result(), |res| res.is_some())
     }
 }
 

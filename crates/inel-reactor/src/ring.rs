@@ -59,7 +59,7 @@ impl Ring {
         key
     }
 
-    pub fn check_result(&self, key: Key) -> Option<i32> {
+    pub fn check_result(&mut self, key: Key) -> Option<i32> {
         self.completions.result(key)
     }
 
