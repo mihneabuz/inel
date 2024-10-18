@@ -6,6 +6,7 @@ members = [
   "crates/inel-interface",
   "crates/inel-executor",
   "crates/inel-reactor",
+  "crates/inel-macro",
 ]
 
 [workspace.dependencies]

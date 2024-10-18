@@ -7,3 +7,4 @@ edition = "2021"
 inel-interface = { path = "../inel-interface" }
 inel-executor = { path = "../inel-executor" }
 inel-reactor = { path = "../inel-reactor" }
+inel-macro = { path = "../inel-macro" }

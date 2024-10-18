@@ -24,6 +24,8 @@ impl inel_interface::Reactor for GlobalReactor {
     }
 }
 
+pub use inel_macro::main;
+
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
 where
     F: Future + 'static,
