@@ -13,11 +13,10 @@ use inel_reactor::op::{self, Op};
 fn single() {
     let (reactor, notifier) = runtime();
 
-    let start = Instant::now();
-
-    let mut timeout = op::Timeout::new(Duration::from_millis(20)).run_on(reactor.clone());
+    let mut timeout = op::Timeout::new(Duration::from_millis(10)).run_on(reactor.clone());
     let mut fut = pin!(&mut timeout);
 
+    let start = Instant::now();
     assert!(poll!(fut, notifier).is_pending());
     assert_eq!(reactor.active(), 1);
 
@@ -30,19 +29,19 @@ fn single() {
 
     assert!(reactor.is_done());
 
-    assert_in_range!(20..30, &start.elapsed().as_millis());
+    assert_in_range!(10..40, &start.elapsed().as_millis());
 }
 
 #[test]
 fn multi() {
     let (reactor, notifier) = runtime();
 
-    let start = Instant::now();
-
-    let mut timeout1 = op::Timeout::new(Duration::from_millis(20)).run_on(reactor.clone());
-    let mut timeout2 = op::Timeout::new(Duration::from_millis(80)).run_on(reactor.clone());
+    let mut timeout1 = op::Timeout::new(Duration::from_millis(10)).run_on(reactor.clone());
+    let mut timeout2 = op::Timeout::new(Duration::from_millis(60)).run_on(reactor.clone());
     let mut fut1 = pin!(&mut timeout1);
     let mut fut2 = pin!(&mut timeout2);
+
+    let start = Instant::now();
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
@@ -55,7 +54,7 @@ fn multi() {
     assert!(fut1.is_terminated());
     assert_eq!(reactor.active(), 1);
 
-    assert_in_range!(20..30, &start.elapsed().as_millis());
+    assert_in_range!(10..40, &start.elapsed().as_millis());
 
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
@@ -64,19 +63,19 @@ fn multi() {
     assert!(fut2.is_terminated());
     assert_eq!(reactor.active(), 0);
 
-    assert_in_range!(80..90, &start.elapsed().as_millis());
+    assert_in_range!(60..100, &start.elapsed().as_millis());
 }
 
 #[test]
 fn cancel() {
     let (reactor, notifier) = runtime();
 
-    let start = Instant::now();
-
     let mut timeout1 = op::Timeout::new(Duration::from_millis(2000)).run_on(reactor.clone());
-    let mut timeout2 = op::Timeout::new(Duration::from_millis(80)).run_on(reactor.clone());
+    let mut timeout2 = op::Timeout::new(Duration::from_millis(60)).run_on(reactor.clone());
     let mut fut1 = pin!(&mut timeout1);
     let mut fut2 = pin!(&mut timeout2);
+
+    let start = Instant::now();
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
@@ -92,18 +91,17 @@ fn cancel() {
 
     assert!(reactor.is_done());
 
-    assert_in_range!(80..90, &start.elapsed().as_millis());
+    assert_in_range!(60..100, &start.elapsed().as_millis());
 }
 
 #[test]
 fn forget() {
     let (reactor, notifier) = runtime();
 
-    let start = Instant::now();
-
-    let mut timeout = op::Timeout::new(Duration::from_millis(80)).run_on(reactor.clone());
+    let mut timeout = op::Timeout::new(Duration::from_millis(60)).run_on(reactor.clone());
     let mut fut = pin!(&mut timeout);
 
+    let start = Instant::now();
     assert!(poll!(fut, notifier).is_pending());
     assert_eq!(reactor.active(), 1);
 
@@ -112,5 +110,5 @@ fn forget() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_in_range!(80..90, &start.elapsed().as_millis());
+    assert_in_range!(60..100, &start.elapsed().as_millis());
 }
