@@ -184,6 +184,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "inel-interface",
+ "inel-macro",
  "io-uring",
  "libc",
  "pin-project-lite",

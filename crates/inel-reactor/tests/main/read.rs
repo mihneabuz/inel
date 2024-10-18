@@ -2,6 +2,7 @@ use std::{pin::pin, task::Poll};
 
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
+use inel_macro::test_repeat;
 use inel_reactor::op::{self, Op};
 
 use crate::helpers::{poll, runtime, TempFile, MESSAGE};
@@ -34,6 +35,7 @@ fn single() {
 }
 
 #[test]
+#[test_repeat(10)]
 fn multi() {
     let (reactor, notifier) = runtime();
 
@@ -103,6 +105,7 @@ fn multi() {
 }
 
 #[test]
+#[test_repeat(10)]
 fn cancel() {
     let (reactor, notifier) = runtime();
     let file1 = TempFile::with_content(&MESSAGE);
@@ -183,6 +186,7 @@ mod vectored {
     }
 
     #[test]
+    #[test_repeat(10)]
     fn cancel() {
         let (reactor, notifier) = runtime();
         let file1 = TempFile::with_content(&MESSAGE);
@@ -217,6 +221,7 @@ mod vectored {
     }
 
     #[test]
+    #[test_repeat(10)]
     fn exact() {
         let (reactor, notifier) = runtime();
         let file1 = TempFile::with_content(&MESSAGE);
