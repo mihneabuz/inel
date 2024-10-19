@@ -1,3 +1,4 @@
+mod file;
 mod read;
 mod time;
 mod write;
@@ -6,6 +7,7 @@ use io_uring::{opcode, squeue::Entry};
 
 use crate::{cancellation::Cancellation, Ring, Submission};
 
+pub use file::*;
 pub use read::*;
 pub use time::*;
 pub use write::*;
