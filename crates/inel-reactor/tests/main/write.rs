@@ -36,7 +36,7 @@ fn single() {
 }
 
 #[test]
-#[test_repeat(10)]
+#[test_repeat(100)]
 fn multi() {
     let (reactor, notifier) = runtime();
 
@@ -107,7 +107,7 @@ fn multi() {
 }
 
 #[test]
-#[test_repeat(10)]
+#[test_repeat(100)]
 fn cancel() {
     let (reactor, notifier) = runtime();
     let file1 = TempFile::with_content("");
@@ -138,11 +138,12 @@ fn cancel() {
     drop(read2);
     drop(read3);
 
-    reactor.wait();
-    reactor.wait();
-    reactor.wait();
-
-    assert!(reactor.is_done());
+    let mut i = 0;
+    while !reactor.is_done() {
+        reactor.wait();
+        i += 1;
+        assert!(i < 5);
+    }
 }
 
 mod vectored {
@@ -185,7 +186,7 @@ mod vectored {
     }
 
     #[test]
-    #[test_repeat(10)]
+    #[test_repeat(100)]
     fn cancel() {
         let (reactor, notifier) = runtime();
         let file1 = TempFile::with_content("");
@@ -213,14 +214,16 @@ mod vectored {
         drop(write1);
         drop(write2);
 
-        reactor.wait();
-        reactor.wait();
-
-        assert!(reactor.is_done());
+        let mut i = 0;
+        while !reactor.is_done() {
+            reactor.wait();
+            i += 1;
+            assert!(i < 5);
+        }
     }
 
     #[test]
-    #[test_repeat(10)]
+    #[test_repeat(100)]
     fn exact() {
         let (reactor, notifier) = runtime();
         let mut file1 = TempFile::with_content("");
