@@ -1,4 +1,5 @@
 use std::{
+    io::{Error, Result},
     os::{fd::RawFd, unix::ffi::OsStrExt},
     path::Path,
 };
@@ -56,7 +57,7 @@ impl<P: AsRef<Path>> OpenAt<P> {
 }
 
 unsafe impl<P: AsRef<Path>> Op for OpenAt<P> {
-    type Output = RawFd;
+    type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
         let path = self.path.as_ref().as_os_str().as_bytes().as_ptr();
@@ -67,7 +68,11 @@ unsafe impl<P: AsRef<Path>> Op for OpenAt<P> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        RawFd::from(ret)
+        if ret < 0 {
+            Err(Error::from_raw_os_error(ret))
+        } else {
+            Ok(ret)
+        }
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
@@ -126,7 +131,7 @@ impl<P: AsRef<Path>> OpenAt2<P> {
 }
 
 unsafe impl<P: AsRef<Path>> Op for OpenAt2<P> {
-    type Output = RawFd;
+    type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
         let path = self.path.as_ref().as_os_str().as_bytes().as_ptr();
@@ -134,7 +139,11 @@ unsafe impl<P: AsRef<Path>> Op for OpenAt2<P> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        RawFd::from(ret)
+        if ret < 0 {
+            Err(Error::from_raw_os_error(ret))
+        } else {
+            Ok(ret)
+        }
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {

@@ -1,4 +1,7 @@
-use std::{io::Result, os::fd::RawFd};
+use std::{
+    io::{Error, Result},
+    os::fd::RawFd,
+};
 
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
@@ -30,7 +33,13 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        (self.buf.unwrap(), Ok(ret as usize))
+        let result = if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(ret as usize)
+        };
+
+        (self.buf.unwrap(), result)
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
@@ -86,7 +95,13 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        (self.bufs, Ok(ret as usize))
+        let result = if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(ret as usize)
+        };
+
+        (self.bufs, result)
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
@@ -138,7 +153,13 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        (self.bufs.unwrap(), Ok(ret as usize))
+        let result = if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(ret as usize)
+        };
+
+        (self.bufs.unwrap(), result)
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {

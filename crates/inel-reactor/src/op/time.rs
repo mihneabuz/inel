@@ -24,7 +24,7 @@ unsafe impl Op for Timeout {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        assert!(ret == -62 || ret == -125);
+        assert!(ret == -libc::ETIME || ret == -libc::ECANCELED)
     }
 
     fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {

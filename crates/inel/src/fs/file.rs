@@ -1,5 +1,5 @@
 use std::{
-    io::{Error, Result},
+    io::Result,
     os::fd::{FromRawFd, IntoRawFd, RawFd},
     path::Path,
 };
@@ -87,13 +87,9 @@ impl OpenOptions {
         let fd = op::OpenAt::new(path, flags)
             .mode(mode)
             .run_on(GlobalReactor)
-            .await;
+            .await?;
 
-        if fd == -1 {
-            Err(Error::last_os_error())
-        } else {
-            Ok(unsafe { File::from_raw_fd(fd) })
-        }
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
 
@@ -124,5 +120,13 @@ impl File {
             .writable(true)
             .open(path)
             .await
+    }
+
+    pub fn options() -> OpenOptions {
+        OpenOptions::new()
+    }
+
+    pub async fn metadata(&self) -> Result<Self> {
+        todo!();
     }
 }

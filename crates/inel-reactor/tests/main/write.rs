@@ -1,4 +1,4 @@
-use std::{pin::pin, task::Poll};
+use std::{os::fd::RawFd, pin::pin, task::Poll};
 
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
@@ -104,6 +104,30 @@ fn multi() {
     assert!(fut3.is_terminated());
 
     assert!(reactor.is_done());
+}
+
+#[test]
+fn error() {
+    let (reactor, notifier) = runtime();
+
+    let mut read = op::Write::new(RawFd::from(192), Box::new([0; 128])).run_on(reactor.clone());
+    let mut fut = pin!(&mut read);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
+        panic!("poll not ready");
+    };
+
+    assert_eq!(buf, Box::new([0; 128]));
+
+    let err = res.expect_err("read didn't fail");
+    assert_eq!(&err.to_string(), "Bad file descriptor (os error 9)");
 }
 
 #[test]
