@@ -1,3 +1,4 @@
+mod file;
 pub mod helpers;
 mod read;
 mod timeout;

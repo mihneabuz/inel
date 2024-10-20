@@ -1,5 +1,6 @@
 use std::{
-    io::Result,
+    io::{Error, Result},
+    mem::MaybeUninit,
     os::fd::{FromRawFd, IntoRawFd, RawFd},
     path::Path,
 };
@@ -85,11 +86,39 @@ impl OpenOptions {
         let (flags, mode) = self.libc_opts();
 
         let fd = op::OpenAt::new(path, flags)
+            .ok_or(Error::from_raw_os_error(libc::EINVAL))?
             .mode(mode)
             .run_on(GlobalReactor)
             .await?;
 
         Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+pub struct Metadata {
+    raw: Box<MaybeUninit<libc::statx>>,
+}
+
+impl Metadata {
+    // TODO: add more stats
+    fn assume_init(&self) -> &libc::statx {
+        unsafe { self.raw.assume_init_ref() }
+    }
+
+    pub fn is_dir(&self) -> bool {
+        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFDIR
+    }
+
+    pub fn is_file(&self) -> bool {
+        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFREG
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFLNK
+    }
+
+    pub fn len(&self) -> u64 {
+        self.assume_init().stx_size
     }
 }
 
@@ -126,7 +155,12 @@ impl File {
         OpenOptions::new()
     }
 
-    pub async fn metadata(&self) -> Result<Self> {
-        todo!();
+    pub async fn metadata(&self) -> Result<Metadata> {
+        let statx = op::Statx::new(self.fd)
+            .mask(libc::STATX_TYPE | libc::STATX_SIZE)
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(Metadata { raw: statx })
     }
 }

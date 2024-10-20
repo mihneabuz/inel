@@ -122,8 +122,12 @@ pub struct TempFile {
 }
 
 impl TempFile {
+    pub fn new_name() -> String {
+        format!("/tmp/inel_reactor_test_{}", uuid::Uuid::new_v4())
+    }
+
     pub fn empty() -> Self {
-        let name = format!("/tmp/inel_reactor_test_{}", uuid::Uuid::new_v4());
+        let name = Self::new_name();
         let file = File::create_new(&name).unwrap();
         Self {
             name,
@@ -133,6 +137,10 @@ impl TempFile {
 
     pub fn fd(&self) -> RawFd {
         self.inner.as_ref().unwrap().as_raw_fd()
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
     }
 
     pub fn with_content(content: impl AsRef<str>) -> Self {
