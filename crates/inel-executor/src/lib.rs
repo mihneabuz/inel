@@ -78,8 +78,8 @@ impl Executor {
                 let mut cx = Context::from_waker(&waker);
                 let _ = task.poll(&mut cx);
             }
-        }
 
-        reactor.wait();
+            reactor.wait();
+        }
     }
 }
