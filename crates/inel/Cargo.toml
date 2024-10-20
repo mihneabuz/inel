@@ -12,6 +12,9 @@ inel-interface = { path = "../inel-interface" }
 inel-executor = { path = "../inel-executor" }
 inel-reactor = { path = "../inel-reactor" }
 inel-macro = { path = "../inel-macro" }
+libc = { workspace = true }
 
 [dev-dependencies]
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 oneshot = "0.1"
+uuid = { version = "1.10.0", features = ["v4"] }

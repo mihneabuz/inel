@@ -49,7 +49,7 @@ impl<P: AsRef<Path>> OpenAt<P> {
         }
     }
 
-    pub fn mode(&mut self, mode: libc::mode_t) -> &mut Self {
+    pub fn mode(mut self, mode: libc::mode_t) -> Self {
         self.mode = mode;
         self
     }
@@ -105,12 +105,12 @@ impl<P: AsRef<Path>> OpenAt2<P> {
         Self { dir, path, how }
     }
 
-    pub fn mode(&mut self, mode: libc::__u64) -> &mut Self {
+    pub fn mode(mut self, mode: libc::__u64) -> Self {
         self.how = self.how.mode(mode);
         self
     }
 
-    pub fn resolve(&mut self, resolve: libc::__u64) -> &mut Self {
+    pub fn resolve(mut self, resolve: libc::__u64) -> Self {
         self.how = self.how.resolve(resolve);
         self
     }

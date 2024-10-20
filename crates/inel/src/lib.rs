@@ -25,6 +25,7 @@ impl inel_interface::Reactor for GlobalReactor {
 }
 
 pub use inel_macro::main;
+pub mod fs;
 
 #[inline]
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
