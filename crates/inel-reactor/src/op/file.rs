@@ -84,8 +84,11 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
         }
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(AsyncCancel::new(user_data).build()),
+            Cancellation::empty(),
+        )
     }
 }
 
@@ -155,8 +158,11 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
         }
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(AsyncCancel::new(user_data).build()),
+            Cancellation::empty(),
+        )
     }
 }
 
@@ -177,12 +183,10 @@ unsafe impl Op for Close {
         opcode::Close::new(Fd(self.fd)).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        assert_eq!(ret, 0)
-    }
+    fn result(self, _ret: i32) -> Self::Output {}
 
-    fn cancel(self, _: u64) -> Option<(Entry, Cancellation)> {
-        None
+    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
+        (None, Cancellation::empty())
     }
 }
 
@@ -250,11 +254,11 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
         }
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((
-            AsyncCancel::new(user_data).build(),
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(AsyncCancel::new(user_data).build()),
             self.stats.unwrap().into(),
-        ))
+        )
     }
 }
 
@@ -315,7 +319,10 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
         }
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(AsyncCancel::new(user_data).build()),
+            Cancellation::empty(),
+        )
     }
 }

@@ -52,7 +52,7 @@ impl Ring {
     pub unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
         let key = self.completions.insert(waker);
 
-        debug!(key = key.as_u64(), ?entry, "Ring submission");
+        debug!(key = key.as_u64(), ?entry, "Submission");
 
         self.ring
             .submission()
@@ -70,19 +70,21 @@ impl Ring {
 
     /// # Safety
     /// Caller must ensure that the entry is valid until the waker is called
-    pub unsafe fn cancel(&mut self, entry: Entry, key: Key, cancel: Cancellation) {
+    pub unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation) {
         if !self.completions.cancel(key, cancel) {
             return;
         }
 
-        debug!(key = key.as_u64(), ?entry, "Cancel submission");
+        debug!(key = key.as_u64(), ?entry, "Cancel");
 
-        self.ring
-            .submission()
-            .push(&entry.user_data(CANCEL_KEY))
-            .expect("Submission queue is full");
+        if let Some(entry) = entry {
+            self.ring
+                .submission()
+                .push(&entry.user_data(CANCEL_KEY))
+                .expect("Submission queue is full");
 
-        self.canceled += 1;
+            self.canceled += 1;
+        }
     }
 
     pub fn wait(&mut self) {
@@ -101,7 +103,7 @@ impl Ring {
             1 + 2 * self.canceled
         };
 
-        debug!(active =? self.active, canceled = ?self.canceled, ?want, "Waiting for events");
+        debug!(active =? self.active, canceled = ?self.canceled, ?want, "Waiting");
 
         self.ring
             .submit_and_wait(want as usize)
@@ -114,7 +116,7 @@ impl Ring {
 
     fn handle_completions(&mut self) {
         for entry in self.ring.completion() {
-            debug!(key = entry.user_data(), ?entry, "Ring completion");
+            debug!(key = entry.user_data(), ?entry, "Completion");
 
             if entry.user_data() == CANCEL_KEY {
                 continue;

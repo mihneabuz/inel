@@ -28,15 +28,10 @@ pin_project! {
         R: Reactor<Handle = Ring>,
     {
         fn drop(this: Pin<&mut Self>) {
-            match this.state {
-                SubmissionState::Initial | SubmissionState::Completed => {}
-                SubmissionState::Submitted(key) => {
-                    let this = this.project();
-                    if let Some((entry, cancel)) = this.op.take().unwrap().cancel(key.as_u64()) {
-                        this.reactor
-                            .with(|reactor| unsafe { reactor.cancel(entry, key, cancel) });
-                    }
-                }
+            if let SubmissionState::Submitted(key) = this.state {
+                let this = this.project();
+                let (entry, cancel) = this.op.take().unwrap().cancel(key.as_u64());
+                this.reactor.with(|reactor| unsafe { reactor.cancel(key, entry, cancel) });
             }
         }
     }

@@ -46,8 +46,11 @@ where
         (self.buf, result)
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((opcode::AsyncCancel::new(user_data).build(), self.buf.into()))
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(opcode::AsyncCancel::new(user_data).build()),
+            self.buf.into(),
+        )
     }
 }
 
@@ -103,14 +106,14 @@ where
         (self.bufs, result)
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
         let mut bufs = self.bufs;
         let cancels: Vec<Cancellation> = bufs.drain(..).map(|buf| buf.into()).collect();
 
-        Some((
-            opcode::AsyncCancel::new(user_data).build(),
+        (
+            Some(opcode::AsyncCancel::new(user_data).build()),
             Cancellation::combine(cancels),
-        ))
+        )
     }
 }
 
@@ -161,12 +164,12 @@ where
         (self.bufs, result)
     }
 
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
         let cancels: Vec<Cancellation> = self.bufs.into_iter().map(|buf| buf.into()).collect();
 
-        Some((
-            opcode::AsyncCancel::new(user_data).build(),
+        (
+            Some(opcode::AsyncCancel::new(user_data).build()),
             Cancellation::combine(cancels),
-        ))
+        )
     }
 }

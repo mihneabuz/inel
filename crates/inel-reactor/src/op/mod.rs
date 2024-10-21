@@ -26,7 +26,7 @@ pub unsafe trait Op {
     fn result(self, ret: i32) -> Self::Output;
 
     /// Create cancelation entry if necessary
-    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)>;
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation);
 
     fn run_on<R>(self, reactor: R) -> Submission<Self, R>
     where
@@ -50,7 +50,7 @@ unsafe impl Op for Nop {
         assert_eq!(ret, 0);
     }
 
-    fn cancel(self, _key: u64) -> Option<(Entry, Cancellation)> {
-        None
+    fn cancel(self, _key: u64) -> (Option<Entry>, Cancellation) {
+        (None, Cancellation::empty())
     }
 }
