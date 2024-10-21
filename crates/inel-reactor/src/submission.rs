@@ -1,5 +1,4 @@
 use std::{
-    mem::ManuallyDrop,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -18,7 +17,7 @@ pub enum SubmissionState {
 
 pin_project! {
     pub struct Submission<T: Op, R: Reactor<Handle = Ring>> {
-        op: Option<ManuallyDrop<T>>,
+        op: Option<T>,
         state: SubmissionState,
         reactor: R,
     }
@@ -50,7 +49,7 @@ where
 {
     pub fn new(reactor: R, op: T) -> Self {
         Self {
-            op: Some(ManuallyDrop::new(op)),
+            op: Some(op),
             state: SubmissionState::Initial,
             reactor,
         }
@@ -84,7 +83,7 @@ where
                     return Poll::Pending;
                 };
 
-                let op = ManuallyDrop::into_inner(this.op.take().unwrap());
+                let op = this.op.take().unwrap();
 
                 *this.state = SubmissionState::Completed;
 

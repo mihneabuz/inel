@@ -84,7 +84,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
         }
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
         Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
     }
 }
@@ -155,8 +155,34 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
         }
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
         Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
+    }
+}
+
+pub struct Close {
+    fd: RawFd,
+}
+
+impl Close {
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+}
+
+unsafe impl Op for Close {
+    type Output = ();
+
+    fn entry(&mut self) -> Entry {
+        opcode::Close::new(Fd(self.fd)).build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        assert_eq!(ret, 0)
+    }
+
+    fn cancel(self, _: u64) -> Option<(Entry, Cancellation)> {
+        None
     }
 }
 
@@ -224,10 +250,10 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
         }
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
         Some((
             AsyncCancel::new(user_data).build(),
-            self.stats.take().unwrap().into(),
+            self.stats.unwrap().into(),
         ))
     }
 }
@@ -289,7 +315,7 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
         }
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
         Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
     }
 }

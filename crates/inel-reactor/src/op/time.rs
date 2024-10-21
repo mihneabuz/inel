@@ -27,7 +27,7 @@ unsafe impl Op for Timeout {
         assert!(ret == -libc::ETIME || ret == -libc::ECANCELED)
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
         Some((
             opcode::TimeoutRemove::new(user_data).build(),
             Cancellation::empty(),

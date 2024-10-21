@@ -8,7 +8,7 @@ use io_uring::{opcode, squeue::Entry, types::Fd};
 use crate::{buffer::StableBuffer, cancellation::Cancellation, op::Op};
 
 pub struct Write<Buf: StableBuffer> {
-    buf: Option<Buf>,
+    buf: Buf,
     fd: RawFd,
 }
 
@@ -17,7 +17,7 @@ where
     Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, buf: Buf) -> Self {
-        Self { buf: Some(buf), fd }
+        Self { buf, fd }
     }
 }
 
@@ -28,8 +28,7 @@ where
     type Output = (Buf, Result<usize>);
 
     fn entry(&mut self) -> Entry {
-        let buf = self.buf.as_mut().unwrap();
-        opcode::Write::new(Fd(self.fd), buf.stable_ptr(), buf.size() as u32).build()
+        opcode::Write::new(Fd(self.fd), self.buf.stable_ptr(), self.buf.size() as u32).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -39,20 +38,17 @@ where
             Ok(ret as usize)
         };
 
-        (self.buf.unwrap(), result)
+        (self.buf, result)
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        Some((
-            opcode::AsyncCancel::new(user_data).build(),
-            self.buf.take().unwrap().into(),
-        ))
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
+        Some((opcode::AsyncCancel::new(user_data).build(), self.buf.into()))
     }
 }
 
 pub struct WriteVectored<Buf: StableBuffer> {
     bufs: Vec<Buf>,
-    iovecs: Option<Vec<libc::iovec>>,
+    iovecs: Vec<libc::iovec>,
     fd: RawFd,
 }
 
@@ -61,7 +57,7 @@ where
     Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, bufs: Vec<Buf>) -> Self {
-        let iovecs = Some(Vec::with_capacity(bufs.len()));
+        let iovecs = Vec::with_capacity(bufs.len());
         Self { bufs, iovecs, fd }
     }
 
@@ -81,17 +77,15 @@ where
     type Output = (Vec<Buf>, Result<usize>);
 
     fn entry(&mut self) -> Entry {
-        let iovecs = self.iovecs.as_mut().unwrap();
-
         self.bufs
             .iter_mut()
             .map(|buf| libc::iovec {
                 iov_base: buf.stable_ptr() as *mut _,
                 iov_len: buf.size(),
             })
-            .for_each(|iovec| iovecs.push(iovec));
+            .for_each(|iovec| self.iovecs.push(iovec));
 
-        opcode::Writev::new(Fd(self.fd), iovecs.as_ptr(), iovecs.len() as u32).build()
+        opcode::Writev::new(Fd(self.fd), self.iovecs.as_ptr(), self.iovecs.len() as u32).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -104,8 +98,9 @@ where
         (self.bufs, result)
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        let cancels: Vec<Cancellation> = self.bufs.drain(..).map(|buf| buf.into()).collect();
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
+        let mut bufs = self.bufs;
+        let cancels: Vec<Cancellation> = bufs.drain(..).map(|buf| buf.into()).collect();
 
         Some((
             opcode::AsyncCancel::new(user_data).build(),
@@ -115,8 +110,8 @@ where
 }
 
 pub struct WriteVectoredExact<const N: usize, Buf: StableBuffer> {
-    bufs: Option<[Buf; N]>,
-    iovecs: Option<[libc::iovec; N]>,
+    bufs: [Buf; N],
+    iovecs: [libc::iovec; N],
     fd: RawFd,
 }
 
@@ -126,8 +121,11 @@ where
 {
     pub fn new(fd: RawFd, bufs: [Buf; N]) -> Self {
         Self {
-            bufs: Some(bufs),
-            iovecs: None,
+            bufs,
+            iovecs: std::array::from_fn(|_| libc::iovec {
+                iov_base: std::ptr::null_mut(),
+                iov_len: 0,
+            }),
             fd,
         }
     }
@@ -140,16 +138,12 @@ where
     type Output = ([Buf; N], Result<usize>);
 
     fn entry(&mut self) -> Entry {
-        let bufs = self.bufs.as_mut().unwrap();
+        for i in 0..N {
+            self.iovecs[i].iov_base = self.bufs[i].stable_ptr() as *mut _;
+            self.iovecs[i].iov_len = self.bufs[i].size();
+        }
 
-        self.iovecs = Some(std::array::from_fn(|i| libc::iovec {
-            iov_base: bufs[i].stable_ptr() as *mut _,
-            iov_len: bufs[i].size(),
-        }));
-
-        let iovecs = self.iovecs.as_ref().unwrap();
-
-        opcode::Writev::new(Fd(self.fd), iovecs.as_ptr(), iovecs.len() as u32).build()
+        opcode::Writev::new(Fd(self.fd), self.iovecs.as_ptr(), self.iovecs.len() as u32).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -159,17 +153,11 @@ where
             Ok(ret as usize)
         };
 
-        (self.bufs.unwrap(), result)
+        (self.bufs, result)
     }
 
-    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
-        let cancels: Vec<Cancellation> = self
-            .bufs
-            .take()
-            .unwrap()
-            .into_iter()
-            .map(|buf| buf.into())
-            .collect();
+    fn cancel(self, user_data: u64) -> Option<(Entry, Cancellation)> {
+        let cancels: Vec<Cancellation> = self.bufs.into_iter().map(|buf| buf.into()).collect();
 
         Some((
             opcode::AsyncCancel::new(user_data).build(),
