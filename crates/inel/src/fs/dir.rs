@@ -9,6 +9,7 @@ use inel_reactor::op::{self, Op};
 
 use crate::GlobalReactor;
 
+#[derive(Clone, Debug)]
 pub struct DirBuilder {
     recursive: bool,
 }

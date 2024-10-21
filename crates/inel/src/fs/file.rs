@@ -1,4 +1,5 @@
 use std::{
+    fmt::{self, Display, Formatter},
     io::Result,
     mem::MaybeUninit,
     os::fd::{FromRawFd, IntoRawFd, RawFd},
@@ -9,6 +10,7 @@ use inel_reactor::op::{self, Op};
 
 use crate::GlobalReactor;
 
+#[derive(Clone, Debug)]
 pub struct OpenOptions {
     read: bool,
     write: bool,
@@ -94,6 +96,7 @@ impl OpenOptions {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Metadata {
     raw: Box<MaybeUninit<libc::statx>>,
 }
@@ -125,8 +128,21 @@ impl Metadata {
     }
 }
 
+impl Display for Metadata {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Metadata").finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct File {
     fd: RawFd,
+}
+
+impl Display for File {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("File").finish()
+    }
 }
 
 impl FromRawFd for File {
@@ -165,5 +181,16 @@ impl File {
             .await?;
 
         Ok(Metadata { raw: statx })
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        let fd = self.fd;
+        if fd > 0 {
+            crate::spawn(async move {
+                op::Close::new(fd).run_on(GlobalReactor).await;
+            });
+        }
     }
 }

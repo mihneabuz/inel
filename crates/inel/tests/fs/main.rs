@@ -1,6 +1,12 @@
 mod helpers;
 
+use std::{
+    os::fd::{FromRawFd, IntoRawFd},
+    time::Duration,
+};
+
 use helpers::*;
+use inel_macro::test_repeat;
 
 #[test]
 fn create_file() {
@@ -107,4 +113,34 @@ fn dir_metadata() {
     });
 
     std::fs::remove_dir(&name).unwrap();
+}
+
+#[test]
+#[test_repeat(10)]
+fn drop_close() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    std::fs::File::create(&name).unwrap();
+
+    let fd = inel::block_on(async move {
+        let file = inel::fs::File::open(name_clone).await.unwrap();
+        let fd = file.into_raw_fd();
+        let _ = unsafe { inel::fs::File::from_raw_fd(fd) };
+        fd
+    });
+
+    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
+    std::thread::sleep(Duration::from_millis(10));
+
+    inel::block_on(async move {
+        let file = unsafe { inel::fs::File::from_raw_fd(fd) };
+        let meta = file.metadata().await;
+        assert!(meta.is_err());
+        std::mem::forget(file);
+    });
+
+    std::fs::remove_file(&name).unwrap();
 }
