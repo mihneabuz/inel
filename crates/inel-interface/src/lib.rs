@@ -23,17 +23,3 @@ pub trait Reactor {
     where
         F: FnOnce(&mut Self::Handle) -> T;
 }
-
-pub struct NopReactor;
-impl Reactor for NopReactor {
-    type Handle = ();
-
-    fn wait(&self) {}
-
-    fn with<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut Self::Handle) -> T,
-    {
-        f(&mut ())
-    }
-}

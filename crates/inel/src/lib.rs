@@ -41,12 +41,12 @@ pub fn block_on<F>(future: F) -> F::Output
 where
     F: Future + 'static,
 {
-    EXECUTOR.with_borrow(|exe| exe.block_on_with_reactor(GlobalReactor, future))
+    EXECUTOR.with_borrow(|exe| exe.block_on(GlobalReactor, future))
 }
 
 #[inline]
 pub fn run() {
-    EXECUTOR.with_borrow(|exe| exe.run_with_reactor(GlobalReactor));
+    EXECUTOR.with_borrow(|exe| exe.run(GlobalReactor));
 }
 
 #[cfg(feature = "sys")]

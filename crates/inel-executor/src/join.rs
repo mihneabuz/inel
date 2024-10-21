@@ -9,7 +9,7 @@ impl<T> JoinHandle<T> {
         Self { receiver }
     }
 
-    pub(crate) fn try_join(&mut self) -> Option<T> {
+    pub fn try_join(&mut self) -> Option<T> {
         self.receiver.try_recv().ok()?
     }
 
