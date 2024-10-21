@@ -32,7 +32,8 @@ fn create() {
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
 
-    assert!(std::fs::exists(filename).is_ok_and(|exists| exists));
+    assert!(std::fs::exists(&filename).is_ok_and(|exists| exists));
+    assert!(std::fs::remove_file(&filename).is_ok());
 }
 
 #[test]
@@ -130,4 +131,31 @@ fn stats_cancel() {
         i += 1;
         assert!(i < 3);
     }
+}
+
+#[test]
+fn create_dir() {
+    let (reactor, notifier) = runtime();
+    let filename = TempFile::new_name();
+
+    let mut mkdir = op::MkDirAt::new(&filename).unwrap().run_on(reactor.clone());
+    let mut fut = pin!(&mut mkdir);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let Poll::Ready(res) = poll!(fut, notifier) else {
+        panic!("poll not ready");
+    };
+    assert!(res.is_ok());
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+
+    assert!(std::fs::exists(&filename).is_ok_and(|exists| exists));
+    assert!(std::fs::remove_dir(&filename).is_ok());
 }

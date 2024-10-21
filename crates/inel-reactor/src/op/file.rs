@@ -231,3 +231,66 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
         ))
     }
 }
+
+pub struct MkDirAt<S> {
+    dir: RawFd,
+    path: S,
+    mode: libc::mode_t,
+}
+
+impl MkDirAt<CString> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Option<Self> {
+        if path.as_ref().is_absolute() {
+            Self::absolute(path)
+        } else {
+            Self::relative(path)
+        }
+    }
+
+    pub fn relative<P: AsRef<Path>>(path: P) -> Option<Self> {
+        Self::relative_to(libc::AT_FDCWD, path)
+    }
+
+    pub fn absolute<P: AsRef<Path>>(path: P) -> Option<Self> {
+        Self::relative_to(RawFd::from(-1), path)
+    }
+
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Option<Self> {
+        let path = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
+
+        Some(Self { dir, path, mode: 0 })
+    }
+}
+
+impl<S: AsRef<CStr>> MkDirAt<S> {
+    pub fn from_raw(dir: RawFd, path: S, mode: libc::mode_t) -> Self {
+        Self { dir, path, mode }
+    }
+
+    pub fn mode(mut self, mode: libc::mode_t) -> Self {
+        self.mode = mode;
+        self
+    }
+}
+
+unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::MkDirAt::new(Fd(self.dir), self.path.as_ref().as_ptr())
+            .mode(self.mode)
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        match ret {
+            0 => Ok(()),
+            -1.. => Err(Error::from_raw_os_error(-ret)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn cancel(&mut self, user_data: u64) -> Option<(Entry, Cancellation)> {
+        Some((AsyncCancel::new(user_data).build(), Cancellation::empty()))
+    }
+}
