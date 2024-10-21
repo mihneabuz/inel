@@ -12,9 +12,8 @@ fn create() {
     let (reactor, notifier) = runtime();
     let filename = TempFile::new_name();
 
-    let mut creat = op::OpenAt::new(&filename, libc::O_WRONLY | libc::O_CREAT)
-        .unwrap()
-        .run_on(reactor.clone());
+    let mut creat =
+        op::OpenAt::new(&filename, libc::O_WRONLY | libc::O_CREAT).run_on(reactor.clone());
     let mut fut = pin!(&mut creat);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -41,9 +40,7 @@ fn stats() {
     let (reactor, notifier) = runtime();
     let file = TempFile::with_content(&MESSAGE);
 
-    let mut open = op::OpenAt::new(&file.name(), libc::O_RDONLY)
-        .unwrap()
-        .run_on(reactor.clone());
+    let mut open = op::OpenAt::new(&file.name(), libc::O_RDONLY).run_on(reactor.clone());
     let mut fut = pin!(&mut open);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -88,9 +85,7 @@ fn stats_cancel() {
     let (reactor, notifier) = runtime();
     let file = TempFile::with_content(&MESSAGE);
 
-    let mut open = op::OpenAt::new(&file.name(), libc::O_RDONLY)
-        .unwrap()
-        .run_on(reactor.clone());
+    let mut open = op::OpenAt::new(&file.name(), libc::O_RDONLY).run_on(reactor.clone());
     let mut fut = pin!(&mut open);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -138,7 +133,7 @@ fn create_dir() {
     let (reactor, notifier) = runtime();
     let filename = TempFile::new_name();
 
-    let mut mkdir = op::MkDirAt::new(&filename).unwrap().run_on(reactor.clone());
+    let mut mkdir = op::MkDirAt::new(&filename).run_on(reactor.clone());
     let mut fut = pin!(&mut mkdir);
 
     assert!(poll!(fut, notifier).is_pending());

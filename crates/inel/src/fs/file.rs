@@ -1,5 +1,5 @@
 use std::{
-    io::{Error, Result},
+    io::Result,
     mem::MaybeUninit,
     os::fd::{FromRawFd, IntoRawFd, RawFd},
     path::Path,
@@ -29,27 +29,27 @@ impl OpenOptions {
         }
     }
 
-    pub fn readable(mut self, read: bool) -> Self {
+    pub fn readable(&mut self, read: bool) -> &mut Self {
         self.read = read;
         self
     }
 
-    pub fn writable(mut self, write: bool) -> Self {
+    pub fn writable(&mut self, write: bool) -> &mut Self {
         self.write = write;
         self
     }
 
-    pub fn append(mut self, append: bool) -> Self {
+    pub fn append(&mut self, append: bool) -> &mut Self {
         self.append = append;
         self
     }
 
-    pub fn create(mut self, create: bool) -> Self {
+    pub fn create(&mut self, create: bool) -> &mut Self {
         self.create = create;
         self
     }
 
-    pub fn truncate(mut self, truncate: bool) -> Self {
+    pub fn truncate(&mut self, truncate: bool) -> &mut Self {
         self.truncate = truncate;
         self
     }
@@ -82,11 +82,10 @@ impl OpenOptions {
         (flags, mode)
     }
 
-    async fn open<P: AsRef<Path>>(self, path: P) -> Result<File> {
+    async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         let (flags, mode) = self.libc_opts();
 
         let fd = op::OpenAt::new(path, flags)
-            .ok_or(Error::from_raw_os_error(libc::EINVAL))?
             .mode(mode)
             .run_on(GlobalReactor)
             .await?;
@@ -119,6 +118,10 @@ impl Metadata {
 
     pub fn len(&self) -> u64 {
         self.assume_init().stx_size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

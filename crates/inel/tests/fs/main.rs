@@ -35,6 +35,41 @@ fn open_file() {
 }
 
 #[test]
+fn create_dir() {
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    inel::block_on(async move {
+        let res = inel::fs::DirBuilder::new().create(name_clone).await;
+        assert!(res.is_ok());
+    });
+
+    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
+
+    std::fs::remove_dir(&name).unwrap();
+}
+
+#[test]
+fn create_dir_recursive() {
+    let base = temp_file();
+    let name = base.join("hello").join("world").join("!");
+    let name_clone = name.clone();
+
+    inel::block_on(async move {
+        let res = inel::fs::DirBuilder::new()
+            .recursive(true)
+            .create(name_clone)
+            .await;
+
+        assert!(res.is_ok());
+    });
+
+    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
 fn file_metadata() {
     setup_tracing();
 

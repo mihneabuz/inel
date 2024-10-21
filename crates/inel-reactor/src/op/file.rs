@@ -22,7 +22,7 @@ pub struct OpenAt<S> {
 }
 
 impl OpenAt<CString> {
-    pub fn new<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Option<Self> {
+    pub fn new<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path, flags)
         } else {
@@ -30,23 +30,23 @@ impl OpenAt<CString> {
         }
     }
 
-    pub fn relative<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Option<Self> {
+    pub fn relative<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Self {
         Self::relative_to(libc::AT_FDCWD, path, flags)
     }
 
-    pub fn absolute<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Option<Self> {
+    pub fn absolute<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Self {
         Self::relative_to(RawFd::from(-1), path, flags)
     }
 
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::c_int) -> Option<Self> {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::c_int) -> Self {
+        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
 
-        Some(Self {
+        Self {
             dir,
             path,
             flags,
             mode: 0,
-        })
+        }
     }
 }
 
@@ -96,7 +96,7 @@ pub struct OpenAt2<S> {
 }
 
 impl OpenAt2<CString> {
-    pub fn new<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Option<Self> {
+    pub fn new<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path, flags)
         } else {
@@ -104,29 +104,29 @@ impl OpenAt2<CString> {
         }
     }
 
-    pub fn relative<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Option<Self> {
+    pub fn relative<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
         Self::relative_to(libc::AT_FDCWD, path, flags)
     }
 
-    pub fn absolute<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Option<Self> {
+    pub fn absolute<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
         Self::relative_to(RawFd::from(-1), path, flags)
     }
 
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::__u64) -> Option<Self> {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::__u64) -> Self {
+        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
         let how = OpenHow::new().flags(flags);
-        Some(Self { dir, path, how })
+        Self { dir, path, how }
     }
 }
 
 impl<S: AsRef<CStr>> OpenAt2<S> {
-    pub fn from_raw(dir: RawFd, path: S, how: libc::open_how) -> Option<Self> {
+    pub fn from_raw(dir: RawFd, path: S, how: libc::open_how) -> Self {
         let how = OpenHow::new()
             .flags(how.flags)
             .mode(how.mode)
             .resolve(how.resolve);
 
-        Some(Self { dir, path, how })
+        Self { dir, path, how }
     }
 
     pub fn mode(mut self, mode: libc::__u64) -> Self {
@@ -181,20 +181,20 @@ impl Statx<&CStr> {
 }
 
 impl Statx<CString> {
-    pub fn relative<P: AsRef<Path>>(path: P) -> Option<Self> {
+    pub fn relative<P: AsRef<Path>>(path: P) -> Self {
         Self::relative_to(libc::AT_FDCWD, path)
     }
 
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Option<Self> {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Self {
+        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
 
-        Some(Self {
+        Self {
             dir,
             path,
             flags: libc::AT_EMPTY_PATH,
             mask: 0,
             stats: Some(Box::new(MaybeUninit::uninit())),
-        })
+        }
     }
 }
 
@@ -219,8 +219,8 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
     fn result(self, ret: i32) -> Self::Output {
         match ret {
             0 => Ok(self.stats.unwrap()),
-            -1.. => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
+            ..=-1 => Err(Error::from_raw_os_error(-ret)),
+            1.. => unreachable!(),
         }
     }
 
@@ -239,7 +239,7 @@ pub struct MkDirAt<S> {
 }
 
 impl MkDirAt<CString> {
-    pub fn new<P: AsRef<Path>>(path: P) -> Option<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path)
         } else {
@@ -247,18 +247,17 @@ impl MkDirAt<CString> {
         }
     }
 
-    pub fn relative<P: AsRef<Path>>(path: P) -> Option<Self> {
+    pub fn relative<P: AsRef<Path>>(path: P) -> Self {
         Self::relative_to(libc::AT_FDCWD, path)
     }
 
-    pub fn absolute<P: AsRef<Path>>(path: P) -> Option<Self> {
+    pub fn absolute<P: AsRef<Path>>(path: P) -> Self {
         Self::relative_to(RawFd::from(-1), path)
     }
 
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Option<Self> {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
-
-        Some(Self { dir, path, mode: 0 })
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Self {
+        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
+        Self { dir, path, mode: 0 }
     }
 }
 
@@ -285,8 +284,8 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
     fn result(self, ret: i32) -> Self::Output {
         match ret {
             0 => Ok(()),
-            -1.. => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
+            ..=-1 => Err(Error::from_raw_os_error(-ret)),
+            1.. => unreachable!(),
         }
     }
 

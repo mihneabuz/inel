@@ -1,3 +1,5 @@
+mod dir;
 mod file;
 
-pub use file::{File, OpenOptions};
+pub use dir::DirBuilder;
+pub use file::{File, Metadata, OpenOptions};
