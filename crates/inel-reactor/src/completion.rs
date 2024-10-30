@@ -31,7 +31,7 @@ impl Completion {
             CompletionInner::Finished(_) => true,
 
             CompletionInner::Cancelled(_) => {
-                panic!("Completion already cancelled");
+                unreachable!("Completion already cancelled");
             }
         }
     }
@@ -49,7 +49,7 @@ impl Completion {
             }
 
             CompletionInner::Finished(_) => {
-                panic!("Completion already finished");
+                unreachable!("Completion already finished");
             }
         }
     }

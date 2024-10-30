@@ -7,7 +7,7 @@ use futures::{future::FusedFuture, Future};
 use inel_interface::Reactor;
 use pin_project_lite::pin_project;
 
-use crate::{completion::Key, op::Op, Ring};
+use crate::{completion::Key, op::Op, reactor::RingReactor, Ring};
 
 pub enum SubmissionState {
     Initial,
@@ -15,11 +15,17 @@ pub enum SubmissionState {
     Completed,
 }
 
+impl SubmissionState {
+    pub fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Initial)
+    }
+}
+
 pin_project! {
     pub struct Submission<T: Op, R: Reactor<Handle = Ring>> {
         op: Option<T>,
         state: SubmissionState,
-        reactor: R,
+        react: R,
     }
 
     impl<T, R> PinnedDrop for Submission<T, R>
@@ -31,7 +37,7 @@ pin_project! {
             if let SubmissionState::Submitted(key) = this.state {
                 let this = this.project();
                 let (entry, cancel) = this.op.take().unwrap().cancel(key.as_u64());
-                this.reactor.with(|reactor| unsafe { reactor.cancel(key, entry, cancel) });
+                unsafe { this.react.cancel(key, entry, cancel) };
             }
         }
     }
@@ -42,11 +48,11 @@ where
     T: Op,
     R: Reactor<Handle = Ring>,
 {
-    pub fn new(reactor: R, op: T) -> Self {
+    pub fn new(react: R, op: T) -> Self {
         Self {
             op: Some(op),
             state: SubmissionState::Initial,
-            reactor,
+            react,
         }
     }
 }
@@ -61,34 +67,31 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        match this.state {
+        let (ret, next_state) = match this.state.take() {
             SubmissionState::Initial => {
                 let entry = this.op.as_mut().unwrap().entry();
-                let key = this
-                    .reactor
-                    .with(|reactor| unsafe { reactor.submit(entry, cx.waker().clone()) });
+                let waker = cx.waker().clone();
+                let key = unsafe { this.react.submit(entry, waker) };
 
-                *this.state = SubmissionState::Submitted(key);
-
-                Poll::Pending
+                (Poll::Pending, SubmissionState::Submitted(key))
             }
 
-            SubmissionState::Submitted(key) => {
-                let Some(ret) = this.reactor.with(|reactor| reactor.check_result(*key)) else {
-                    return Poll::Pending;
-                };
-
-                let op = this.op.take().unwrap();
-
-                *this.state = SubmissionState::Completed;
-
-                Poll::Ready(op.result(ret))
-            }
+            SubmissionState::Submitted(key) => match this.react.check_result(key) {
+                None => (Poll::Pending, SubmissionState::Submitted(key)),
+                Some(ret) => {
+                    let op = this.op.take().unwrap();
+                    (Poll::Ready(op.result(ret)), SubmissionState::Completed)
+                }
+            },
 
             SubmissionState::Completed => {
                 panic!("Polled already completed Submission");
             }
-        }
+        };
+
+        *this.state = next_state;
+
+        ret
     }
 }
 

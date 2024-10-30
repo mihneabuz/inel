@@ -5,7 +5,7 @@ use inel_reactor::Ring;
 
 thread_local! {
     static EXECUTOR: RefCell<Executor> = RefCell::new(Executor::new());
-    static REACTOR: RefCell<Ring> = RefCell::new(Ring::new());
+    static REACTOR: RefCell<Ring> = RefCell::new(Ring::with_capacity(1024));
 }
 
 struct GlobalReactor;
