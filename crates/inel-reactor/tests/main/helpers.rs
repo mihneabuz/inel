@@ -35,7 +35,7 @@ impl Clone for ScopedReactor {
 impl ScopedReactor {
     fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(Ring::new())),
+            inner: Rc::new(RefCell::new(Ring::with_capacity(64))),
         }
     }
 

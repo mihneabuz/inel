@@ -15,17 +15,7 @@ pub struct Ring {
     completions: CompletionSet,
 }
 
-impl Default for Ring {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Ring {
-    pub fn new() -> Self {
-        Self::with_capacity(64)
-    }
-
     pub fn with_capacity(capacity: u32) -> Self {
         let ring = IoUring::builder()
             .build(capacity)

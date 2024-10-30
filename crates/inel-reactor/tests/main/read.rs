@@ -49,7 +49,7 @@ fn multi() {
 
     let mut read1 = op::Read::new(file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
     let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2])).run_on(reactor.clone());
-    let mut read3 = op::Read::new(file3.fd(), Box::new([0; READ_LEN3])).run_on(reactor.clone());
+    let mut read3 = op::Read::new(file3.fd(), Vec::from([0; READ_LEN3])).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut read1);
     let mut fut2 = pin!(&mut read2);
@@ -211,6 +211,52 @@ mod vectored {
     }
 
     #[test]
+    fn error() {
+        let (reactor, notifier) = runtime();
+
+        let orig_bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
+        let orig_bufs_exact: [Box<[u8]>; 6] = std::array::from_fn(|_| vec![0u8; 256].into());
+
+        let mut read1 =
+            op::ReadVectored::new(RawFd::from(9999), orig_bufs.clone()).run_on(reactor.clone());
+        let mut read2 = op::ReadVectoredExact::new(RawFd::from(9999), orig_bufs_exact.clone())
+            .run_on(reactor.clone());
+
+        let mut fut1 = pin!(&mut read1);
+        let mut fut2 = pin!(&mut read2);
+
+        assert!(poll!(fut1, notifier).is_pending());
+        assert!(poll!(fut2, notifier).is_pending());
+        assert_eq!(reactor.active(), 2);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let Poll::Ready((bufs1, res1)) = poll!(fut1, notifier) else {
+            panic!("poll not ready");
+        };
+
+        let Poll::Ready((bufs2, res2)) = poll!(fut2, notifier) else {
+            panic!("poll not ready");
+        };
+
+        assert_eq!(bufs1, orig_bufs);
+        assert_eq!(bufs2, orig_bufs_exact);
+
+        let err1 = res1.expect_err("read didn't fail");
+        assert_eq!(&err1.to_string(), "Bad file descriptor (os error 9)");
+
+        let err2 = res2.expect_err("read didn't fail");
+        assert_eq!(&err2.to_string(), "Bad file descriptor (os error 9)");
+
+        assert!(fut1.is_terminated());
+        assert!(fut2.is_terminated());
+        assert!(reactor.is_done());
+    }
+
+    #[test]
     #[test_repeat(100)]
     fn cancel() {
         let (reactor, notifier) = runtime();
@@ -219,8 +265,10 @@ mod vectored {
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
 
-        let mut read1 = op::ReadVectored::new(file1.fd(), bufs.clone()).run_on(reactor.clone());
-        let mut read2 = op::ReadVectored::new(file2.fd(), bufs.clone()).run_on(reactor.clone());
+        let mut read1 = op::ReadVectored::from_iter(file1.fd(), bufs.clone().into_iter())
+            .run_on(reactor.clone());
+        let mut read2 = op::ReadVectored::from_iter(file2.fd(), bufs.clone().into_iter())
+            .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
         let mut fut2 = pin!(&mut read2);
