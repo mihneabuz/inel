@@ -175,7 +175,7 @@ impl File {
     }
 
     pub async fn metadata(&self) -> Result<Metadata> {
-        let statx = op::Statx::new(self.fd)
+        let statx = op::Statx::from_fd(self.fd)
             .mask(libc::STATX_TYPE | libc::STATX_SIZE)
             .run_on(GlobalReactor)
             .await?;

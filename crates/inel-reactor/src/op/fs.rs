@@ -40,13 +40,7 @@ impl OpenAt<CString> {
 
     pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::c_int) -> Self {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-
-        Self {
-            dir,
-            path,
-            flags,
-            mode: 0,
-        }
+        Self::from_raw(dir, path, flags, 0)
     }
 }
 
@@ -99,7 +93,7 @@ pub struct OpenAt2<S> {
 }
 
 impl OpenAt2<CString> {
-    pub fn new<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
+    pub fn new<P: AsRef<Path>>(path: P, flags: u64) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path, flags)
         } else {
@@ -107,37 +101,33 @@ impl OpenAt2<CString> {
         }
     }
 
-    pub fn relative<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
+    pub fn relative<P: AsRef<Path>>(path: P, flags: u64) -> Self {
         Self::relative_to(libc::AT_FDCWD, path, flags)
     }
 
-    pub fn absolute<P: AsRef<Path>>(path: P, flags: libc::__u64) -> Self {
+    pub fn absolute<P: AsRef<Path>>(path: P, flags: u64) -> Self {
         Self::relative_to(RawFd::from(-1), path, flags)
     }
 
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: libc::__u64) -> Self {
+    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: u64) -> Self {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-        let how = OpenHow::new().flags(flags);
-        Self { dir, path, how }
+        Self::from_raw(dir, path, flags, 0, 0)
     }
 }
 
 impl<S: AsRef<CStr>> OpenAt2<S> {
-    pub fn from_raw(dir: RawFd, path: S, how: libc::open_how) -> Self {
-        let how = OpenHow::new()
-            .flags(how.flags)
-            .mode(how.mode)
-            .resolve(how.resolve);
+    pub fn from_raw(dir: RawFd, path: S, flags: u64, mode: u64, resolve: u64) -> Self {
+        let how = OpenHow::new().flags(flags).mode(mode).resolve(resolve);
 
         Self { dir, path, how }
     }
 
-    pub fn mode(mut self, mode: libc::__u64) -> Self {
+    pub fn mode(mut self, mode: u64) -> Self {
         self.how = self.how.mode(mode);
         self
     }
 
-    pub fn resolve(mut self, resolve: libc::__u64) -> Self {
+    pub fn resolve(mut self, resolve: u64) -> Self {
         self.how = self.how.resolve(resolve);
         self
     }
@@ -199,7 +189,7 @@ pub struct Statx<P> {
 }
 
 impl Statx<&CStr> {
-    pub fn new(fd: RawFd) -> Self {
+    pub fn from_fd(fd: RawFd) -> Self {
         Self {
             dir: fd,
             path: unsafe { CStr::from_ptr("\0".as_ptr() as *const _) },
@@ -211,8 +201,20 @@ impl Statx<&CStr> {
 }
 
 impl Statx<CString> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        if path.as_ref().is_absolute() {
+            Self::absolute(path)
+        } else {
+            Self::relative(path)
+        }
+    }
+
     pub fn relative<P: AsRef<Path>>(path: P) -> Self {
         Self::relative_to(libc::AT_FDCWD, path)
+    }
+
+    pub fn absolute<P: AsRef<Path>>(path: P) -> Self {
+        Self::relative_to(RawFd::from(-1), path)
     }
 
     pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Self {

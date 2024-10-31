@@ -4,7 +4,9 @@ use std::{
     cell::RefCell,
     fs::{self, File},
     os::fd::{AsRawFd, RawFd},
+    path::{Path, PathBuf},
     rc::Rc,
+    str::FromStr,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc, Once,
@@ -126,6 +128,18 @@ impl TempFile {
         format!("/tmp/inel_reactor_test_{}", uuid::Uuid::new_v4())
     }
 
+    pub fn new_relative_name() -> String {
+        let name = Self::new_name();
+        let abs = PathBuf::from_str(&name).unwrap();
+        Self::make_relative(abs).to_string_lossy().to_string()
+    }
+
+    pub fn dir() -> Self {
+        let name = Self::new_name();
+        std::fs::create_dir(&name).unwrap();
+        Self { name, inner: None }
+    }
+
     pub fn empty() -> Self {
         let name = Self::new_name();
         let file = File::create_new(&name).unwrap();
@@ -141,6 +155,29 @@ impl TempFile {
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn make_relative(abs: PathBuf) -> PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        let backs = cwd.iter().count();
+
+        let mut buf = PathBuf::new();
+        (0..backs).for_each(|_| buf.push(".."));
+        abs.into_iter().skip(1).for_each(|part| buf.push(part));
+
+        buf
+    }
+
+    pub fn path(&self) -> &Path {
+        Path::new(&self.name)
+    }
+
+    pub fn absolute_path(&self) -> PathBuf {
+        std::fs::canonicalize(self.path()).unwrap()
+    }
+
+    pub fn relative_path(&self) -> PathBuf {
+        Self::make_relative(self.absolute_path())
     }
 
     pub fn with_content(content: impl AsRef<str>) -> Self {
@@ -161,7 +198,9 @@ impl TempFile {
 impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = self.inner.take();
-        fs::remove_file(&self.name).unwrap();
+        if fs::remove_file(&self.name).is_err() {
+            fs::remove_dir_all(&self.name).unwrap();
+        }
     }
 }
 

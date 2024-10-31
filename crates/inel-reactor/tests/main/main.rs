@@ -1,3 +1,4 @@
+mod dir;
 mod file;
 pub mod helpers;
 mod read;
