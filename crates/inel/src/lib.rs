@@ -25,8 +25,11 @@ impl inel_interface::Reactor for GlobalReactor {
 }
 
 pub use inel_macro::main;
+pub use inel_reactor::buffer::{StableBuffer, StableMutBuffer};
 pub mod fs;
 pub mod time;
+mod traits;
+pub use traits::*;
 
 #[inline]
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>

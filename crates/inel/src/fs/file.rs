@@ -2,13 +2,13 @@ use std::{
     fmt::{self, Display, Formatter},
     io::Result,
     mem::MaybeUninit,
-    os::fd::{FromRawFd, IntoRawFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     path::Path,
 };
 
 use inel_reactor::op::{self, Op};
 
-use crate::GlobalReactor;
+use crate::{GlobalReactor, ReadSource, WriteSource};
 
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
@@ -74,7 +74,7 @@ impl OpenOptions {
 
         if self.create {
             flags |= libc::O_CREAT;
-            mode |= libc::S_IWUSR;
+            mode |= libc::S_IWUSR | libc::S_IRUSR;
         }
 
         if self.truncate {
@@ -145,18 +145,6 @@ impl Display for File {
     }
 }
 
-impl FromRawFd for File {
-    unsafe fn from_raw_fd(fd: RawFd) -> Self {
-        Self { fd }
-    }
-}
-
-impl IntoRawFd for File {
-    fn into_raw_fd(self) -> RawFd {
-        self.fd
-    }
-}
-
 impl File {
     pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         OpenOptions::new().readable(true).open(path).await
@@ -183,6 +171,27 @@ impl File {
         Ok(Metadata { raw: statx })
     }
 }
+
+impl FromRawFd for File {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Self { fd }
+    }
+}
+
+impl IntoRawFd for File {
+    fn into_raw_fd(self) -> RawFd {
+        self.fd
+    }
+}
+
+impl AsRawFd for File {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+impl ReadSource for File {}
+impl WriteSource for File {}
 
 impl Drop for File {
     fn drop(&mut self) {
