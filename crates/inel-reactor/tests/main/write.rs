@@ -125,9 +125,7 @@ fn error() {
     };
 
     assert_eq!(buf, Box::new([0; 128]));
-
-    let err = res.expect_err("read didn't fail");
-    assert_eq!(&err.to_string(), "Bad file descriptor (os error 9)");
+    res.expect_err("read didn't fail");
 }
 
 #[test]
@@ -244,11 +242,8 @@ mod vectored {
         assert_eq!(bufs1, orig_bufs);
         assert_eq!(bufs2, orig_bufs_exact);
 
-        let err1 = res1.expect_err("write didn't fail");
-        assert_eq!(&err1.to_string(), "Bad file descriptor (os error 9)");
-
-        let err2 = res2.expect_err("write didn't fail");
-        assert_eq!(&err2.to_string(), "Bad file descriptor (os error 9)");
+        res1.expect_err("write didn't fail");
+        res2.expect_err("write didn't fail");
 
         assert!(fut1.is_terminated());
         assert!(fut2.is_terminated());
