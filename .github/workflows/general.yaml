@@ -80,5 +80,5 @@ jobs:
       - name: Rust Cache Action
         uses: Swatinem/rust-cache@v2
 
-      - name: Generate code coverage
+      - name: Audit dependencies
         run: cargo install cargo-audit && cargo audit
