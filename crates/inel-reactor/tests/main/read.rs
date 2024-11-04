@@ -35,6 +35,35 @@ fn single() {
 }
 
 #[test]
+fn offset() {
+    let (reactor, notifier) = runtime();
+    let file = TempFile::with_content(&MESSAGE);
+
+    let mut read = op::Read::new(file.fd(), Box::new([0; 1024]))
+        .offset(512)
+        .run_on(reactor.clone());
+    let mut fut = pin!(&mut read);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
+        panic!("poll not ready");
+    };
+    let read = res.expect("read failed");
+
+    assert_eq!(read, 1024);
+    assert_eq!(&buf[..read], &MESSAGE.as_bytes()[512..512 + read]);
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+}
+
+#[test]
 #[test_repeat(100)]
 fn multi() {
     let (reactor, notifier) = runtime();
@@ -209,6 +238,43 @@ mod vectored {
     }
 
     #[test]
+    fn offset() {
+        let (reactor, notifier) = runtime();
+        let file = TempFile::with_content(&MESSAGE);
+
+        let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
+        let mut read = op::ReadVectored::new(file.fd(), bufs)
+            .offset(512)
+            .run_on(reactor.clone());
+
+        let mut fut = pin!(&mut read);
+
+        assert!(poll!(fut, notifier).is_pending());
+        assert_eq!(reactor.active(), 1);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let Poll::Ready((bufs, res)) = poll!(fut, notifier) else {
+            panic!("poll not ready");
+        };
+        let read = res.expect("read failed");
+
+        assert_eq!(read, 256 * 6);
+
+        for i in 0..6 {
+            assert_eq!(
+                bufs[i].as_ref(),
+                &MESSAGE.as_bytes()[512 + i * 256..512 + (i + 1) * 256]
+            );
+        }
+
+        assert!(fut.is_terminated());
+        assert!(reactor.is_done());
+    }
+
+    #[test]
     fn error() {
         let (reactor, notifier) = runtime();
 
@@ -299,7 +365,9 @@ mod vectored {
 
         let bufs: [Box<[u8]>; 6] = std::array::from_fn(|_| vec![0u8; 256].into());
         let mut r1 = op::ReadVectoredExact::new(file1.fd(), bufs.clone()).run_on(reactor.clone());
-        let mut r2 = op::ReadVectoredExact::new(file2.fd(), bufs.clone()).run_on(reactor.clone());
+        let mut r2 = op::ReadVectoredExact::new(file2.fd(), bufs.clone())
+            .offset(0)
+            .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut r1);
         let mut fut2 = pin!(&mut r2);
