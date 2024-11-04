@@ -54,19 +54,10 @@ pub fn run() {
 
 #[cfg(feature = "sys")]
 pub mod sys {
-    use super::GlobalReactor;
-
     pub use inel_reactor::{buffer::*, op, Submission};
 
     #[allow(private_interfaces)]
-    #[inline]
-    pub const fn reactor() -> GlobalReactor {
-        GlobalReactor
-    }
-
-    #[allow(private_interfaces)]
-    #[inline]
-    pub fn wrap<O: op::Op>(op: O) -> Submission<O, GlobalReactor> {
-        op.run_on(reactor())
+    pub const fn reactor() -> crate::GlobalReactor {
+        crate::GlobalReactor
     }
 }

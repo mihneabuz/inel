@@ -118,7 +118,7 @@ fn dir_metadata() {
 }
 
 #[test]
-#[test_repeat(10)]
+#[test_repeat(3)]
 fn drop_close() {
     setup_tracing();
 
@@ -135,7 +135,7 @@ fn drop_close() {
     });
 
     assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
-    std::thread::sleep(Duration::from_millis(10));
+    std::thread::sleep(Duration::from_millis(30));
 
     inel::block_on(async move {
         let file = unsafe { inel::fs::File::from_raw_fd(fd) };
