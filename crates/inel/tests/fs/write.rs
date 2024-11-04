@@ -26,3 +26,22 @@ fn simple() {
 
     std::fs::remove_file(&name).unwrap();
 }
+
+#[test]
+fn sync() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    inel::block_on(async move {
+        let mut file = inel::fs::File::create(name_clone).await.unwrap();
+
+        let (_, res) = file.write_owned(Box::new([b'a'; 256])).await;
+        assert!(res.is_ok_and(|read| read == 256));
+
+        assert!(file.sync().await.is_ok());
+    });
+
+    std::fs::remove_file(&name).unwrap();
+}

@@ -170,6 +170,10 @@ impl File {
 
         Ok(Metadata { raw: statx })
     }
+
+    pub async fn sync(&self) -> Result<()> {
+        op::Fsync::new(self.fd).run_on(GlobalReactor).await
+    }
 }
 
 impl FromRawFd for File {
