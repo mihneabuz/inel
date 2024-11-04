@@ -341,3 +341,32 @@ mod vectored {
         assert!(reactor.is_done());
     }
 }
+
+#[test]
+fn sync() {
+    let (reactor, notifier) = runtime();
+    let file = TempFile::with_content("");
+
+    let mut write = op::Write::new(file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut fut = pin!(&mut write);
+
+    assert!(poll!(fut, notifier).is_pending());
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert!(matches!(poll!(fut, notifier), Poll::Ready((_, Ok(_)))));
+
+    let mut sync = op::Fsync::new(file.fd()).run_on(reactor.clone());
+    let mut fut = pin!(&mut sync);
+
+    assert!(poll!(fut, notifier).is_pending());
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert!(matches!(poll!(fut, notifier), Poll::Ready(Ok(()))));
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+}

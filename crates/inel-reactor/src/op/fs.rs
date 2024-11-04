@@ -180,6 +180,36 @@ unsafe impl Op for Close {
     }
 }
 
+pub struct Fsync {
+    fd: RawFd,
+}
+
+impl Fsync {
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+}
+
+unsafe impl Op for Fsync {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::Fsync::new(Fd(self.fd)).build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        match ret {
+            0 => Ok(()),
+            ..=-1 => Err(Error::from_raw_os_error(-ret)),
+            1.. => unreachable!(),
+        }
+    }
+
+    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
+        (None, Cancellation::empty())
+    }
+}
+
 pub struct Statx<P> {
     dir: RawFd,
     path: P,
