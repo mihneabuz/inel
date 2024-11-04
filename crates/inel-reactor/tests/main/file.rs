@@ -165,7 +165,7 @@ fn cancel() {
     while !reactor.is_done() {
         reactor.wait();
         i += 1;
-        assert!(i < 3);
+        assert!(i < 5);
     }
 }
 

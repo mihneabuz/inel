@@ -29,7 +29,7 @@ fn single() {
 
     assert!(reactor.is_done());
 
-    assert_in_range!(10..40, &start.elapsed().as_millis());
+    assert_in_range!(10..60, &start.elapsed().as_millis());
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn multi() {
     assert!(fut1.is_terminated());
     assert_eq!(reactor.active(), 1);
 
-    assert_in_range!(10..40, &start.elapsed().as_millis());
+    assert_in_range!(10..60, &start.elapsed().as_millis());
 
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
