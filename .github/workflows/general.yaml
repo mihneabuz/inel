@@ -67,7 +67,7 @@ jobs:
       - name: Generate code coverage
         run: cargo install cargo-tarpaulin && cargo tarpaulin
 
-  coverage:
+  audit:
     name: Audit
     runs-on: ubuntu-latest
     steps:
