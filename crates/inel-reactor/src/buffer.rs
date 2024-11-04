@@ -79,6 +79,14 @@ where
         }
     }
 
+    pub fn inner(&self) -> &B {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut B {
+        &mut self.inner
+    }
+
     pub fn unview(self) -> B {
         self.inner
     }
@@ -110,6 +118,16 @@ where
     }
 }
 
+impl<B, R> AsRef<[u8]> for View<B, R>
+where
+    B: StableBuffer,
+    R: RangeBounds<usize>,
+{
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 impl<B, R> View<B, R>
 where
     B: StableMutBuffer,
@@ -117,6 +135,16 @@ where
 {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.stable_mut_ptr(), self.size()) }
+    }
+}
+
+impl<B, R> AsMut<[u8]> for View<B, R>
+where
+    B: StableMutBuffer,
+    R: RangeBounds<usize>,
+{
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_slice()
     }
 }
 

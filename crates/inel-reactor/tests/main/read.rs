@@ -3,7 +3,10 @@ use std::{os::fd::RawFd, pin::pin, task::Poll};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
-use inel_reactor::op::{self, Op};
+use inel_reactor::{
+    buffer::StableBuffer,
+    op::{self, Op},
+};
 
 use crate::helpers::{poll, runtime, TempFile, MESSAGE};
 
@@ -58,6 +61,37 @@ fn offset() {
 
     assert_eq!(read, 1024);
     assert_eq!(&buf[..read], &MESSAGE.as_bytes()[512..512 + read]);
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn view() {
+    let (reactor, notifier) = runtime();
+    let file = TempFile::with_content(&MESSAGE);
+
+    let buf = Box::new([0; 1024]);
+    let mut read = op::Read::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+    let mut fut = pin!(&mut read);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let Poll::Ready((view, res)) = poll!(fut, notifier) else {
+        panic!("poll not ready");
+    };
+    let read = res.expect("read failed");
+
+    assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[..read]);
+
+    let buf = view.unview();
+    assert_eq!(&buf[0..64], &[0; 64]);
+    assert_eq!(&buf[512..], &[0; 512]);
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
@@ -168,8 +202,11 @@ fn cancel() {
     const READ_LEN3: usize = 2048;
 
     let mut read1 = op::Read::new(file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
-    let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2])).run_on(reactor.clone());
-    let mut read3 = op::Read::new(file3.fd(), Box::new([0; READ_LEN3])).run_on(reactor.clone());
+    let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2]))
+        .offset(128)
+        .run_on(reactor.clone());
+    let mut read3 =
+        op::Read::new(file3.fd(), Box::new([0; READ_LEN3]).view(128..)).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut read1);
     let mut fut2 = pin!(&mut read2);

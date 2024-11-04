@@ -3,7 +3,10 @@ use std::{os::fd::RawFd, pin::pin, task::Poll};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
-use inel_reactor::op::{self, Op};
+use inel_reactor::{
+    buffer::StableBuffer,
+    op::{self, Op},
+};
 
 use crate::helpers::{poll, runtime, TempFile, MESSAGE};
 
@@ -64,6 +67,36 @@ fn offset() {
         &file.read().as_bytes()[512..],
         MESSAGE.to_string().as_bytes()
     );
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn view() {
+    let (reactor, notifier) = runtime();
+    let file = TempFile::with_content(&MESSAGE);
+
+    let buf = MESSAGE.as_bytes().to_vec();
+    let mut read = op::Write::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+    let mut fut = pin!(&mut read);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let Poll::Ready((view, res)) = poll!(fut, notifier) else {
+        panic!("poll not ready");
+    };
+    let read = res.expect("write failed");
+
+    assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
+
+    let buf = view.unview();
+    assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
@@ -172,10 +205,11 @@ fn cancel() {
 
     let mut write1 =
         op::Write::new(file1.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
-    let mut write2 =
-        op::Write::new(file2.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut write2 = op::Write::new(file2.fd(), MESSAGE.as_bytes().to_vec())
+        .offset(256)
+        .run_on(reactor.clone());
     let mut write3 =
-        op::Write::new(file3.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+        op::Write::new(file3.fd(), MESSAGE.as_bytes().to_vec().view(..512)).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut write1);
     let mut fut2 = pin!(&mut write2);
