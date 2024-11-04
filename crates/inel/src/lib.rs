@@ -25,7 +25,7 @@ impl inel_interface::Reactor for GlobalReactor {
 }
 
 pub use inel_macro::main;
-pub use inel_reactor::buffer::{StableBuffer, StableMutBuffer};
+pub use inel_reactor::buffer::{StableBuffer, StableMutBuffer, View};
 pub mod fs;
 pub mod time;
 mod traits;
