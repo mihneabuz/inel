@@ -1,3 +1,5 @@
+use crate::buffer::{StableBuffer, View};
+
 pub struct Cancellation {
     ptr: *mut (),
     metadata: usize,
@@ -61,5 +63,14 @@ impl<T> From<Box<[T]>> for Cancellation {
 impl<T> From<Vec<T>> for Cancellation {
     fn from(value: Vec<T>) -> Self {
         Cancellation::from(value.into_boxed_slice())
+    }
+}
+
+impl<T, R> From<View<T, R>> for Cancellation
+where
+    T: StableBuffer,
+{
+    fn from(value: View<T, R>) -> Self {
+        value.unview().into()
     }
 }
