@@ -1,8 +1,10 @@
+use std::io::Result;
 use std::task::Waker;
 
 use io_uring::{squeue::Entry, IoUring};
 use tracing::debug;
 
+use crate::buffer::FixedMutBuffer;
 use crate::cancellation::Cancellation;
 use crate::completion::{CompletionSet, Key};
 
@@ -117,5 +119,17 @@ impl Ring {
 
             self.active -= 1;
         }
+    }
+
+    /// # Safety
+    /// Caller must ensure that the buffer is valid until the ring is destroyed
+    pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    where
+        B: FixedMutBuffer,
+    {
+        self.ring.submitter().register_buffers(&[libc::iovec {
+            iov_base: buffer.stable_mut_ptr() as *mut _,
+            iov_len: buffer.size(),
+        }])
     }
 }

@@ -1,6 +1,11 @@
-use std::ops::{Bound, RangeBounds};
+use std::{
+    io::Result,
+    ops::{Bound, RangeBounds},
+};
 
-use crate::cancellation::Cancellation;
+use inel_interface::Reactor;
+
+use crate::{cancellation::Cancellation, reactor::RingReactor, Ring};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
@@ -14,6 +19,8 @@ pub trait StableBuffer: Into<Cancellation> {
 pub trait StableMutBuffer: StableBuffer {
     fn stable_mut_ptr(&mut self) -> *mut u8;
 }
+
+pub trait FixedMutBuffer: StableMutBuffer {}
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
     fn stable_ptr(&self) -> *const u8 {
@@ -62,6 +69,69 @@ impl StableMutBuffer for Vec<u8> {
         self.as_mut_ptr()
     }
 }
+
+pub struct Fixed<B> {
+    inner: B,
+}
+
+impl<B> Fixed<B>
+where
+    B: StableMutBuffer,
+{
+    pub fn register<R>(buffer: B, reactor: &mut R) -> Result<Self>
+    where
+        R: Reactor<Handle = Ring>,
+    {
+        let mut this = Self { inner: buffer };
+        unsafe { reactor.register_buffer(&mut this) }?;
+        Ok(this)
+    }
+
+    pub fn inner(&self) -> &B {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut B {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
+}
+
+impl<T> From<Fixed<T>> for Cancellation
+where
+    T: StableMutBuffer,
+{
+    fn from(value: Fixed<T>) -> Self {
+        value.into_inner().into()
+    }
+}
+
+impl<B> StableBuffer for Fixed<B>
+where
+    B: StableMutBuffer,
+{
+    fn stable_ptr(&self) -> *const u8 {
+        self.inner.stable_ptr()
+    }
+
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
+}
+
+impl<B> StableMutBuffer for Fixed<B>
+where
+    B: StableMutBuffer,
+{
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.inner.stable_mut_ptr()
+    }
+}
+
+impl<B> FixedMutBuffer for Fixed<B> where B: StableMutBuffer {}
 
 pub struct View<B, R> {
     inner: B,
@@ -148,6 +218,15 @@ where
     }
 }
 
+impl<T, R> From<View<T, R>> for Cancellation
+where
+    T: StableBuffer,
+{
+    fn from(value: View<T, R>) -> Self {
+        value.unview().into()
+    }
+}
+
 impl<B, R> StableBuffer for View<B, R>
 where
     B: StableBuffer,
@@ -170,4 +249,11 @@ where
     fn stable_mut_ptr(&mut self) -> *mut u8 {
         self.inner.stable_mut_ptr().wrapping_add(self.start())
     }
+}
+
+impl<B, R> FixedMutBuffer for View<B, R>
+where
+    B: FixedMutBuffer,
+    R: RangeBounds<usize>,
+{
 }
