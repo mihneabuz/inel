@@ -1,12 +1,19 @@
+mod completion;
+mod register;
+
 use std::io::Result;
 use std::task::Waker;
 
 use io_uring::{squeue::Entry, IoUring};
 use tracing::debug;
 
-use crate::buffer::FixedMutBuffer;
-use crate::cancellation::Cancellation;
-use crate::completion::{CompletionSet, Key};
+use crate::{buffer::StableMutBuffer, Cancellation};
+
+use completion::CompletionSet;
+use register::BufferRegister;
+
+pub use completion::Key;
+pub use register::BufferKey;
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -15,6 +22,7 @@ pub struct Ring {
     active: u32,
     canceled: u32,
     completions: CompletionSet,
+    buffers: BufferRegister,
 }
 
 impl Ring {
@@ -28,6 +36,7 @@ impl Ring {
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(capacity as usize),
+            buffers: BufferRegister::new(),
         }
     }
 
@@ -123,13 +132,29 @@ impl Ring {
 
     /// # Safety
     /// Caller must ensure that the buffer is valid until the ring is destroyed
-    pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
     where
-        B: FixedMutBuffer,
+        B: StableMutBuffer,
     {
-        self.ring.submitter().register_buffers(&[libc::iovec {
-            iov_base: buffer.stable_mut_ptr() as *mut _,
-            iov_len: buffer.size(),
-        }])
+        let key = self.buffers.insert(buffer);
+        self.sync_buffers()?;
+        Ok(key)
+    }
+
+    pub fn unregister_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    where
+        B: StableMutBuffer,
+    {
+        self.buffers.remove(buffer);
+        self.sync_buffers()
+    }
+
+    fn sync_buffers(&mut self) -> Result<()> {
+        self.ring.submitter().unregister_buffers()?;
+        unsafe {
+            self.ring
+                .submitter()
+                .register_buffers(&self.buffers.iovecs())
+        }
     }
 }

@@ -7,7 +7,7 @@ use futures::{future::FusedFuture, Future};
 use inel_interface::Reactor;
 use pin_project_lite::pin_project;
 
-use crate::{completion::Key, op::Op, reactor::RingReactor, Ring};
+use crate::{op::Op, Key, Ring, RingReactor};
 
 pub enum SubmissionState {
     Initial,
@@ -25,7 +25,7 @@ pin_project! {
     pub struct Submission<T: Op, R: Reactor<Handle = Ring>> {
         op: Option<T>,
         state: SubmissionState,
-        react: R,
+        reactor: R,
     }
 
     impl<T, R> PinnedDrop for Submission<T, R>
@@ -37,7 +37,7 @@ pin_project! {
             if let SubmissionState::Submitted(key) = this.state {
                 let this = this.project();
                 let (entry, cancel) = this.op.take().unwrap().cancel(key.as_u64());
-                unsafe { this.react.cancel(key, entry, cancel) };
+                unsafe { this.reactor.cancel(key, entry, cancel) };
             }
         }
     }
@@ -48,11 +48,11 @@ where
     T: Op,
     R: Reactor<Handle = Ring>,
 {
-    pub fn new(react: R, op: T) -> Self {
+    pub fn new(reactor: R, op: T) -> Self {
         Self {
             op: Some(op),
             state: SubmissionState::Initial,
-            react,
+            reactor,
         }
     }
 }
@@ -71,12 +71,12 @@ where
             SubmissionState::Initial => {
                 let entry = this.op.as_mut().unwrap().entry();
                 let waker = cx.waker().clone();
-                let key = unsafe { this.react.submit(entry, waker) };
+                let key = unsafe { this.reactor.submit(entry, waker) };
 
                 (Poll::Pending, SubmissionState::Submitted(key))
             }
 
-            SubmissionState::Submitted(key) => match this.react.check_result(key) {
+            SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(ret) => {
                     let op = this.op.take().unwrap();

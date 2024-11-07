@@ -5,7 +5,7 @@ use std::{
 
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
-use crate::{buffer::StableBuffer, cancellation::Cancellation, op::Op};
+use crate::{buffer::StableBuffer, op::Op, Cancellation};
 
 pub struct Write<Buf: StableBuffer> {
     buf: Buf,

@@ -5,7 +5,7 @@ mod write;
 
 use io_uring::{opcode, squeue::Entry};
 
-use crate::{cancellation::Cancellation, Ring, Submission};
+use crate::{Cancellation, Ring, Submission};
 
 pub use fs::*;
 pub use read::*;

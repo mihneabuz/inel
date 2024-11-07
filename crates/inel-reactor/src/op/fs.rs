@@ -12,7 +12,7 @@ use io_uring::{
     types::{Fd, OpenHow},
 };
 
-use crate::{cancellation::Cancellation, op::Op};
+use crate::{op::Op, Cancellation};
 
 pub struct OpenAt<S> {
     dir: RawFd,

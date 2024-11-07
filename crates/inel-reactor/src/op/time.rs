@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use io_uring::{opcode, squeue::Entry, types::Timespec};
 
-use crate::{cancellation::Cancellation, op::Op};
+use crate::{op::Op, Cancellation};
 
 pub struct Timeout {
     abs: Timespec,

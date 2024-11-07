@@ -5,7 +5,7 @@ use std::{
 
 use inel_interface::Reactor;
 
-use crate::{cancellation::Cancellation, reactor::RingReactor, Ring};
+use crate::{BufferKey, Cancellation, Ring, RingReactor};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
@@ -20,7 +20,9 @@ pub trait StableMutBuffer: StableBuffer {
     fn stable_mut_ptr(&mut self) -> *mut u8;
 }
 
-pub trait FixedMutBuffer: StableMutBuffer {}
+pub trait FixedMutBuffer: StableMutBuffer {
+    fn key(&self) -> &BufferKey;
+}
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
     fn stable_ptr(&self) -> *const u8 {
@@ -70,68 +72,104 @@ impl StableMutBuffer for Vec<u8> {
     }
 }
 
-pub struct Fixed<B> {
-    inner: B,
+pub struct Fixed<B: StableMutBuffer, R: Reactor<Handle = Ring>> {
+    inner: Option<B>,
+    key: BufferKey,
+    reactor: R,
 }
 
-impl<B> Fixed<B>
+impl<B, R> Fixed<B, R>
 where
     B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
 {
-    pub fn register<R>(buffer: B, reactor: &mut R) -> Result<Self>
+    pub fn register(mut buffer: B, mut reactor: R) -> Result<Self>
     where
         R: Reactor<Handle = Ring>,
     {
-        let mut this = Self { inner: buffer };
-        unsafe { reactor.register_buffer(&mut this) }?;
-        Ok(this)
+        let key = unsafe { reactor.register_buffer(&mut buffer) }?;
+        Ok(Self {
+            inner: Some(buffer),
+            key,
+            reactor,
+        })
+    }
+
+    fn unregister(&mut self) -> Result<()> {
+        if let Some(buffer) = self.inner.as_mut() {
+            unsafe { self.reactor.unregister_buffer(buffer)? };
+        };
+
+        Ok(())
     }
 
     pub fn inner(&self) -> &B {
-        &self.inner
+        self.inner.as_ref().unwrap()
     }
 
     pub fn inner_mut(&mut self) -> &mut B {
-        &mut self.inner
+        self.inner.as_mut().unwrap()
     }
 
-    pub fn into_inner(self) -> B {
-        self.inner
+    pub fn into_inner(mut self) -> B {
+        let _ = self.unregister();
+        self.inner.take().unwrap()
     }
 }
 
-impl<T> From<Fixed<T>> for Cancellation
+impl<B, R> Drop for Fixed<B, R>
 where
-    T: StableMutBuffer,
+    B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
 {
-    fn from(value: Fixed<T>) -> Self {
+    fn drop(&mut self) {
+        let _ = self.unregister();
+    }
+}
+
+impl<B, R> From<Fixed<B, R>> for Cancellation
+where
+    B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
+{
+    fn from(value: Fixed<B, R>) -> Self {
         value.into_inner().into()
     }
 }
 
-impl<B> StableBuffer for Fixed<B>
+impl<B, R> StableBuffer for Fixed<B, R>
 where
     B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
 {
     fn stable_ptr(&self) -> *const u8 {
-        self.inner.stable_ptr()
+        self.inner().stable_ptr()
     }
 
     fn size(&self) -> usize {
-        self.inner.size()
+        self.inner().size()
     }
 }
 
-impl<B> StableMutBuffer for Fixed<B>
+impl<B, R> StableMutBuffer for Fixed<B, R>
 where
     B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
 {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.inner.stable_mut_ptr()
+        self.inner_mut().stable_mut_ptr()
     }
 }
 
-impl<B> FixedMutBuffer for Fixed<B> where B: StableMutBuffer {}
+impl<B, R> FixedMutBuffer for Fixed<B, R>
+where
+    B: StableMutBuffer,
+    R: Reactor<Handle = Ring>,
+{
+    fn key(&self) -> &BufferKey {
+        &self.key
+    }
+}
 
 pub struct View<B, R> {
     inner: B,
@@ -256,4 +294,7 @@ where
     B: FixedMutBuffer,
     R: RangeBounds<usize>,
 {
+    fn key(&self) -> &BufferKey {
+        self.inner.key()
+    }
 }

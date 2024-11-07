@@ -2,7 +2,7 @@ use std::{mem, task::Waker};
 
 use slab::Slab;
 
-use crate::cancellation::Cancellation;
+use crate::Cancellation;
 
 enum CompletionInner {
     Active(Waker),
