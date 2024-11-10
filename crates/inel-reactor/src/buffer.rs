@@ -72,6 +72,7 @@ impl StableMutBuffer for Vec<u8> {
     }
 }
 
+#[derive(Debug)]
 pub struct Fixed<B: StableMutBuffer, R: Reactor<Handle = Ring>> {
     inner: Option<B>,
     key: BufferKey,
@@ -88,6 +89,7 @@ where
         R: Reactor<Handle = Ring>,
     {
         let key = unsafe { reactor.register_buffer(&mut buffer) }?;
+
         Ok(Self {
             inner: Some(buffer),
             key,
@@ -97,7 +99,7 @@ where
 
     fn unregister(&mut self) -> Result<()> {
         if let Some(buffer) = self.inner.as_mut() {
-            unsafe { self.reactor.unregister_buffer(buffer)? };
+            unsafe { self.reactor.unregister_buffer(buffer, self.key) };
         };
 
         Ok(())
@@ -171,6 +173,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct View<B, R> {
     inner: B,
     range: R,

@@ -23,6 +23,7 @@ pub struct Ring {
     canceled: u32,
     completions: CompletionSet,
     buffers: BufferRegister,
+    buffers_registered: bool,
 }
 
 impl Ring {
@@ -37,6 +38,7 @@ impl Ring {
             canceled: 0,
             completions: CompletionSet::with_capacity(capacity as usize),
             buffers: BufferRegister::new(),
+            buffers_registered: false,
         }
     }
 
@@ -136,25 +138,25 @@ impl Ring {
     where
         B: StableMutBuffer,
     {
+        if self.buffers_registered {
+            self.ring.submitter().unregister_buffers()?;
+        } else {
+            self.buffers_registered = true;
+        }
+
         let key = self.buffers.insert(buffer);
-        self.sync_buffers()?;
+
+        self.ring
+            .submitter()
+            .register_buffers(self.buffers.iovecs())?;
+
         Ok(key)
     }
 
-    pub fn unregister_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    pub fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
         B: StableMutBuffer,
     {
-        self.buffers.remove(buffer);
-        self.sync_buffers()
-    }
-
-    fn sync_buffers(&mut self) -> Result<()> {
-        self.ring.submitter().unregister_buffers()?;
-        unsafe {
-            self.ring
-                .submitter()
-                .register_buffers(&self.buffers.iovecs())
-        }
+        self.buffers.remove(buffer, key);
     }
 }

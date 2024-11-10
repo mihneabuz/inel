@@ -2,6 +2,7 @@ use futures::task::{self, ArcWake};
 use inel_reactor::Ring;
 use std::{
     cell::RefCell,
+    fmt,
     fs::{self, File},
     os::fd::{AsRawFd, RawFd},
     path::{Path, PathBuf},
@@ -63,6 +64,12 @@ impl inel_interface::Reactor for ScopedReactor {
     {
         let mut guard = self.inner.borrow_mut();
         f(&mut guard)
+    }
+}
+
+impl fmt::Debug for ScopedReactor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScopedReactor").finish()
     }
 }
 

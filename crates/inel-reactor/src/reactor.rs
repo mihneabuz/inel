@@ -14,7 +14,7 @@ pub(crate) trait RingReactor {
     where
         B: StableMutBuffer;
 
-    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
         B: StableMutBuffer;
 }
@@ -42,10 +42,10 @@ where
         self.with(|react| react.register_buffer(buffer))
     }
 
-    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B) -> Result<()>
+    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
         B: StableMutBuffer,
     {
-        self.with(|react| react.unregister_buffer(buffer))
+        self.with(|react| react.unregister_buffer(buffer, key))
     }
 }
