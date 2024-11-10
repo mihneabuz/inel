@@ -7,7 +7,7 @@ use std::task::Waker;
 use io_uring::{squeue::Entry, IoUring};
 use tracing::debug;
 
-use crate::{buffer::StableMutBuffer, Cancellation};
+use crate::{buffer::StableBuffer, Cancellation};
 
 use completion::CompletionSet;
 use register::BufferRegister;
@@ -136,7 +136,7 @@ impl Ring {
     /// Caller must ensure that the buffer is valid until the ring is destroyed
     pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         if self.buffers_registered {
             self.ring.submitter().unregister_buffers()?;
@@ -155,7 +155,7 @@ impl Ring {
 
     pub fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         self.buffers.remove(buffer, key);
     }
