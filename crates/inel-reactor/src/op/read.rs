@@ -6,12 +6,12 @@ use std::{
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
 use crate::{
-    buffer::{FixedMutBuffer, StableMutBuffer},
+    buffer::{FixedBuffer, StableBuffer},
     op::Op,
     Cancellation,
 };
 
-pub struct Read<Buf: StableMutBuffer> {
+pub struct Read<Buf: StableBuffer> {
     buf: Buf,
     fd: RawFd,
     offset: u64,
@@ -19,7 +19,7 @@ pub struct Read<Buf: StableMutBuffer> {
 
 impl<Buf> Read<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, buf: Buf) -> Self {
         Self {
@@ -37,7 +37,7 @@ where
 
 unsafe impl<Buf> Op for Read<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     type Output = (Buf, Result<usize>);
 
@@ -69,7 +69,7 @@ where
     }
 }
 
-pub struct ReadFixed<Buf: FixedMutBuffer> {
+pub struct ReadFixed<Buf: FixedBuffer> {
     buf: Buf,
     fd: RawFd,
     offset: u64,
@@ -77,7 +77,7 @@ pub struct ReadFixed<Buf: FixedMutBuffer> {
 
 impl<Buf> ReadFixed<Buf>
 where
-    Buf: FixedMutBuffer,
+    Buf: FixedBuffer,
 {
     pub fn new(fd: RawFd, buf: Buf) -> Self {
         Self {
@@ -95,7 +95,7 @@ where
 
 unsafe impl<Buf> Op for ReadFixed<Buf>
 where
-    Buf: FixedMutBuffer,
+    Buf: FixedBuffer,
 {
     type Output = (Buf, Result<usize>);
 
@@ -128,7 +128,7 @@ where
     }
 }
 
-pub struct ReadVectored<Buf: StableMutBuffer> {
+pub struct ReadVectored<Buf: StableBuffer> {
     bufs: Vec<Buf>,
     iovecs: Vec<libc::iovec>,
     fd: RawFd,
@@ -137,7 +137,7 @@ pub struct ReadVectored<Buf: StableMutBuffer> {
 
 impl<Buf> ReadVectored<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, bufs: Vec<Buf>) -> Self {
         let iovecs = Vec::with_capacity(bufs.len());
@@ -165,7 +165,7 @@ where
 
 unsafe impl<Buf> Op for ReadVectored<Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     type Output = (Vec<Buf>, Result<usize>);
 
@@ -204,7 +204,7 @@ where
     }
 }
 
-pub struct ReadVectoredExact<const N: usize, Buf: StableMutBuffer> {
+pub struct ReadVectoredExact<const N: usize, Buf: StableBuffer> {
     bufs: [Buf; N],
     iovecs: [libc::iovec; N],
     fd: RawFd,
@@ -213,7 +213,7 @@ pub struct ReadVectoredExact<const N: usize, Buf: StableMutBuffer> {
 
 impl<const N: usize, Buf> ReadVectoredExact<N, Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     pub fn new(fd: RawFd, bufs: [Buf; N]) -> Self {
         Self {
@@ -235,7 +235,7 @@ where
 
 unsafe impl<const N: usize, Buf> Op for ReadVectoredExact<N, Buf>
 where
-    Buf: StableMutBuffer,
+    Buf: StableBuffer,
 {
     type Output = ([Buf; N], Result<usize>);
 

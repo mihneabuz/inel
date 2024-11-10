@@ -1,4 +1,4 @@
-use crate::buffer::StableMutBuffer;
+use crate::buffer::StableBuffer;
 
 pub struct BufferRegister {
     buffers: Vec<libc::iovec>,
@@ -18,7 +18,7 @@ impl BufferRegister {
 
     pub fn insert<B>(&mut self, buffer: &mut B) -> BufferKey
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         let index = match self.vacant.pop() {
             Some(spot) => {
@@ -44,7 +44,7 @@ impl BufferRegister {
 
     pub fn remove<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         let index = key.index() as usize;
 

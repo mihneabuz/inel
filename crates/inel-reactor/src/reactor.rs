@@ -3,7 +3,7 @@ use std::{io::Result, task::Waker};
 use inel_interface::Reactor;
 use io_uring::squeue::Entry;
 
-use crate::{buffer::StableMutBuffer, BufferKey, Cancellation, Key, Ring};
+use crate::{buffer::StableBuffer, BufferKey, Cancellation, Key, Ring};
 
 pub(crate) trait RingReactor {
     unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key;
@@ -12,11 +12,11 @@ pub(crate) trait RingReactor {
 
     unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
     where
-        B: StableMutBuffer;
+        B: StableBuffer;
 
     unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
-        B: StableMutBuffer;
+        B: StableBuffer;
 }
 
 impl<R> RingReactor for R
@@ -37,14 +37,14 @@ where
 
     unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         self.with(|react| react.register_buffer(buffer))
     }
 
     unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
-        B: StableMutBuffer,
+        B: StableBuffer,
     {
         self.with(|react| react.unregister_buffer(buffer, key))
     }

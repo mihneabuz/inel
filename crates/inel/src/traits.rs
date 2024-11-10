@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::os::fd::AsRawFd;
 
-use crate::{GlobalReactor, StableBuffer, StableMutBuffer};
+use crate::{GlobalReactor, StableBuffer};
 use inel_reactor::op::{self, Op};
 
 pub(crate) trait ReadSource: AsRawFd {}
@@ -9,8 +9,8 @@ pub(crate) trait WriteSource: AsRawFd {}
 
 #[allow(async_fn_in_trait)]
 pub trait InelRead {
-    async fn read_owned<B: StableMutBuffer>(&mut self, buffer: B) -> (B, Result<usize>);
-    async fn read_owned_at<B: StableMutBuffer>(
+    async fn read_owned<B: StableBuffer>(&mut self, buffer: B) -> (B, Result<usize>);
+    async fn read_owned_at<B: StableBuffer>(
         &mut self,
         offset: u64,
         buffer: B,
@@ -31,13 +31,13 @@ impl<T> InelRead for T
 where
     T: ReadSource,
 {
-    async fn read_owned<B: StableMutBuffer>(&mut self, buffer: B) -> (B, Result<usize>) {
+    async fn read_owned<B: StableBuffer>(&mut self, buffer: B) -> (B, Result<usize>) {
         op::Read::new(self.as_raw_fd(), buffer)
             .run_on(GlobalReactor)
             .await
     }
 
-    async fn read_owned_at<B: StableMutBuffer>(
+    async fn read_owned_at<B: StableBuffer>(
         &mut self,
         offset: u64,
         buffer: B,

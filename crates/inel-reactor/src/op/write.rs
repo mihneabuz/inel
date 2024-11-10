@@ -6,7 +6,7 @@ use std::{
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
 use crate::{
-    buffer::{FixedMutBuffer, StableBuffer},
+    buffer::{FixedBuffer, StableBuffer},
     op::Op,
     Cancellation,
 };
@@ -65,7 +65,7 @@ where
     }
 }
 
-pub struct WriteFixed<Buf: FixedMutBuffer> {
+pub struct WriteFixed<Buf: FixedBuffer> {
     buf: Buf,
     fd: RawFd,
     offset: u64,
@@ -73,7 +73,7 @@ pub struct WriteFixed<Buf: FixedMutBuffer> {
 
 impl<Buf> WriteFixed<Buf>
 where
-    Buf: FixedMutBuffer,
+    Buf: FixedBuffer,
 {
     pub fn new(fd: RawFd, buf: Buf) -> Self {
         Self {
@@ -91,7 +91,7 @@ where
 
 unsafe impl<Buf> Op for WriteFixed<Buf>
 where
-    Buf: FixedMutBuffer,
+    Buf: FixedBuffer,
 {
     type Output = (Buf, Result<usize>);
 
