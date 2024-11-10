@@ -177,7 +177,7 @@ fn multi() {
 fn error() {
     let (reactor, notifier) = runtime();
 
-    let mut write = op::Write::new(RawFd::from(192), Box::new([0; 128])).run_on(reactor.clone());
+    let mut write = op::Write::new(RawFd::from(9999), Box::new([0; 128])).run_on(reactor.clone());
     let mut fut = pin!(&mut write);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -480,4 +480,213 @@ fn sync() {
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
+}
+
+mod fixed {
+    use inel_reactor::buffer::Fixed;
+
+    use super::*;
+
+    #[test]
+    fn single() {
+        let (reactor, notifier) = runtime();
+        let mut file = TempFile::with_content("");
+
+        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let mut write = op::WriteFixed::new(file.fd(), buf).run_on(reactor.clone());
+        let mut fut = pin!(&mut write);
+
+        assert!(poll!(fut, notifier).is_pending());
+        assert_eq!(reactor.active(), 1);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
+            panic!("poll not ready");
+        };
+        let wrote = res.expect("write failed");
+
+        assert_eq!(wrote, MESSAGE.as_bytes().len());
+        assert_eq!(buf.inner().as_slice(), MESSAGE.as_bytes());
+        assert_eq!(file.read(), MESSAGE.to_string());
+
+        assert!(fut.is_terminated());
+        assert!(reactor.is_done());
+    }
+
+    #[test]
+    fn view() {
+        let (reactor, notifier) = runtime();
+        let file = TempFile::with_content(&MESSAGE);
+
+        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let mut read = op::WriteFixed::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+        let mut fut = pin!(&mut read);
+
+        assert!(poll!(fut, notifier).is_pending());
+        assert_eq!(reactor.active(), 1);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let Poll::Ready((view, res)) = poll!(fut, notifier) else {
+            panic!("poll not ready");
+        };
+        let read = res.expect("write failed");
+
+        assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
+
+        let buf = view.unview();
+        assert_eq!(buf.into_inner().as_slice(), MESSAGE.as_bytes());
+
+        assert!(fut.is_terminated());
+        assert!(reactor.is_done());
+    }
+
+    #[test]
+    #[test_repeat(100)]
+    fn multi() {
+        let (reactor, notifier) = runtime();
+
+        let mut file1 = TempFile::with_content("");
+        let mut file2 = TempFile::with_content("");
+        let mut file3 = TempFile::with_content("");
+
+        let content = MESSAGE.as_bytes().to_vec();
+        let buf1 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+
+        let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
+        let mut write2 = op::WriteFixed::new(file2.fd(), buf2).run_on(reactor.clone());
+        let mut write3 = op::WriteFixed::new(file3.fd(), buf3).run_on(reactor.clone());
+
+        let mut fut1 = pin!(&mut write1);
+        let mut fut2 = pin!(&mut write2);
+        let mut fut3 = pin!(&mut write3);
+
+        assert!(poll!(fut1, notifier).is_pending());
+        assert!(poll!(fut2, notifier).is_pending());
+        assert!(poll!(fut3, notifier).is_pending());
+
+        assert_eq!(reactor.active(), 3);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert!(reactor.active() < 3);
+
+        reactor.wait();
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert_eq!(reactor.active(), 0);
+
+        let Poll::Ready((buf1, res1)) = poll!(fut1, notifier) else {
+            panic!("poll 1 not ready");
+        };
+        let write1 = res1.expect("write 1 failed");
+
+        let Poll::Ready((buf2, res2)) = poll!(fut2, notifier) else {
+            panic!("poll 2 not ready");
+        };
+        let write2 = res2.expect("write 2 failed");
+
+        let Poll::Ready((buf3, res3)) = poll!(fut3, notifier) else {
+            panic!("poll 3 not ready");
+        };
+        let write3 = res3.expect("write 3 failed");
+
+        assert_eq!(write1, MESSAGE.as_bytes().len());
+        assert_eq!(&buf1.inner()[..write1], &MESSAGE.as_bytes()[..write1]);
+        assert_eq!(file1.read(), MESSAGE.to_string());
+
+        assert_eq!(write2, MESSAGE.as_bytes().len());
+        assert_eq!(&buf2.inner()[..write2], &MESSAGE.as_bytes()[..write2]);
+        assert_eq!(file2.read(), MESSAGE.to_string());
+
+        assert_eq!(write3, MESSAGE.as_bytes().len());
+        assert_eq!(&buf3.inner()[..write3], &MESSAGE.as_bytes()[..write3]);
+        assert_eq!(file3.read(), MESSAGE.to_string());
+
+        assert!(fut1.is_terminated());
+        assert!(fut2.is_terminated());
+        assert!(fut3.is_terminated());
+
+        assert!(reactor.is_done());
+    }
+
+    #[test]
+    fn error() {
+        let (reactor, notifier) = runtime();
+
+        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let mut write = op::WriteFixed::new(RawFd::from(9999), buf).run_on(reactor.clone());
+        let mut fut = pin!(&mut write);
+
+        assert!(poll!(fut, notifier).is_pending());
+        assert_eq!(reactor.active(), 1);
+
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
+            panic!("poll not ready");
+        };
+
+        assert_eq!(buf.into_inner().as_slice(), MESSAGE.as_bytes());
+        res.expect_err("write didn't fail");
+    }
+
+    #[test]
+    // #[test_repeat(100)]
+    fn cancel() {
+        let (reactor, notifier) = runtime();
+        let file1 = TempFile::with_content("");
+        let file2 = TempFile::with_content("");
+        let file3 = TempFile::with_content("");
+
+        let content = MESSAGE.as_bytes().to_vec();
+        let buf1 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+
+        let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
+        let mut write2 = op::WriteFixed::new(file2.fd(), buf2)
+            .offset(256)
+            .run_on(reactor.clone());
+        let mut write3 = op::WriteFixed::new(file3.fd(), buf3.view(..512)).run_on(reactor.clone());
+
+        let mut fut1 = pin!(&mut write1);
+        let mut fut2 = pin!(&mut write2);
+        let mut fut3 = pin!(&mut write3);
+        let mut nop = pin!(&mut op::Nop.run_on(reactor.clone()));
+
+        assert!(poll!(fut1, notifier).is_pending());
+        assert!(poll!(fut2, notifier).is_pending());
+        assert!(poll!(fut3, notifier).is_pending());
+        assert!(poll!(nop, notifier).is_pending());
+
+        assert_eq!(reactor.active(), 4);
+
+        reactor.wait();
+
+        assert!(poll!(nop, notifier).is_ready());
+
+        drop(write1);
+        drop(write2);
+        drop(write3);
+
+        let mut i = 0;
+        while !reactor.is_done() {
+            reactor.wait();
+            i += 1;
+            assert!(i < 5);
+        }
+    }
 }

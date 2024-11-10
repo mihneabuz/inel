@@ -5,7 +5,11 @@ use std::{
 
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
-use crate::{buffer::StableBuffer, cancellation::Cancellation, op::Op};
+use crate::{
+    buffer::{FixedMutBuffer, StableBuffer},
+    op::Op,
+    Cancellation,
+};
 
 pub struct Write<Buf: StableBuffer> {
     buf: Buf,
@@ -41,6 +45,65 @@ where
         opcode::Write::new(Fd(self.fd), self.buf.stable_ptr(), self.buf.size() as u32)
             .offset(self.offset)
             .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        let result = if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(ret as usize)
+        };
+
+        (self.buf, result)
+    }
+
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(opcode::AsyncCancel::new(user_data).build()),
+            self.buf.into(),
+        )
+    }
+}
+
+pub struct WriteFixed<Buf: FixedMutBuffer> {
+    buf: Buf,
+    fd: RawFd,
+    offset: u64,
+}
+
+impl<Buf> WriteFixed<Buf>
+where
+    Buf: FixedMutBuffer,
+{
+    pub fn new(fd: RawFd, buf: Buf) -> Self {
+        Self {
+            buf,
+            fd,
+            offset: u64::MAX,
+        }
+    }
+
+    pub fn offset(mut self, offset: u64) -> Self {
+        self.offset = offset;
+        self
+    }
+}
+
+unsafe impl<Buf> Op for WriteFixed<Buf>
+where
+    Buf: FixedMutBuffer,
+{
+    type Output = (Buf, Result<usize>);
+
+    fn entry(&mut self) -> Entry {
+        opcode::WriteFixed::new(
+            Fd(self.fd),
+            self.buf.stable_ptr(),
+            self.buf.size() as u32,
+            self.buf.key().index(),
+        )
+        .offset(self.offset)
+        .build()
     }
 
     fn result(self, ret: i32) -> Self::Output {

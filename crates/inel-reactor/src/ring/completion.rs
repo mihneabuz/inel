@@ -2,7 +2,7 @@ use std::{mem, task::Waker};
 
 use slab::Slab;
 
-use crate::cancellation::Cancellation;
+use crate::Cancellation;
 
 enum CompletionInner {
     Active(Waker),
@@ -78,9 +78,7 @@ impl CompletionSet {
     }
 
     pub fn insert(&mut self, waker: Waker) -> Key {
-        Key {
-            value: self.slab.insert(Completion::new(waker)),
-        }
+        Key(self.slab.insert(Completion::new(waker)))
     }
 
     fn with_completion<T, F, G>(&mut self, key: Key, fun: F, should_remove: G) -> T
@@ -110,22 +108,18 @@ impl CompletionSet {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Key {
-    value: usize,
-}
+pub struct Key(usize);
 
 impl Key {
     fn as_usize(&self) -> usize {
-        self.value
+        self.0
     }
 
     pub(crate) fn from_u64(value: u64) -> Self {
-        Self {
-            value: value as usize,
-        }
+        Self(value as usize)
     }
 
     pub(crate) fn as_u64(&self) -> u64 {
-        self.value as u64
+        self.0 as u64
     }
 }
