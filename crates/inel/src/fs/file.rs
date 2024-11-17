@@ -8,7 +8,10 @@ use std::{
 
 use inel_reactor::op::{self, Op};
 
-use crate::{GlobalReactor, ReadSource, WriteSource};
+use crate::{
+    io::{ReadSource, WriteSource},
+    GlobalReactor,
+};
 
 #[derive(Clone, Debug)]
 pub struct OpenOptions {

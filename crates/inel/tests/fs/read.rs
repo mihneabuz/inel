@@ -1,4 +1,4 @@
-use inel::InelRead;
+use inel::io::AsyncReadOwned;
 
 use crate::{setup_tracing, temp_file};
 
