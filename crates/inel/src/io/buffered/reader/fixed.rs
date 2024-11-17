@@ -70,6 +70,23 @@ where
         let this = Pin::into_inner(self);
 
         match &mut this.0.state {
+            BufReaderState::Empty => unreachable!(),
+
+            BufReaderState::Pending(fut) => {
+                let (buf, res) = ready!(fut.poll_unpin(cx));
+                match res {
+                    Ok(filled) => {
+                        this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
+                    }
+
+                    Err(err) => {
+                        this.0.state = BufReaderState::Ready(Buffer::new(buf, 0));
+
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
+
             BufReaderState::Ready(buf) => {
                 if buf.is_empty() {
                     let BufReaderState::Ready(buf) = std::mem::take(&mut this.0.state) else {
@@ -82,15 +99,6 @@ where
                     return Pin::new(this).poll_fill_buf(cx);
                 }
             }
-
-            BufReaderState::Pending(fut) => {
-                let (buf, res) = ready!(fut.poll_unpin(cx));
-                let filled = res?;
-
-                this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
-            }
-
-            BufReaderState::Empty => unreachable!(),
         };
 
         Poll::Ready(Ok(this.0.buffer().unwrap()))

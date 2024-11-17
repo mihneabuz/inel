@@ -86,9 +86,17 @@ where
 
             BufReaderState::Pending(fut) => {
                 let (buf, res) = ready!(fut.poll_unpin(cx));
-                let filled = res?;
+                match res {
+                    Ok(filled) => {
+                        this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
+                    }
 
-                this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
+                    Err(err) => {
+                        this.0.state = BufReaderState::Ready(Buffer::new(buf, 0));
+
+                        return Poll::Ready(Err(err));
+                    }
+                }
             }
 
             BufReaderState::Ready(buf) => {

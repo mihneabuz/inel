@@ -94,7 +94,7 @@ where
         let buf = match state {
             BufReaderState::Empty => None,
             BufReaderState::Pending(_) => None,
-            BufReaderState::Ready(buffer) => Some(buffer.into_inner()),
+            BufReaderState::Ready(buf) => Some(buf.into_inner()),
         };
         (source, buf)
     }
