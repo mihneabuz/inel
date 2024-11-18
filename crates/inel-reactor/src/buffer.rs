@@ -1,6 +1,7 @@
 use std::{
     io::Result,
     ops::{Bound, RangeBounds},
+    slice,
 };
 
 use inel_interface::Reactor;
@@ -10,11 +11,14 @@ use crate::{BufferKey, Cancellation, Ring, RingReactor};
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
     fn stable_mut_ptr(&mut self) -> *mut u8;
-
     fn size(&self) -> usize;
 
-    fn view<R>(self, range: R) -> View<Self, R> {
-        View::new(self, range)
+    fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.stable_ptr(), self.size()) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.stable_mut_ptr(), self.size()) }
     }
 }
 
@@ -169,7 +173,7 @@ impl<B, R> View<B, R>
 where
     B: StableBuffer,
 {
-    fn new(buffer: B, range: R) -> Self {
+    pub fn new(buffer: B, range: R) -> Self {
         Self {
             inner: buffer,
             range,
@@ -208,14 +212,6 @@ where
             Bound::Excluded(x) => *x,
             Bound::Unbounded => self.inner.size(),
         }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.stable_ptr(), self.size()) }
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.stable_mut_ptr(), self.size()) }
     }
 }
 

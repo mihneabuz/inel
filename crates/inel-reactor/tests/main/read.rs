@@ -4,7 +4,7 @@ use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
 use inel_reactor::{
-    buffer::StableBuffer,
+    buffer::{StableBuffer, View},
     op::{self, Op},
 };
 
@@ -72,7 +72,7 @@ fn view() {
     let file = TempFile::with_content(&MESSAGE);
 
     let buf = Box::new([0; 1024]);
-    let mut read = op::Read::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+    let mut read = op::Read::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -205,8 +205,8 @@ fn cancel() {
     let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2]))
         .offset(128)
         .run_on(reactor.clone());
-    let mut read3 =
-        op::Read::new(file3.fd(), Box::new([0; READ_LEN3]).view(128..)).run_on(reactor.clone());
+    let mut read3 = op::Read::new(file3.fd(), View::new(Box::new([0; READ_LEN3]), 128..))
+        .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut read1);
     let mut fut2 = pin!(&mut read2);
@@ -486,7 +486,8 @@ mod fixed {
         let file = TempFile::with_content(&MESSAGE);
 
         let buf = Fixed::register(Box::new([0; 1024]), reactor.clone()).unwrap();
-        let mut read = op::ReadFixed::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+        let mut read =
+            op::ReadFixed::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -628,7 +629,8 @@ mod fixed {
         let mut read2 = op::ReadFixed::new(file2.fd(), buf2)
             .offset(128)
             .run_on(reactor.clone());
-        let mut read3 = op::ReadFixed::new(file3.fd(), buf3.view(128..)).run_on(reactor.clone());
+        let mut read3 =
+            op::ReadFixed::new(file3.fd(), View::new(buf3, 128..)).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
         let mut fut2 = pin!(&mut read2);

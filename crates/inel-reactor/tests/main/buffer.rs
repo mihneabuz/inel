@@ -1,14 +1,14 @@
 mod view {
     use std::ops::RangeBounds;
 
-    use inel_reactor::buffer::StableBuffer;
+    use inel_reactor::buffer::{StableBuffer, View};
 
     #[test]
     fn included() {
         let mut buf = Box::new([b'_'; 256]);
         buf[10..=20].copy_from_slice(&[b'A'; 11]);
 
-        let view = buf.view(10..=20);
+        let view = View::new(buf, 10..=20);
         assert_eq!(view.as_slice(), &[b'A'; 11]);
     }
 
@@ -17,7 +17,7 @@ mod view {
         let mut buf = Box::new([b'_'; 256]);
         buf[10..20].copy_from_slice(&[b'A'; 10]);
 
-        let view = buf.view(10..20);
+        let view = View::new(buf, 10..20);
         assert_eq!(view.as_slice(), &[b'A'; 10]);
     }
 
@@ -26,7 +26,7 @@ mod view {
         let mut buf = Box::new([b'_'; 256]);
         buf[..].copy_from_slice(&[b'A'; 256]);
 
-        let view = buf.view(..);
+        let view = View::new(buf, ..);
         assert_eq!(view.as_slice(), &[b'A'; 256]);
     }
 
@@ -35,20 +35,20 @@ mod view {
         let mut buf = Box::new([b'_'; 256]);
         buf[..10].copy_from_slice(&[b'A'; 10]);
 
-        let view = buf.view(..10);
+        let view = View::new(buf, ..10);
         assert_eq!(view.as_slice(), &[b'A'; 10]);
 
         let mut buf = view.unview();
         buf[20..].copy_from_slice(&[b'A'; 236]);
 
-        let view = buf.view(20..);
+        let view = View::new(buf, 20..);
         assert_eq!(view.as_slice(), &[b'A'; 236]);
     }
 
     #[test]
     fn mutable() {
         let buf = Box::new([b'_'; 256]);
-        let mut view = buf.view(10..20);
+        let mut view = View::new(buf, 10..20);
         view.as_mut_slice().copy_from_slice(&[b'A'; 10]);
 
         let buf = view.unview();
@@ -58,11 +58,11 @@ mod view {
     #[test]
     fn as_ref() {
         let buf = Box::new([b'_'; 256]);
-        let view = buf.view(..);
+        let view = View::new(buf, ..);
         assert_eq!(view.as_ref(), &[b'_'; 256]);
 
         let buf = view.unview();
-        let mut view = buf.view(..);
+        let mut view = View::new(buf, ..);
         assert_eq!(view.as_mut(), &[b'_'; 256]);
     }
 
@@ -85,13 +85,13 @@ mod view {
             }
         }
 
-        let view = buf.view(VeryExclusiveRange { inner: (10, 20) });
+        let view = View::new(buf, VeryExclusiveRange { inner: (10, 20) });
         assert_eq!(view.as_slice(), &[b'A'; 9]);
     }
 }
 
 mod fixed {
-    use inel_reactor::buffer::{Fixed, StableBuffer};
+    use inel_reactor::buffer::{Fixed, StableBuffer, View};
 
     use crate::helpers::runtime;
 
@@ -108,6 +108,21 @@ mod fixed {
         fixed.inner_mut().fill_with(|| b'a');
 
         assert_eq!(fixed.inner(), &Box::new([b'a'; 1024]));
+    }
+
+    #[test]
+    fn double() {
+        let (reactor, _) = runtime();
+
+        let buf = Box::new([b'_'; 1024]);
+        let res1 = Fixed::register(buf, reactor.clone());
+        let fixed1 = res1.unwrap();
+        let res2 = Fixed::register(fixed1, reactor.clone());
+        let mut fixed2 = res2.unwrap();
+
+        fixed2.inner_mut().inner_mut().fill_with(|| b'a');
+
+        assert_eq!(fixed2.inner().inner(), &Box::new([b'a'; 1024]));
     }
 
     #[test]
@@ -174,7 +189,7 @@ mod fixed {
         let mut buf = Fixed::register(Box::new([b'_'; 256]), reactor).unwrap();
         buf.inner_mut()[10..=20].copy_from_slice(&[b'A'; 11]);
 
-        let view = buf.view(10..=20);
+        let view = View::new(buf, 10..=20);
         assert_eq!(view.as_slice(), &[b'A'; 11]);
     }
 }

@@ -1,4 +1,4 @@
-use inel::InelWrite;
+use inel::io::AsyncWriteOwned;
 
 use crate::{setup_tracing, temp_file};
 

@@ -4,7 +4,7 @@ use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
 use inel_reactor::{
-    buffer::StableBuffer,
+    buffer::{StableBuffer, View},
     op::{self, Op},
 };
 
@@ -78,7 +78,7 @@ fn view() {
     let file = TempFile::with_content(&MESSAGE);
 
     let buf = MESSAGE.as_bytes().to_vec();
-    let mut read = op::Write::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+    let mut read = op::Write::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -208,8 +208,8 @@ fn cancel() {
     let mut write2 = op::Write::new(file2.fd(), MESSAGE.as_bytes().to_vec())
         .offset(256)
         .run_on(reactor.clone());
-    let mut write3 =
-        op::Write::new(file3.fd(), MESSAGE.as_bytes().to_vec().view(..512)).run_on(reactor.clone());
+    let mut write3 = op::Write::new(file3.fd(), View::new(MESSAGE.as_bytes().to_vec(), ..512))
+        .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut write1);
     let mut fut2 = pin!(&mut write2);
@@ -522,7 +522,8 @@ mod fixed {
         let file = TempFile::with_content(&MESSAGE);
 
         let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
-        let mut read = op::WriteFixed::new(file.fd(), buf.view(64..512)).run_on(reactor.clone());
+        let mut read =
+            op::WriteFixed::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -660,7 +661,8 @@ mod fixed {
         let mut write2 = op::WriteFixed::new(file2.fd(), buf2)
             .offset(256)
             .run_on(reactor.clone());
-        let mut write3 = op::WriteFixed::new(file3.fd(), buf3.view(..512)).run_on(reactor.clone());
+        let mut write3 =
+            op::WriteFixed::new(file3.fd(), View::new(buf3, ..512)).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut write1);
         let mut fut2 = pin!(&mut write2);
