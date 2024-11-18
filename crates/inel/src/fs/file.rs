@@ -1,5 +1,5 @@
 use std::{
-    fmt::{self, Display, Formatter},
+    fmt::{self, Debug, Formatter},
     io::Result,
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
@@ -87,7 +87,7 @@ impl OpenOptions {
         (flags, mode)
     }
 
-    async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
+    pub async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
         let (flags, mode) = self.libc_opts();
 
         let fd = op::OpenAt::new(path, flags)
@@ -99,7 +99,7 @@ impl OpenOptions {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Metadata {
     raw: Box<MaybeUninit<libc::statx>>,
 }
@@ -131,21 +131,15 @@ impl Metadata {
     }
 }
 
-impl Display for Metadata {
+impl Debug for Metadata {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Metadata").finish()
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct File {
     fd: RawFd,
-}
-
-impl Display for File {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("File").finish()
-    }
 }
 
 impl File {
