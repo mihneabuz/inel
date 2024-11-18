@@ -20,19 +20,15 @@ use crate::{
 pub trait AsyncReadOwned {
     fn read_owned<B: StableBuffer>(&mut self, buffer: B) -> ReadOwned<B>;
     fn read_owned_at<B: StableBuffer>(&mut self, offset: u64, buffer: B) -> ReadOwned<B>;
+
+    fn read_fixed<B: FixedBuffer>(&mut self, buffer: B) -> ReadFixed<B>;
+    fn read_fixed_at<B: FixedBuffer>(&mut self, offset: u64, buffer: B) -> ReadFixed<B>;
 }
 
 pub trait AsyncWriteOwned {
     fn write_owned<B: StableBuffer>(&mut self, buffer: B) -> WriteOwned<B>;
     fn write_owned_at<B: StableBuffer>(&mut self, offset: u64, buffer: B) -> WriteOwned<B>;
-}
 
-pub trait AsyncReadFixed {
-    fn read_fixed<B: FixedBuffer>(&mut self, buffer: B) -> ReadFixed<B>;
-    fn read_fixed_at<B: FixedBuffer>(&mut self, offset: u64, buffer: B) -> ReadFixed<B>;
-}
-
-pub trait AsyncWriteFixed {
     fn write_fixed<B: FixedBuffer>(&mut self, buffer: B) -> WriteFixed<B>;
     fn write_fixed_at<B: FixedBuffer>(&mut self, offset: u64, buffer: B) -> WriteFixed<B>;
 }
@@ -54,12 +50,7 @@ where
                 .run_on(GlobalReactor),
         }
     }
-}
 
-impl<T> AsyncReadFixed for T
-where
-    T: ReadSource,
-{
     fn read_fixed<B: FixedBuffer>(&mut self, buffer: B) -> ReadFixed<B> {
         ReadFixed {
             sub: op::ReadFixed::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),
@@ -92,12 +83,7 @@ where
                 .run_on(GlobalReactor),
         }
     }
-}
 
-impl<T> AsyncWriteFixed for T
-where
-    T: WriteSource,
-{
     fn write_fixed<B: FixedBuffer>(&mut self, buffer: B) -> WriteFixed<B> {
         WriteFixed {
             sub: op::WriteFixed::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),

@@ -9,7 +9,7 @@ use futures::{AsyncBufRead, AsyncRead, FutureExt};
 use super::generic::*;
 use crate::{
     buffer::Fixed,
-    io::{owned::ReadFixed, AsyncReadFixed},
+    io::{owned::ReadFixed, AsyncReadOwned},
 };
 
 type FixedBoxBuf = Fixed<Box<[u8]>>;
@@ -48,7 +48,7 @@ impl<S> FixedBufReader<S> {
 
 impl<S> AsyncRead for FixedBufReader<S>
 where
-    S: AsyncReadFixed + Unpin,
+    S: AsyncReadOwned + Unpin,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -64,7 +64,7 @@ where
 
 impl<S> AsyncBufRead for FixedBufReader<S>
 where
-    S: AsyncReadFixed + Unpin,
+    S: AsyncReadOwned + Unpin,
 {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
         let this = Pin::into_inner(self);

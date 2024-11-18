@@ -8,7 +8,7 @@ use futures::{AsyncWrite, FutureExt};
 
 use crate::{
     buffer::Fixed,
-    io::{owned::WriteFixed, AsyncWriteFixed},
+    io::{owned::WriteFixed, AsyncWriteOwned},
 };
 
 use super::generic::{BufWriterGeneric, BufWriterState};
@@ -49,7 +49,7 @@ impl<S> FixedBufWriter<S> {
 
 impl<S> AsyncWrite for FixedBufWriter<S>
 where
-    S: AsyncWriteFixed + Unpin,
+    S: AsyncWriteOwned + Unpin,
 {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
         let this = Pin::into_inner(self);
