@@ -1,3 +1,51 @@
+use std::io::Write;
+
+use inel_reactor::buffer::StableBuffer;
+
+#[test]
+fn string() {
+    let mut s = String::with_capacity(256);
+    s.push_str("Hello World!\n");
+
+    assert_eq!(StableBuffer::size(&s), 13);
+    assert_eq!(StableBuffer::capacity(&s), 256);
+
+    s.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+
+    assert_eq!(s.as_slice(), "Overwritten!\n".as_bytes());
+    assert_eq!(s, String::from("Overwritten!\n"));
+}
+
+#[test]
+fn vec() {
+    let mut v = Vec::with_capacity(256);
+    v.extend_from_slice("Hello World!\n".as_bytes());
+
+    assert_eq!(StableBuffer::size(&v), 13);
+    assert_eq!(StableBuffer::capacity(&v), 256);
+
+    v.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+
+    assert_eq!(v.as_slice(), "Overwritten!\n".as_bytes());
+    assert_eq!(
+        String::from_utf8(v).unwrap(),
+        String::from("Overwritten!\n")
+    );
+}
+
+#[test]
+fn boxed() {
+    let mut b = Box::new([0; 256]);
+
+    assert_eq!(StableBuffer::size(&b), 256);
+    assert_eq!(StableBuffer::capacity(&b), 256);
+
+    b.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+
+    assert_eq!(&b.as_slice()[0..13], "Overwritten!\n".as_bytes());
+    assert_eq!(&b.as_slice()[13..], [0; 256 - 13]);
+}
+
 mod view {
     use std::ops::RangeBounds;
 

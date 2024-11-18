@@ -82,6 +82,24 @@ impl StableBuffer for Vec<u8> {
     }
 }
 
+impl StableBuffer for String {
+    fn stable_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity()
+    }
+}
+
 #[derive(Debug)]
 pub struct Fixed<B: StableBuffer, R: Reactor<Handle = Ring>> {
     inner: Option<B>,

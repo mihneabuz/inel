@@ -52,7 +52,7 @@ impl<T> From<Box<[T]>> for Cancellation {
             ptr: Box::into_raw(value) as *mut (),
             metadata: len,
             drop: Some(|ptr, len| unsafe {
-                drop(Vec::from_raw_parts(ptr as *mut T, len, len).into_boxed_slice());
+                drop(Vec::from_raw_parts(ptr as *mut T, len, len));
             }),
         }
     }
@@ -60,6 +60,27 @@ impl<T> From<Box<[T]>> for Cancellation {
 
 impl<T> From<Vec<T>> for Cancellation {
     fn from(value: Vec<T>) -> Self {
-        Cancellation::from(value.into_boxed_slice())
+        let len = value.len();
+        let ptr = value.as_ptr() as *mut ();
+        std::mem::forget(value);
+        Self {
+            ptr,
+            metadata: len,
+            drop: Some(|ptr, len| unsafe {
+                drop(Vec::from_raw_parts(ptr as *mut T, len, len));
+            }),
+        }
+    }
+}
+
+impl From<Box<str>> for Cancellation {
+    fn from(value: Box<str>) -> Self {
+        value.into_boxed_bytes().into()
+    }
+}
+
+impl From<String> for Cancellation {
+    fn from(value: String) -> Self {
+        value.into_bytes().into()
     }
 }
