@@ -23,7 +23,7 @@ impl BufferRegister {
         let index = match self.vacant.pop() {
             Some(spot) => {
                 self.buffers[spot].iov_base = buffer.stable_mut_ptr() as *mut _;
-                self.buffers[spot].iov_len = buffer.size();
+                self.buffers[spot].iov_len = buffer.capacity();
 
                 spot
             }
@@ -32,7 +32,7 @@ impl BufferRegister {
 
                 self.buffers.push(libc::iovec {
                     iov_base: buffer.stable_mut_ptr() as *mut _,
-                    iov_len: buffer.size(),
+                    iov_len: buffer.capacity(),
                 });
 
                 index

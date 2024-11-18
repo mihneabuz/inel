@@ -11,7 +11,9 @@ use crate::{BufferKey, Cancellation, Ring, RingReactor};
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
     fn stable_mut_ptr(&mut self) -> *mut u8;
+
     fn size(&self) -> usize;
+    fn capacity(&self) -> usize;
 
     fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.stable_ptr(), self.size()) }
@@ -38,6 +40,10 @@ impl<const N: usize> StableBuffer for Box<[u8; N]> {
     fn size(&self) -> usize {
         self.as_ref().len()
     }
+
+    fn capacity(&self) -> usize {
+        self.size()
+    }
 }
 
 impl StableBuffer for Box<[u8]> {
@@ -52,6 +58,10 @@ impl StableBuffer for Box<[u8]> {
     fn size(&self) -> usize {
         self.len()
     }
+
+    fn capacity(&self) -> usize {
+        self.size()
+    }
 }
 
 impl StableBuffer for Vec<u8> {
@@ -65,6 +75,10 @@ impl StableBuffer for Vec<u8> {
 
     fn size(&self) -> usize {
         self.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity()
     }
 }
 
@@ -150,6 +164,10 @@ where
 
     fn size(&self) -> usize {
         self.inner().size()
+    }
+
+    fn capacity(&self) -> usize {
+        self.inner().capacity()
     }
 }
 
@@ -250,15 +268,19 @@ where
     R: RangeBounds<usize>,
 {
     fn stable_ptr(&self) -> *const u8 {
-        self.inner.stable_ptr().wrapping_add(self.start())
+        self.inner().stable_ptr().wrapping_add(self.start())
     }
 
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.inner.stable_mut_ptr().wrapping_add(self.start())
+        self.inner_mut().stable_mut_ptr().wrapping_add(self.start())
     }
 
     fn size(&self) -> usize {
         self.end().saturating_sub(self.start())
+    }
+
+    fn capacity(&self) -> usize {
+        self.inner().capacity()
     }
 }
 
