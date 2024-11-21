@@ -9,7 +9,7 @@ use std::{
 use inel_reactor::op::{self, Op};
 
 use crate::{
-    io::{ReadSource, WriteSource},
+    io::{ReadHandle, ReadSource, WriteHandle, WriteSource},
     GlobalReactor,
 };
 
@@ -170,6 +170,10 @@ impl File {
 
     pub async fn sync(&self) -> Result<()> {
         op::Fsync::new(self.fd).run_on(GlobalReactor).await
+    }
+
+    pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
+        crate::io::split(self)
     }
 }
 
