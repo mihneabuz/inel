@@ -5,7 +5,7 @@ use io_uring::squeue::Entry;
 
 use crate::{buffer::StableBuffer, BufferKey, Cancellation, Key, Ring};
 
-pub(crate) trait RingReactor {
+pub trait RingReactor {
     unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key;
     unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation);
     fn check_result(&mut self, key: Key) -> Option<i32>;

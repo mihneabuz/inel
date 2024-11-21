@@ -46,6 +46,24 @@ impl<const N: usize> StableBuffer for Box<[u8; N]> {
     }
 }
 
+impl StableBuffer for Box<str> {
+    fn stable_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.size()
+    }
+}
+
 impl StableBuffer for Box<[u8]> {
     fn stable_ptr(&self) -> *const u8 {
         self.as_ptr()
@@ -298,7 +316,7 @@ where
     }
 
     fn capacity(&self) -> usize {
-        self.inner().capacity()
+        self.size()
     }
 }
 

@@ -136,6 +136,24 @@ mod view {
         let view = View::new(buf, VeryExclusiveRange { inner: (10, 20) });
         assert_eq!(view.as_slice(), &[b'A'; 9]);
     }
+
+    #[test]
+    fn capacity() {
+        let buf = Box::new([b'_'; 256]);
+        let view = View::new(buf, 64..128 + 64);
+
+        assert_eq!(view.size(), 128);
+        assert_eq!(view.capacity(), 128);
+    }
+
+    #[test]
+    fn inner() {
+        let buf = vec![b'_'; 256];
+        let mut view = View::new(buf, 64..128 + 64);
+
+        assert_eq!(view.inner().len(), 256);
+        assert_eq!(view.inner_mut().drain(..).count(), 256);
+    }
 }
 
 mod fixed {

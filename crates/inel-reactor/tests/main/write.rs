@@ -203,8 +203,7 @@ fn cancel() {
     let file2 = TempFile::with_content("");
     let file3 = TempFile::with_content("");
 
-    let mut write1 =
-        op::Write::new(file1.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut write1 = op::Write::new(file1.fd(), MESSAGE.to_string()).run_on(reactor.clone());
     let mut write2 = op::Write::new(file2.fd(), MESSAGE.as_bytes().to_vec())
         .offset(256)
         .run_on(reactor.clone());
@@ -645,17 +644,16 @@ mod fixed {
     }
 
     #[test]
-    // #[test_repeat(100)]
+    #[test_repeat(100)]
     fn cancel() {
         let (reactor, notifier) = runtime();
         let file1 = TempFile::with_content("");
         let file2 = TempFile::with_content("");
         let file3 = TempFile::with_content("");
 
-        let content = MESSAGE.as_bytes().to_vec();
-        let buf1 = Fixed::register(content.clone(), reactor.clone()).unwrap();
-        let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
-        let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf1 = Fixed::register(MESSAGE.to_string(), reactor.clone()).unwrap();
+        let buf2 = Fixed::register(MESSAGE.to_string().into_boxed_str(), reactor.clone()).unwrap();
+        let buf3 = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
 
         let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
         let mut write2 = op::WriteFixed::new(file2.fd(), buf2)
