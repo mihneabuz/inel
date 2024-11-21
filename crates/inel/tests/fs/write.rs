@@ -1,4 +1,4 @@
-use inel::io::AsyncWriteOwned;
+use inel::{buffer::StableBufferExt, io::AsyncWriteOwned};
 
 use crate::{setup_tracing, temp_file};
 
@@ -49,6 +49,59 @@ fn offset() {
     let data = std::fs::read_to_string(&name).unwrap();
     assert_eq!(buf.as_slice(), &data.as_bytes()[128..]);
     assert_eq!(&data.as_bytes()[..128], &[0; 128]);
+
+    std::fs::remove_file(&name).unwrap();
+}
+
+#[test]
+fn fixed() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    let buf = inel::block_on(async move {
+        let mut file = inel::fs::File::create(name_clone).await.unwrap();
+
+        let buf = Box::new([b'a'; 256]).fix().unwrap();
+        let (buf, res) = file.write_fixed_at(128, buf).await;
+
+        assert!(res.is_ok_and(|wrote| wrote == 256));
+        assert_eq!(buf.inner(), &Box::new([b'a'; 256]));
+
+        buf
+    });
+
+    let data = std::fs::read_to_string(&name).unwrap();
+    assert_eq!(buf.into_inner().as_slice(), &data.as_bytes()[128..]);
+    assert_eq!(&data.as_bytes()[..128], &[0; 128]);
+
+    std::fs::remove_file(&name).unwrap();
+}
+
+#[test]
+fn view() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    let buf = inel::block_on(async move {
+        let mut file = inel::fs::File::create(name_clone).await.unwrap();
+
+        let buf = Box::new([b'a'; 256]);
+        let (buf, res) = file.write_owned(buf.view(128..)).await;
+
+        assert!(res.is_ok_and(|wrote| wrote == 128));
+        assert_eq!(buf.inner(), &Box::new([b'a'; 256]));
+
+        buf
+    });
+
+    let data = std::fs::read_to_string(&name).unwrap();
+    let buf = buf.unview();
+    assert_eq!(buf.as_slice()[..128], [b'a'; 128]);
+    assert_eq!(&buf.as_slice()[128..], data.as_bytes());
 
     std::fs::remove_file(&name).unwrap();
 }

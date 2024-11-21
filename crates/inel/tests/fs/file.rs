@@ -115,13 +115,17 @@ fn metadata() {
     setup_tracing();
 
     let data = "Hello world!\n";
-    let name = temp_file();
-    let name_clone = name.clone();
+    let file = temp_file();
+    let file_clone = file.clone();
 
-    std::fs::write(&name, data.as_bytes()).unwrap();
+    let dir = temp_file();
+    let dir_clone = dir.clone();
 
-    inel::block_on(async move {
-        let file = inel::fs::File::open(name_clone).await.unwrap();
+    std::fs::write(&file, data.as_bytes()).unwrap();
+    std::fs::create_dir(&dir).unwrap();
+
+    inel::spawn(async move {
+        let file = inel::fs::File::open(file_clone).await.unwrap();
         let stats = file.metadata().await.unwrap();
 
         assert_eq!(stats.is_file(), true);
@@ -133,7 +137,19 @@ fn metadata() {
         assert!(format!("{:?}", stats).len() > 0);
     });
 
-    std::fs::remove_file(&name).unwrap();
+    inel::spawn(async move {
+        let file = inel::fs::File::open(dir_clone).await.unwrap();
+        let stats = file.metadata().await.unwrap();
+
+        assert_eq!(stats.is_file(), false);
+        assert_eq!(stats.is_dir(), true);
+        assert_eq!(stats.is_symlink(), false);
+    });
+
+    inel::run();
+
+    std::fs::remove_file(&file).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
 }
 
 #[test]

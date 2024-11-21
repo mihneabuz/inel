@@ -45,6 +45,18 @@ fn combo() {
 }
 
 #[test]
+fn sleep() {
+    let start = std::time::Instant::now();
+
+    inel::block_on(async move {
+        inel::time::sleep(std::time::Duration::from_millis(10)).await;
+    });
+
+    let diff = std::time::Instant::now() - start;
+    assert!(diff.as_millis() >= 10);
+}
+
+#[test]
 fn main() {
     static CALLED: AtomicBool = AtomicBool::new(false);
 
