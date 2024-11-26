@@ -5,6 +5,8 @@ use inel::io::{AsyncReadOwned, AsyncWriteOwned};
 mod bufreader;
 mod bufwriter;
 mod helpers;
+mod read;
+mod write;
 
 #[test]
 fn split() {

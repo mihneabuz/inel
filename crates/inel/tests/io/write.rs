@@ -124,3 +124,37 @@ fn sync() {
 
     std::fs::remove_file(&name).unwrap();
 }
+
+#[test]
+fn cancel() {
+    setup_tracing();
+
+    let name = temp_file();
+    std::fs::write(&name, [0u8; 128_000]).unwrap();
+
+    for _ in 0..1000 {
+        let index = rand::random::<usize>() % 16;
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            let buf = Box::new([b'a'; 16_000]).fix().unwrap();
+            let mut file = inel::fs::File::options()
+                .writable(true)
+                .direct(true)
+                .open(name_clone)
+                .await
+                .unwrap();
+
+            futures::select! {
+                (_, _) = file.write_fixed_at((index * 4_000) as u64, buf) => {
+                    false
+                },
+                () = inel::time::sleep(std::time::Duration::from_micros(0)) => {
+                    true
+                }
+            }
+        });
+    }
+
+    std::fs::remove_file(&name).unwrap();
+}

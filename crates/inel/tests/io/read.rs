@@ -107,3 +107,37 @@ fn view() {
 
     std::fs::remove_file(&name).unwrap();
 }
+
+#[test]
+fn cancel() {
+    setup_tracing();
+
+    let name = temp_file();
+    std::fs::write(&name, [b'a'; 128_000]).unwrap();
+
+    for _ in 0..1000 {
+        let index = rand::random::<usize>() % 16;
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            let buf = Box::new([0; 16_000]).fix().unwrap();
+            let mut file = inel::fs::File::options()
+                .readable(true)
+                .direct(true)
+                .open(name_clone)
+                .await
+                .unwrap();
+
+            futures::select! {
+                (_, _) = file.read_fixed_at((index * 4_000) as u64, buf) => {
+                    false
+                },
+                () = inel::time::sleep(std::time::Duration::from_micros(0)) => {
+                    true
+                }
+            }
+        });
+    }
+
+    std::fs::remove_file(&name).unwrap();
+}

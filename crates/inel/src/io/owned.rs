@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::FutureExt;
+use futures::{future::FusedFuture, FutureExt};
 use inel_reactor::{
     buffer::{FixedBuffer, StableBuffer},
     op::{self, Op},
@@ -111,6 +111,12 @@ impl<B: StableBuffer> Future for ReadOwned<B> {
     }
 }
 
+impl<B: StableBuffer> FusedFuture for ReadOwned<B> {
+    fn is_terminated(&self) -> bool {
+        self.sub.is_terminated()
+    }
+}
+
 pub struct WriteOwned<B: StableBuffer> {
     sub: Submission<op::Write<B>, GlobalReactor>,
 }
@@ -120,6 +126,12 @@ impl<B: StableBuffer> Future for WriteOwned<B> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::into_inner(self).sub.poll_unpin(cx)
+    }
+}
+
+impl<B: StableBuffer> FusedFuture for WriteOwned<B> {
+    fn is_terminated(&self) -> bool {
+        self.sub.is_terminated()
     }
 }
 
@@ -135,6 +147,12 @@ impl<B: FixedBuffer> Future for ReadFixed<B> {
     }
 }
 
+impl<B: FixedBuffer> FusedFuture for ReadFixed<B> {
+    fn is_terminated(&self) -> bool {
+        self.sub.is_terminated()
+    }
+}
+
 pub struct WriteFixed<B: FixedBuffer> {
     sub: Submission<op::WriteFixed<B>, GlobalReactor>,
 }
@@ -144,5 +162,11 @@ impl<B: FixedBuffer> Future for WriteFixed<B> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::into_inner(self).sub.poll_unpin(cx)
+    }
+}
+
+impl<B: FixedBuffer> FusedFuture for WriteFixed<B> {
+    fn is_terminated(&self) -> bool {
+        self.sub.is_terminated()
     }
 }
