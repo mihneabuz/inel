@@ -1,6 +1,6 @@
 use std::{future::Future, task::Context};
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, FutureExt};
 use inel_interface::Reactor;
 use tracing::debug;
 
@@ -32,9 +32,12 @@ impl Executor {
     {
         let (sender, receiver) = oneshot::channel();
 
-        self.queue.schedule(async move {
-            let _ = sender.send(future.await);
-        });
+        self.queue.schedule(
+            async move {
+                let _ = sender.send(future.await);
+            }
+            .fuse(),
+        );
 
         JoinHandle::new(receiver)
     }
