@@ -20,6 +20,7 @@ pub struct OpenOptions {
     append: bool,
     create: bool,
     truncate: bool,
+    direct: bool,
 }
 
 impl OpenOptions {
@@ -31,6 +32,7 @@ impl OpenOptions {
             append: false,
             create: false,
             truncate: false,
+            direct: false,
         }
     }
 
@@ -59,6 +61,11 @@ impl OpenOptions {
         self
     }
 
+    pub fn direct(&mut self, direct: bool) -> &mut Self {
+        self.direct = direct;
+        self
+    }
+
     fn libc_opts(&self) -> (libc::c_int, libc::mode_t) {
         let mut flags: libc::c_int = 0;
         // TODO: handle mode flags properly :)
@@ -82,6 +89,10 @@ impl OpenOptions {
 
         if self.truncate {
             flags |= libc::O_TRUNC;
+        }
+
+        if self.direct {
+            flags |= libc::O_DIRECT;
         }
 
         (flags, mode)
