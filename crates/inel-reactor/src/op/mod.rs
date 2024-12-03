@@ -1,4 +1,5 @@
 mod fs;
+mod net;
 mod read;
 mod time;
 mod write;
@@ -8,6 +9,7 @@ use io_uring::{opcode, squeue::Entry};
 use crate::{Cancellation, Ring, Submission};
 
 pub use fs::*;
+pub use net::*;
 pub use read::*;
 pub use time::*;
 pub use write::*;
