@@ -5,7 +5,7 @@ use inel_interface::Reactor;
 use inel_macro::test_repeat;
 use inel_reactor::op::{self, Op};
 
-use crate::helpers::{poll, runtime, TempFile};
+use crate::helpers::{assert_ready, poll, runtime, TempFile};
 
 #[test]
 fn create() {
@@ -22,9 +22,7 @@ fn create() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(res) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let res = assert_ready!(poll!(fut, notifier));
     assert!(res.is_ok());
 
     assert!(fut.is_terminated());
@@ -49,9 +47,7 @@ fn relative() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(res) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let res = assert_ready!(poll!(fut, notifier));
     assert!(res.is_ok());
 
     assert!(fut.is_terminated());
@@ -76,9 +72,7 @@ fn error() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(res) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let res = assert_ready!(poll!(fut, notifier));
     assert!(res.is_err());
 
     assert!(fut.is_terminated());

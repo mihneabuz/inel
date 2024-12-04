@@ -264,3 +264,14 @@ macro_rules! assert_in_range {
 }
 
 pub(crate) use assert_in_range;
+
+macro_rules! assert_ready {
+    ($poll:expr) => {{
+        let Poll::Ready(res) = $poll else {
+            panic!("poll not ready");
+        };
+        res
+    }};
+}
+
+pub(crate) use assert_ready;
