@@ -89,10 +89,8 @@ fn lines() {
         let mut writer = inel::io::BufWriter::new(file);
 
         for _ in 0..lines {
-            let res = writer.write(line.as_bytes()).await;
-
+            let res = writer.write_all(line.as_bytes()).await;
             assert!(res.is_ok());
-            assert_eq!(res.unwrap(), line.len());
         }
 
         let res = writer.flush().await;
@@ -103,6 +101,34 @@ fn lines() {
     assert_eq!(data, expect);
 
     std::fs::remove_file(&name).unwrap();
+}
+
+#[test]
+fn error() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    std::fs::write(&name, [b'a'; 4096]).unwrap();
+
+    inel::block_on(async move {
+        let file = inel::fs::File::options()
+            .readable(true)
+            .writable(false)
+            .open(&name_clone)
+            .await
+            .unwrap();
+
+        let mut writer = inel::io::BufWriter::new(file);
+
+        std::fs::remove_file(&name_clone).unwrap();
+        inel::time::sleep(std::time::Duration::from_millis(40)).await;
+
+        let data = vec![b'b'; 256_000];
+        let res = writer.write_all(data.as_slice()).await;
+        assert!(res.is_err());
+    });
 }
 
 mod fixed {
@@ -194,10 +220,8 @@ mod fixed {
             let mut writer = inel::io::BufWriter::new(file).fix().unwrap();
 
             for _ in 0..lines {
-                let res = writer.write(line.as_bytes()).await;
-
+                let res = writer.write_all(line.as_bytes()).await;
                 assert!(res.is_ok());
-                assert_eq!(res.unwrap(), line.len());
             }
 
             let res = writer.flush().await;
@@ -208,5 +232,33 @@ mod fixed {
         assert_eq!(data, expect);
 
         std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn error() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        std::fs::write(&name, [b'a'; 4096]).unwrap();
+
+        inel::block_on(async move {
+            let file = inel::fs::File::options()
+                .readable(true)
+                .writable(false)
+                .open(&name_clone)
+                .await
+                .unwrap();
+
+            let mut writer = inel::io::BufWriter::new(file).fix().unwrap();
+
+            std::fs::remove_file(&name_clone).unwrap();
+            inel::time::sleep(std::time::Duration::from_millis(40)).await;
+
+            let data = vec![b'b'; 256_000];
+            let res = writer.write_all(data.as_slice()).await;
+            assert!(res.is_err());
+        });
     }
 }
