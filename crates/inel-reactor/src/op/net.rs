@@ -181,7 +181,7 @@ impl Accept {
 }
 
 unsafe impl Op for Accept {
-    type Output = Result<SocketAddr>;
+    type Output = Result<(RawFd, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
         let addr = self.addr.as_mut().unwrap();
@@ -199,7 +199,7 @@ unsafe impl Op for Accept {
         } else {
             let res = self.addr.take().unwrap();
             let (addr, len) = unsafe { (res.0.assume_init(), res.1.assume_init()) };
-            Ok(from_raw_addr(addr, len))
+            Ok((ret, from_raw_addr(addr, len)))
         }
     }
 

@@ -9,7 +9,10 @@ use std::{
 };
 
 use inel_interface::Reactor;
-use inel_reactor::op::{self, Op};
+use inel_reactor::{
+    buffer::StableBuffer,
+    op::{self, Op},
+};
 
 fn create_socket_test(domain: i32, typ: i32) -> RawFd {
     let (reactor, notifier) = runtime();
@@ -172,7 +175,7 @@ fn connect_cancel_test_ipv6() {
     connect_cancel_test("::1");
 }
 
-fn accept_test(sock: RawFd) -> SocketAddr {
+fn accept_test(sock: RawFd) -> (RawFd, SocketAddr) {
     let (reactor, notifier) = runtime();
 
     let mut con = op::Accept::new(sock).run_on(reactor.clone());
@@ -187,7 +190,8 @@ fn accept_test(sock: RawFd) -> SocketAddr {
 
     let addr = assert_ready!(poll!(fut, notifier));
     assert!(addr.is_ok());
-    assert!(addr.as_ref().unwrap().ip().is_loopback());
+    assert!(addr.as_ref().unwrap().0 > 0);
+    assert!(addr.as_ref().unwrap().1.ip().is_loopback());
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
@@ -309,4 +313,36 @@ fn cancel() {
 
     accept_cancel_test(create_listener_ipv4().0);
     accept_cancel_test(create_listener_ipv6().0);
+}
+
+#[test]
+fn read_write() {
+    let (listener, port) = create_listener_ipv4();
+    let conn1 = connect_test_ipv4(port);
+    let (conn2, _) = accept_test(listener);
+
+    let (reactor, notifier) = runtime();
+
+    let write = op::Write::new(conn1, Box::new([b'A'; 4096])).run_on(reactor.clone());
+    let read = op::Read::new(conn2, Box::new([0; 8192])).run_on(reactor.clone());
+
+    let mut fut1 = pin!(write);
+    let mut fut2 = pin!(read);
+
+    assert!(poll!(fut1, notifier).is_pending());
+    assert!(poll!(fut2, notifier).is_pending());
+    assert_eq!(reactor.active(), 2);
+
+    reactor.wait();
+    reactor.wait();
+
+    let (wrote, res) = assert_ready!(poll!(fut1, notifier));
+    assert!(res.is_ok_and(|wrote| wrote == 4096));
+
+    let (read, res) = assert_ready!(poll!(fut2, notifier));
+    assert!(res.is_ok_and(|read| read == 4096));
+
+    assert_eq!(wrote.as_slice(), &read.as_slice()[..4096]);
+
+    assert!(reactor.is_done());
 }
