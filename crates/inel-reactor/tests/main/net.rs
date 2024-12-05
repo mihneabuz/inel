@@ -6,7 +6,7 @@ use inel_interface::Reactor;
 use inel_reactor::{
     buffer::StableBuffer,
     op::{self, Op},
-    util::{bind, getsockname, listen},
+    util::{bind, getpeername, getsockname, listen},
 };
 
 fn make_addr(ip: &str, port: u16) -> SocketAddr {
@@ -269,14 +269,16 @@ fn connect() {
     for _ in 0..4 {
         let (_, port) = create_listener_ipv4();
         for _ in 0..10 {
-            connect_test_ipv4(port);
+            let sock = connect_test_ipv4(port);
+            assert!(getpeername(sock).is_ok_and(|addr| addr.port() == port));
         }
     }
 
     for _ in 0..4 {
         let (_, port) = create_listener_ipv6();
         for _ in 0..10 {
-            connect_test_ipv6(port);
+            let sock = connect_test_ipv6(port);
+            assert!(getpeername(sock).is_ok_and(|addr| addr.port() == port));
         }
     }
 }
@@ -317,6 +319,7 @@ fn error() {
     assert!(bind(i32::MAX, make_addr("127.0.0.1", u16::MAX)).is_err());
     assert!(listen(i32::MAX, i32::MAX as u32).is_err());
     assert!(getsockname(i32::MAX).is_err());
+    assert!(getpeername(i32::MAX).is_err());
 }
 
 #[test]

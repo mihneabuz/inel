@@ -110,3 +110,15 @@ pub fn getsockname(sock: RawFd) -> Result<SocketAddr> {
         Ok(from_raw_addr(unsafe { addr.assume_init() }, len))
     }
 }
+
+pub fn getpeername(sock: RawFd) -> Result<SocketAddr> {
+    let mut addr: MaybeUninit<SocketAddrCRepr> = MaybeUninit::uninit();
+    let mut len = std::mem::size_of::<SocketAddrCRepr>() as u32;
+
+    let ret = unsafe { libc::getpeername(sock, addr.as_mut_ptr() as *mut _, &mut len) };
+    if ret < 0 {
+        Err(Error::last_os_error())
+    } else {
+        Ok(from_raw_addr(unsafe { addr.assume_init() }, len))
+    }
+}
