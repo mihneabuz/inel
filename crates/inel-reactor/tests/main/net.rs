@@ -1,18 +1,17 @@
 use crate::helpers::{assert_ready, poll, runtime};
 use futures::future::FusedFuture;
-use std::{
-    net::SocketAddr,
-    os::fd::{IntoRawFd, RawFd},
-    pin::pin,
-    str::FromStr,
-    task::Poll,
-};
+use std::{net::SocketAddr, os::fd::RawFd, pin::pin, str::FromStr, task::Poll};
 
 use inel_interface::Reactor;
 use inel_reactor::{
     buffer::StableBuffer,
     op::{self, Op},
+    util::{bind, getsockname, listen},
 };
+
+fn make_addr(ip: &str, port: u16) -> SocketAddr {
+    SocketAddr::new(FromStr::from_str(ip).unwrap(), port)
+}
 
 fn create_socket_test(domain: i32, typ: i32) -> RawFd {
     let (reactor, notifier) = runtime();
@@ -71,7 +70,7 @@ fn create_socket_cancel_test() {
 }
 
 fn connect_test(addr: &str, port: u16) -> RawFd {
-    let addr = SocketAddr::new(FromStr::from_str(addr).unwrap(), port);
+    let addr = make_addr(addr, port);
     let sock = create_socket_test(
         if addr.is_ipv4() {
             libc::AF_INET
@@ -111,7 +110,7 @@ fn connect_test_ipv6(port: u16) -> RawFd {
 }
 
 fn connect_error_test(addr: &str) {
-    let addr = SocketAddr::new(FromStr::from_str(addr).unwrap(), u16::MAX);
+    let addr = make_addr(addr, u16::MAX);
     let sock = create_socket_test(
         if addr.is_ipv4() {
             libc::AF_INET
@@ -143,7 +142,7 @@ fn connect_error_test_ipv6() {
 }
 
 fn connect_cancel_test(addr: &str) {
-    let addr = SocketAddr::new(FromStr::from_str(addr).unwrap(), u16::MAX);
+    let addr = make_addr(addr, u16::MAX);
     let sock = create_socket_test(
         if addr.is_ipv4() {
             libc::AF_INET
@@ -227,11 +226,23 @@ fn accept_cancel_test(sock: RawFd) {
 }
 
 fn create_listener(addr: &str) -> (RawFd, u16) {
-    let listener = std::net::TcpListener::bind((addr, 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let fd = listener.into_raw_fd();
+    let addr = make_addr(addr, 0);
+    let sock = create_socket_test(
+        if addr.is_ipv4() {
+            libc::AF_INET
+        } else {
+            libc::AF_INET6
+        },
+        libc::SOCK_STREAM,
+    );
 
-    (fd, port)
+    bind(sock, addr).unwrap();
+    listen(sock, 32).unwrap();
+
+    let addr = getsockname(sock);
+    let port = addr.unwrap().port();
+
+    (sock, port)
 }
 
 fn create_listener_ipv4() -> (RawFd, u16) {
@@ -302,6 +313,10 @@ fn error() {
 
     accept_error_test(create_socket_test(libc::AF_INET, libc::SOCK_STREAM));
     accept_error_test(create_socket_test(libc::AF_INET6, libc::SOCK_STREAM));
+
+    assert!(bind(i32::MAX, make_addr("127.0.0.1", u16::MAX)).is_err());
+    assert!(listen(i32::MAX, i32::MAX as u32).is_err());
+    assert!(getsockname(i32::MAX).is_err());
 }
 
 #[test]
