@@ -15,10 +15,6 @@ impl SocketAddrCRepr {
     pub fn as_ptr(&self) -> *const libc::sockaddr {
         self as *const _ as *const libc::sockaddr
     }
-
-    pub fn as_mut_ptr(&mut self) -> *mut libc::sockaddr {
-        self as *mut _ as *mut libc::sockaddr
-    }
 }
 
 pub(crate) fn into_raw_addr(addr: SocketAddr) -> (SocketAddrCRepr, u32) {
@@ -54,7 +50,7 @@ pub(crate) fn into_raw_addr(addr: SocketAddr) -> (SocketAddrCRepr, u32) {
     }
 }
 
-pub(crate) fn from_raw_addr(addr: SocketAddrCRepr, len: u32) -> SocketAddr {
+pub(crate) fn from_raw_addr(addr: &SocketAddrCRepr, len: u32) -> SocketAddr {
     unsafe {
         match addr.g.sa_family as i32 {
             libc::AF_INET => {
@@ -107,7 +103,7 @@ pub fn getsockname(sock: RawFd) -> Result<SocketAddr> {
     if ret < 0 {
         Err(Error::last_os_error())
     } else {
-        Ok(from_raw_addr(unsafe { addr.assume_init() }, len))
+        Ok(from_raw_addr(&unsafe { addr.assume_init() }, len))
     }
 }
 
@@ -119,6 +115,6 @@ pub fn getpeername(sock: RawFd) -> Result<SocketAddr> {
     if ret < 0 {
         Err(Error::last_os_error())
     } else {
-        Ok(from_raw_addr(unsafe { addr.assume_init() }, len))
+        Ok(from_raw_addr(&unsafe { addr.assume_init() }, len))
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     io::{Error, Result},
-    mem::MaybeUninit,
+    mem::{self, MaybeUninit},
     net::SocketAddr,
     os::fd::RawFd,
     ptr::addr_of_mut,
@@ -49,7 +49,7 @@ unsafe impl Op for Socket {
 
     fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
+            Err(Error::last_os_error())
         } else {
             Ok(ret)
         }
@@ -85,7 +85,7 @@ unsafe impl Op for Connect {
 
     fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
+            Err(Error::last_os_error())
         } else {
             Ok(self.fd)
         }
@@ -101,14 +101,14 @@ unsafe impl Op for Connect {
 
 pub struct Accept {
     fd: RawFd,
-    addr: Option<Box<MaybeUninit<(SocketAddrCRepr, u32)>>>,
+    addr: Box<MaybeUninit<(SocketAddrCRepr, u32)>>,
 }
 
 impl Accept {
     pub fn new(fd: RawFd) -> Self {
         Self {
             fd,
-            addr: Some(Box::new_uninit()),
+            addr: Box::new_uninit(),
         }
     }
 }
@@ -117,24 +117,24 @@ unsafe impl Op for Accept {
     type Output = Result<(RawFd, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
-        let ptr = self.addr.as_mut().unwrap().as_mut_ptr();
-        let (addr, len) = unsafe { ((*ptr).0.as_mut_ptr(), addr_of_mut!((*ptr).1)) };
-        opcode::Accept::new(Fd(self.fd), addr, len).build()
+        let ptr = self.addr.as_mut_ptr();
+        let (addr, len) = unsafe { (addr_of_mut!((*ptr).0), addr_of_mut!((*ptr).1)) };
+        unsafe {
+            len.write(mem::size_of::<SocketAddrCRepr>() as u32);
+        }
+        opcode::Accept::new(Fd(self.fd), addr as *mut _, len).build()
     }
 
-    fn result(mut self, ret: i32) -> Self::Output {
+    fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
+            Err(Error::last_os_error())
         } else {
-            let res = unsafe { self.addr.take().unwrap().assume_init() };
-            Ok((ret, from_raw_addr((*res).0, (*res).1)))
+            let res = unsafe { self.addr.assume_init() };
+            Ok((ret, from_raw_addr(&res.0, res.1)))
         }
     }
 
     fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            self.addr.unwrap().into(),
-        )
+        (Some(AsyncCancel::new(user_data).build()), self.addr.into())
     }
 }
