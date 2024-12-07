@@ -1,10 +1,9 @@
+use crate::helpers::{setup_tracing, temp_file};
 use futures::{AsyncBufReadExt, StreamExt};
-use helpers::{setup_tracing, temp_file};
 use inel::io::{AsyncReadOwned, AsyncWriteOwned};
 
 mod bufreader;
 mod bufwriter;
-mod helpers;
 mod read;
 mod write;
 

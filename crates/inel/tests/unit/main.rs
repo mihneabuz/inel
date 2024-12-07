@@ -1,5 +1,8 @@
-use core::sync::atomic::Ordering;
-use std::sync::{atomic::AtomicBool, mpsc};
+mod fs;
+pub mod helpers;
+mod io;
+
+use std::sync::mpsc;
 
 #[test]
 fn sanity() {
@@ -58,6 +61,9 @@ fn sleep() {
 
 #[test]
 fn main() {
+    use core::sync::atomic::Ordering;
+    use std::sync::atomic::AtomicBool;
+
     static CALLED: AtomicBool = AtomicBool::new(false);
 
     #[inel::main]
