@@ -49,7 +49,7 @@ unsafe impl Op for Socket {
 
     fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::last_os_error())
+            Err(Error::from_raw_os_error(-ret))
         } else {
             Ok(ret)
         }
@@ -85,7 +85,7 @@ unsafe impl Op for Connect {
 
     fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::last_os_error())
+            Err(Error::from_raw_os_error(-ret))
         } else {
             Ok(self.fd)
         }
@@ -127,7 +127,7 @@ unsafe impl Op for Accept {
 
     fn result(self, ret: i32) -> Self::Output {
         if ret < 0 {
-            Err(Error::last_os_error())
+            Err(Error::from_raw_os_error(-ret))
         } else {
             let res = unsafe { self.addr.assume_init() };
             Ok((ret, from_raw_addr(&res.0, res.1)))
