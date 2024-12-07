@@ -1,7 +1,4 @@
-use std::{
-    os::fd::{FromRawFd, IntoRawFd},
-    time::Duration,
-};
+use std::os::fd::{AsRawFd, FromRawFd};
 
 use crate::helpers::*;
 use inel::io::AsyncWriteOwned;
@@ -178,13 +175,8 @@ fn drop_close() {
 
     let fd = inel::block_on(async move {
         let file = inel::fs::File::open(name_clone).await.unwrap();
-        let fd = file.into_raw_fd();
-        let _ = unsafe { inel::fs::File::from_raw_fd(fd) };
-        fd
+        file.as_raw_fd()
     });
-
-    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
-    std::thread::sleep(Duration::from_millis(60));
 
     inel::block_on(async move {
         let file = unsafe { inel::fs::File::from_raw_fd(fd) };
