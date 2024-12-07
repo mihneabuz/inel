@@ -1,6 +1,8 @@
 mod fs;
-pub mod helpers;
 mod io;
+mod net;
+
+pub mod helpers;
 
 use std::sync::mpsc;
 
