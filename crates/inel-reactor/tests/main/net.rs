@@ -1,6 +1,13 @@
 use crate::helpers::{assert_ready, poll, runtime};
 use futures::future::FusedFuture;
-use std::{net::SocketAddr, os::fd::RawFd, pin::pin, str::FromStr, task::Poll};
+use std::{
+    io::Result,
+    net::{Shutdown, SocketAddr},
+    os::fd::RawFd,
+    pin::pin,
+    str::FromStr,
+    task::Poll,
+};
 
 use inel_interface::Reactor;
 use inel_reactor::{
@@ -225,6 +232,26 @@ fn accept_cancel_test(sock: RawFd) {
     assert!(reactor.is_done());
 }
 
+fn shutdown_test(sock: RawFd, how: Shutdown) -> Result<()> {
+    let (reactor, notifier) = runtime();
+
+    let mut shut = op::Shutdown::new(sock, how).run_on(reactor.clone());
+    let mut fut = pin!(shut);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let res = assert_ready!(poll!(fut, notifier));
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+
+    res
+}
+
 fn create_listener(addr: &str) -> (RawFd, u16) {
     let addr = make_addr(addr, 0);
     let sock = create_socket_test(
@@ -307,6 +334,18 @@ fn accept() {
 }
 
 #[test]
+fn shutdown() {
+    for how in [Shutdown::Read, Shutdown::Write, Shutdown::Both] {
+        let (listener, port) = create_listener_ipv4();
+        let client = connect_test_ipv4(port);
+        let server = accept_test(listener).0;
+
+        assert!(shutdown_test(client, how).is_ok());
+        assert!(shutdown_test(server, how).is_ok());
+    }
+}
+
+#[test]
 fn error() {
     create_socket_error_test();
 
@@ -320,6 +359,12 @@ fn error() {
     assert!(listen(i32::MAX, i32::MAX as u32).is_err());
     assert!(getsockname(i32::MAX).is_err());
     assert!(getpeername(i32::MAX).is_err());
+
+    assert!(shutdown_test(
+        create_socket_test(libc::AF_INET, libc::SOCK_STREAM),
+        Shutdown::Both
+    )
+    .is_err());
 }
 
 #[test]

@@ -131,3 +131,35 @@ unsafe impl Op for Accept {
         (Some(AsyncCancel::new(user_data).build()), self.addr.into())
     }
 }
+
+pub struct Shutdown {
+    fd: RawFd,
+    how: std::net::Shutdown,
+}
+
+impl Shutdown {
+    pub fn new(fd: RawFd, how: std::net::Shutdown) -> Self {
+        Self { fd, how }
+    }
+}
+
+unsafe impl Op for Shutdown {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        let how = match self.how {
+            std::net::Shutdown::Read => libc::SHUT_RD,
+            std::net::Shutdown::Write => libc::SHUT_WR,
+            std::net::Shutdown::Both => libc::SHUT_RDWR,
+        };
+        opcode::Shutdown::new(Fd(self.fd), how).build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(())
+        }
+    }
+}
