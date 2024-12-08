@@ -54,13 +54,6 @@ unsafe impl Op for Socket {
             Ok(ret)
         }
     }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
-    }
 }
 
 pub struct Connect {

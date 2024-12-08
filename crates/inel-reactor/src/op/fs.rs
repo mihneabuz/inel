@@ -174,10 +174,6 @@ unsafe impl Op for Close {
     }
 
     fn result(self, _ret: i32) -> Self::Output {}
-
-    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
-        (None, Cancellation::empty())
-    }
 }
 
 pub struct Fsync {
@@ -203,10 +199,6 @@ unsafe impl Op for Fsync {
             ..=-1 => Err(Error::from_raw_os_error(-ret)),
             1.. => unreachable!(),
         }
-    }
-
-    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
-        (None, Cancellation::empty())
     }
 }
 
