@@ -63,9 +63,8 @@ where
 {
     fn ready(&self) -> Option<&Buffer<B>> {
         match &self.state {
-            BufReaderState::Empty => None,
-            BufReaderState::Pending(_) => None,
             BufReaderState::Ready(buf) => Some(buf),
+            _ => None,
         }
     }
 
@@ -92,9 +91,8 @@ where
     pub(crate) fn into_raw_parts(self) -> (S, Option<B>) {
         let Self { state, source } = self;
         let buf = match state {
-            BufReaderState::Empty => None,
-            BufReaderState::Pending(_) => None,
             BufReaderState::Ready(buf) => Some(buf.into_inner()),
+            _ => None,
         };
         (source, buf)
     }

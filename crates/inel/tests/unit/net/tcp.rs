@@ -4,6 +4,7 @@ use std::{
     thread::JoinHandle,
 };
 
+use futures::{AsyncBufReadExt, AsyncWriteExt, StreamExt};
 use inel::{
     buffer::StableBufferExt,
     io::{AsyncReadOwned, AsyncWriteOwned},
@@ -112,6 +113,8 @@ fn client() {
             .await
             .unwrap();
 
+        assert_eq!(format!("{:?}", client), "TcpStream".to_string());
+
         let mut buf = Box::new([0; 512]);
         let mut read = Ok(0);
         for _ in 0..100 {
@@ -136,6 +139,8 @@ fn server() {
             .await
             .unwrap();
         let port = listener.local_addr().unwrap().port();
+
+        assert_eq!(format!("{:?}", listener), "TcpListener".to_string());
 
         (port, listener)
     });
@@ -166,37 +171,86 @@ fn server() {
 }
 
 #[test]
-fn raw_fd() {
+fn error() {
     setup_tracing();
 
-    let (tx, rx) = inel::block_on(async {
+    inel::block_on(async {
+        let res = inel::net::TcpStream::connect(("127.??.0.1", 123)).await;
+        assert!(res.is_err());
+
+        let empty: Vec<std::net::SocketAddr> = Vec::new();
+        let res = inel::net::TcpStream::connect(empty.as_slice()).await;
+        assert!(res.is_err());
+
         let listener = inel::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let sender = inel::spawn(async move {
-            inel::net::TcpStream::connect(("127.0.0.1", port))
-                .await
-                .unwrap()
-                .into_raw_fd()
-        });
+        let res = inel::net::TcpListener::bind(("127.0.0.1", port)).await;
+        assert!(res.is_err());
+    });
+}
 
-        let receiver = inel::spawn(async move { listener.accept().await.unwrap().0.into_raw_fd() });
+#[test]
+fn raw_fd() {
+    setup_tracing();
 
-        (sender.join().await.unwrap(), receiver.join().await.unwrap())
+    let (client, listener) = inel::block_on(async {
+        let listener = inel::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let client = inel::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+
+        (client.into_raw_fd(), listener.into_raw_fd())
     });
 
     inel::spawn(async move {
-        let mut sender = unsafe { inel::net::TcpStream::from_raw_fd(tx) };
-        let _ = sender.write_owned("Hello World!\n".to_string()).await;
+        let mut client = unsafe { inel::net::TcpStream::from_raw_fd(client) };
+        let _ = client.write_owned("Hello World!\n".to_string()).await;
     });
 
     inel::spawn(async move {
-        let mut receiver = unsafe { inel::net::TcpStream::from_raw_fd(rx) };
-        let (buf, res) = receiver.read_owned(Box::new([0; 512])).await;
+        let listener = unsafe { inel::net::TcpListener::from_raw_fd(listener) };
+        let mut conn = listener.accept().await.unwrap().0;
+        let (buf, res) = conn.read_owned(Box::new([0; 512])).await;
         assert_eq!(&buf[0..res.unwrap()], "Hello World!\n".as_bytes());
     });
 
     inel::run();
+}
+
+#[test]
+fn full() {
+    setup_tracing();
+
+    inel::block_on(async {
+        let listener = inel::net::TcpListener::bind(("::1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let h1 = inel::spawn(async move {
+            let client = inel::net::TcpStream::connect(("::1", port)).await.unwrap();
+            let mut writer = inel::io::BufWriter::new(client);
+            let data = "Hello World!\n".repeat(4096).as_bytes().to_vec();
+            assert!(writer.write_all(&data).await.is_ok());
+            assert!(writer.flush().await.is_ok());
+        });
+
+        let h2 = inel::spawn(async move {
+            let (conn, addr) = listener.accept().await.unwrap();
+            assert!(addr.is_ipv6());
+            let mut lines = inel::io::BufReader::new(conn).lines();
+            while let Some(line) = lines.next().await {
+                assert!(line.is_ok());
+                assert_eq!(line.unwrap().as_str(), "Hello World!");
+            }
+        });
+
+        assert!(h1.join().await.is_some());
+        assert!(h2.join().await.is_some());
+    });
 }

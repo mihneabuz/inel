@@ -1,3 +1,5 @@
+use futures::future::FusedFuture;
+
 use {inel::buffer::StableBufferExt, inel::io::AsyncReadOwned};
 
 use crate::helpers::{setup_tracing, temp_file};
@@ -128,11 +130,41 @@ fn cancel() {
                 .await
                 .unwrap();
 
+            let mut read = file.read_fixed_at((index * 4_000) as u64, buf);
+
             futures::select! {
-                (_, _) = file.read_fixed_at((index * 4_000) as u64, buf) => {
+                (_, _) = read => {
                     false
                 },
-                () = inel::time::sleep(std::time::Duration::from_micros(0)) => {
+                () = inel::time::instant() => {
+                    assert!(!read.is_terminated());
+                    true
+                }
+            }
+        });
+    }
+
+    for _ in 0..1000 {
+        let index = rand::random::<usize>() % 16;
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            let buf = Box::new([0; 16_000]);
+            let mut file = inel::fs::File::options()
+                .readable(true)
+                .direct(true)
+                .open(name_clone)
+                .await
+                .unwrap();
+
+            let mut read = file.read_owned_at((index * 4_000) as u64, buf);
+
+            futures::select! {
+                (_, _) = read => {
+                    false
+                },
+                () = inel::time::instant() => {
+                    assert!(!read.is_terminated());
                     true
                 }
             }

@@ -19,9 +19,8 @@ where
 {
     pub(crate) fn ready(&self) -> Option<&B> {
         match &self.state {
-            BufWriterState::Empty => None,
-            BufWriterState::Pending(_) => None,
             BufWriterState::Ready(buf) => Some(buf),
+            _ => None,
         }
     }
 
@@ -44,9 +43,8 @@ where
     pub(crate) fn into_raw_parts(self) -> (S, Option<B>) {
         let Self { state, sink } = self;
         let buf = match state {
-            BufWriterState::Empty => None,
-            BufWriterState::Pending(_) => None,
             BufWriterState::Ready(buffer) => Some(buffer),
+            _ => None,
         };
         (sink, buf)
     }

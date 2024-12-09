@@ -6,6 +6,8 @@ pub mod helpers;
 
 use std::sync::mpsc;
 
+use futures::future::FusedFuture;
+
 #[test]
 fn sanity() {
     let (send, recv) = oneshot::channel::<i32>();
@@ -78,4 +80,24 @@ fn main() {
     main();
 
     assert!(CALLED.load(Ordering::SeqCst));
+}
+
+#[test]
+fn select() {
+    inel::block_on(async {
+        let mut sleep = inel::time::sleep(std::time::Duration::from_millis(10));
+
+        let canceled = futures::select! {
+            () = sleep => {
+                false
+            },
+
+            () = inel::time::instant() => {
+                assert!(!sleep.is_terminated());
+                true
+            }
+        };
+
+        assert!(canceled);
+    });
 }

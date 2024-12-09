@@ -1,4 +1,4 @@
-use std::os::fd::FromRawFd;
+use std::os::fd::{FromRawFd, IntoRawFd};
 
 use crate::helpers::*;
 use inel::io::AsyncWriteOwned;
@@ -146,6 +146,31 @@ fn metadata() {
 
     std::fs::remove_file(&file).unwrap();
     std::fs::remove_dir(&dir).unwrap();
+}
+
+#[test]
+fn raw_fd() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    let fd = inel::block_on(async move {
+        inel::fs::File::create(name_clone)
+            .await
+            .unwrap()
+            .into_raw_fd()
+    });
+
+    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
+
+    inel::block_on(async move {
+        let mut file = unsafe { inel::fs::File::from_raw_fd(fd) };
+        let (_, res) = file.write_owned("Hello World!\n".to_string()).await;
+        assert!(res.is_ok());
+    });
+
+    std::fs::remove_file(&name).unwrap();
 }
 
 #[test]
