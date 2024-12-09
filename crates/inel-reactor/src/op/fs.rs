@@ -9,7 +9,7 @@ use std::{
 use io_uring::{
     opcode::{self, AsyncCancel},
     squeue::Entry,
-    types::{Fd, OpenHow},
+    types::{Fd, FsyncFlags, OpenHow},
 };
 
 use crate::{op::Op, Cancellation};
@@ -184,11 +184,17 @@ unsafe impl Op for Close {
 
 pub struct Fsync {
     fd: RawFd,
+    meta: bool,
 }
 
 impl Fsync {
     pub fn new(fd: RawFd) -> Self {
-        Self { fd }
+        Self { fd, meta: false }
+    }
+
+    pub fn sync_meta(mut self) -> Self {
+        self.meta = true;
+        self
     }
 }
 
@@ -196,7 +202,13 @@ unsafe impl Op for Fsync {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        opcode::Fsync::new(Fd(self.fd)).build()
+        let flag = if self.meta {
+            FsyncFlags::all()
+        } else {
+            FsyncFlags::DATASYNC
+        };
+
+        opcode::Fsync::new(Fd(self.fd)).flags(flag).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {

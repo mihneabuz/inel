@@ -1,4 +1,4 @@
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::FromRawFd;
 
 use crate::helpers::*;
 use inel::io::AsyncWriteOwned;
@@ -58,7 +58,7 @@ fn truncate() {
         let (_, res) = file.write_owned("Overwritten!\n".to_string()).await;
         assert!(res.is_ok());
 
-        let res = file.sync().await;
+        let res = file.sync_all().await;
         assert!(res.is_ok());
     });
 
@@ -94,7 +94,7 @@ fn append() {
         let (_, res) = file.write_owned("Appended!\n".to_string()).await;
         assert!(res.is_ok());
 
-        let res = file.sync().await;
+        let res = file.sync_all().await;
         assert!(res.is_ok());
     });
 
@@ -170,7 +170,7 @@ fn errors() {
 
     inel::block_on(async move {
         let file = unsafe { inel::fs::File::from_raw_fd(6543) };
-        assert!(file.sync().await.is_err());
+        assert!(file.sync_all().await.is_err());
         assert!(file.metadata().await.is_err());
         std::mem::forget(file);
     });

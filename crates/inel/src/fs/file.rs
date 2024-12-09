@@ -179,8 +179,15 @@ impl File {
         Ok(Metadata { raw: statx })
     }
 
-    pub async fn sync(&self) -> Result<()> {
+    pub async fn sync_data(&self) -> Result<()> {
         op::Fsync::new(self.fd).run_on(GlobalReactor).await
+    }
+
+    pub async fn sync_all(&self) -> Result<()> {
+        op::Fsync::new(self.fd)
+            .sync_meta()
+            .run_on(GlobalReactor)
+            .await
     }
 
     pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {

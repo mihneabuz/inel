@@ -57,7 +57,7 @@ fn inner() {
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), 256);
 
-        let res = reader.inner().sync().await;
+        let res = reader.inner().sync_data().await;
         assert!(res.is_ok());
 
         let _ = reader.into_inner();
@@ -189,7 +189,7 @@ mod fixed {
             assert!(res.is_ok());
             assert_eq!(res.unwrap(), 256);
 
-            let res = reader.inner().sync().await;
+            let res = reader.inner().sync_data().await;
             assert!(res.is_ok());
 
             let _ = reader.into_inner();

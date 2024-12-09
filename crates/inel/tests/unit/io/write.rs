@@ -119,7 +119,7 @@ fn sync() {
         let (_, res) = file.write_owned(Box::new([b'a'; 256])).await;
         assert!(res.is_ok_and(|wrote| wrote == 256));
 
-        assert!(file.sync().await.is_ok());
+        assert!(file.sync_all().await.is_ok());
     });
 
     std::fs::remove_file(&name).unwrap();

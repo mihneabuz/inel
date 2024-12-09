@@ -41,7 +41,7 @@ fn split() {
             assert!(res.is_ok_and(|w| w == 512));
             assert_eq!(buf, Box::new([b'A'; 512]));
 
-            let res = writer.sync().await;
+            let res = writer.sync_data().await;
             assert!(res.is_ok());
 
             true

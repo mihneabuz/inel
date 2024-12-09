@@ -457,6 +457,18 @@ fn sync() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert!(matches!(poll!(fut, notifier), Poll::Ready(Ok(()))));
 
+    let mut sync_all = op::Fsync::new(file.fd())
+        .sync_meta()
+        .run_on(reactor.clone());
+    let mut fut = pin!(&mut sync_all);
+
+    assert!(poll!(fut, notifier).is_pending());
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert!(matches!(poll!(fut, notifier), Poll::Ready(Ok(()))));
+
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
 }
