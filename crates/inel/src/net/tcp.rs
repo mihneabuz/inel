@@ -2,7 +2,7 @@ use std::{
     future::Future,
     io::{self, Result},
     net::{Shutdown, SocketAddr, ToSocketAddrs},
-    os::fd::{AsRawFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
 };
 
 use inel_reactor::{
@@ -83,6 +83,20 @@ impl AsRawFd for TcpListener {
     }
 }
 
+impl IntoRawFd for TcpListener {
+    fn into_raw_fd(self) -> RawFd {
+        let fd = self.as_raw_fd();
+        std::mem::forget(self);
+        fd
+    }
+}
+
+impl FromRawFd for TcpListener {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Self { sock: fd }
+    }
+}
+
 impl Drop for TcpListener {
     fn drop(&mut self) {
         crate::util::spawn_drop(self.as_raw_fd());
@@ -137,6 +151,20 @@ impl TcpStream {
 impl AsRawFd for TcpStream {
     fn as_raw_fd(&self) -> RawFd {
         self.sock
+    }
+}
+
+impl IntoRawFd for TcpStream {
+    fn into_raw_fd(self) -> RawFd {
+        let fd = self.as_raw_fd();
+        std::mem::forget(self);
+        fd
+    }
+}
+
+impl FromRawFd for TcpStream {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Self { sock: fd }
     }
 }
 

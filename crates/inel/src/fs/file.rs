@@ -203,7 +203,9 @@ impl FromRawFd for File {
 
 impl IntoRawFd for File {
     fn into_raw_fd(self) -> RawFd {
-        self.fd
+        let fd = self.as_raw_fd();
+        std::mem::forget(self);
+        fd
     }
 }
 
