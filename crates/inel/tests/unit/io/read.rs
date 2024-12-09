@@ -1,6 +1,6 @@
 use {inel::buffer::StableBufferExt, inel::io::AsyncReadOwned};
 
-use crate::{setup_tracing, temp_file};
+use crate::helpers::{setup_tracing, temp_file};
 
 #[test]
 fn simple() {

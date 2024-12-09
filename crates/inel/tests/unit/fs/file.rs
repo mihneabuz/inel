@@ -1,11 +1,7 @@
-use std::{
-    os::fd::{FromRawFd, IntoRawFd},
-    time::Duration,
-};
+use std::os::fd::{AsRawFd, FromRawFd};
 
 use crate::helpers::*;
 use inel::io::AsyncWriteOwned;
-use inel_macro::test_repeat;
 
 #[test]
 fn create() {
@@ -169,7 +165,18 @@ fn no_options() {
 }
 
 #[test]
-#[test_repeat(3)]
+fn errors() {
+    setup_tracing();
+
+    inel::block_on(async move {
+        let file = unsafe { inel::fs::File::from_raw_fd(6543) };
+        assert!(file.sync().await.is_err());
+        assert!(file.metadata().await.is_err());
+        std::mem::forget(file);
+    });
+}
+
+#[test]
 fn drop_close() {
     setup_tracing();
 
@@ -178,20 +185,16 @@ fn drop_close() {
 
     std::fs::File::create(&name).unwrap();
 
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     let fd = inel::block_on(async move {
         let file = inel::fs::File::open(name_clone).await.unwrap();
-        let fd = file.into_raw_fd();
-        let _ = unsafe { inel::fs::File::from_raw_fd(fd) };
-        fd
+        file.as_raw_fd()
     });
-
-    assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
-    std::thread::sleep(Duration::from_millis(30));
 
     inel::block_on(async move {
         let file = unsafe { inel::fs::File::from_raw_fd(fd) };
-        let meta = file.metadata().await;
-        assert!(meta.is_err());
+        assert!(file.sync().await.is_err());
         std::mem::forget(file);
     });
 

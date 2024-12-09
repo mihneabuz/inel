@@ -105,6 +105,33 @@ fn lines() {
     std::fs::remove_file(&name).unwrap();
 }
 
+#[test]
+fn error() {
+    setup_tracing();
+
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    std::fs::write(&name, [b'a'; 4096]).unwrap();
+
+    inel::block_on(async move {
+        let file = inel::fs::File::options()
+            .readable(false)
+            .writable(true)
+            .open(&name_clone)
+            .await
+            .unwrap();
+
+        let mut reader = inel::io::BufReader::new(file);
+
+        let mut buf = String::new();
+        let res = reader.read_to_string(&mut buf).await;
+        assert!(res.is_err());
+    });
+
+    std::fs::remove_file(&name).unwrap();
+}
+
 mod fixed {
     use super::*;
 
@@ -205,6 +232,33 @@ mod fixed {
                 .await;
 
             assert_eq!(counter, lines);
+        });
+
+        std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn error() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        std::fs::write(&name, [b'a'; 128_000]).unwrap();
+
+        inel::block_on(async move {
+            let file = inel::fs::File::options()
+                .readable(false)
+                .writable(true)
+                .open(&name_clone)
+                .await
+                .unwrap();
+
+            let mut reader = inel::io::BufReader::new(file).fix().unwrap();
+
+            let mut buf = String::new();
+            let res = reader.read_to_string(&mut buf).await;
+            assert!(res.is_err());
         });
 
         std::fs::remove_file(&name).unwrap();

@@ -211,11 +211,6 @@ impl WriteSource for File {}
 
 impl Drop for File {
     fn drop(&mut self) {
-        let fd = self.fd;
-        if fd > 0 {
-            crate::spawn(async move {
-                op::Close::new(fd).run_on(GlobalReactor).await;
-            });
-        }
+        crate::util::spawn_drop(self.as_raw_fd());
     }
 }

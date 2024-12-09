@@ -167,16 +167,18 @@ impl Close {
 }
 
 unsafe impl Op for Close {
-    type Output = ();
+    type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
         opcode::Close::new(Fd(self.fd)).build()
     }
 
-    fn result(self, _ret: i32) -> Self::Output {}
-
-    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
-        (None, Cancellation::empty())
+    fn result(self, ret: i32) -> Self::Output {
+        if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -203,10 +205,6 @@ unsafe impl Op for Fsync {
             ..=-1 => Err(Error::from_raw_os_error(-ret)),
             1.. => unreachable!(),
         }
-    }
-
-    fn cancel(self, _: u64) -> (Option<Entry>, Cancellation) {
-        (None, Cancellation::empty())
     }
 }
 

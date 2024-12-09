@@ -20,10 +20,8 @@ pub struct FixedBufWriter<S>(BufWriterGeneric<S, FixedVecBuf, FixedWriteFut>);
 
 impl<S> FixedBufWriter<S> {
     pub(crate) fn from_raw(sink: S, buffer: FixedVecBuf) -> Self {
-        Self(BufWriterGeneric {
-            state: BufWriterState::Ready(buffer),
-            sink,
-        })
+        let state = BufWriterState::Ready(buffer);
+        Self(BufWriterGeneric { state, sink })
     }
 
     pub fn capacity(&self) -> Option<usize> {
@@ -64,14 +62,15 @@ where
             }
 
             BufWriterState::Ready(fixed) => {
-                if fixed.inner_mut().spare_capacity_mut().len() >= buf.len() {
-                    let res = std::io::Write::write(fixed.inner_mut(), buf);
-
-                    Poll::Ready(res)
-                } else {
+                let spare_capacity = fixed.inner_mut().spare_capacity_mut().len();
+                if spare_capacity == 0 {
                     let mut pinned = Pin::new(this);
                     ready!(pinned.as_mut().poll_flush(cx))?;
                     pinned.as_mut().poll_write(cx, buf)
+                } else {
+                    let len = spare_capacity.min(buf.len());
+                    let res = std::io::Write::write(fixed.inner_mut(), &buf[..len]);
+                    Poll::Ready(res)
                 }
             }
         }

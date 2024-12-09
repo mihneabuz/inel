@@ -2,6 +2,7 @@ mod buffer;
 mod dir;
 mod file;
 pub mod helpers;
+mod net;
 mod read;
 mod timeout;
 mod write;

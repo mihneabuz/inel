@@ -8,7 +8,7 @@ use inel_reactor::{
     op::{self, Op},
 };
 
-use crate::helpers::{poll, runtime, TempFile, MESSAGE};
+use crate::helpers::{assert_ready, poll, runtime, TempFile, MESSAGE};
 
 #[test]
 fn single() {
@@ -25,9 +25,7 @@ fn single() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let (buf, res) = assert_ready!(poll!(fut, notifier));
     let wrote = res.expect("write failed");
 
     assert_eq!(wrote, MESSAGE.as_bytes().len());
@@ -55,9 +53,7 @@ fn offset() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let (buf, res) = assert_ready!(poll!(fut, notifier));
     let wrote = res.expect("write failed");
 
     assert_eq!(wrote, MESSAGE.as_bytes().len());
@@ -88,9 +84,7 @@ fn view() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready((view, res)) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let (view, res) = assert_ready!(poll!(fut, notifier));
     let read = res.expect("write failed");
 
     assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
@@ -187,10 +181,7 @@ fn error() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
-
+    let (buf, res) = assert_ready!(poll!(fut, notifier));
     assert_eq!(buf, Box::new([0; 128]));
     res.expect_err("write didn't fail");
 }
@@ -258,9 +249,7 @@ mod vectored {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((bufs, res)) = poll!(fut, notifier) else {
-            panic!("poll not ready");
-        };
+        let (bufs, res) = assert_ready!(poll!(fut, notifier));
         let write = res.expect("write failed");
 
         assert_eq!(write, 256 * 6);
@@ -296,9 +285,7 @@ mod vectored {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((bufs, res)) = poll!(fut, notifier) else {
-            panic!("poll not ready");
-        };
+        let (bufs, res) = assert_ready!(poll!(fut, notifier));
         let read = res.expect("read failed");
 
         assert_eq!(read, 256 * 6);
@@ -339,13 +326,8 @@ mod vectored {
         assert_eq!(notifier.try_recv(), Some(()));
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((bufs1, res1)) = poll!(fut1, notifier) else {
-            panic!("poll not ready");
-        };
-
-        let Poll::Ready((bufs2, res2)) = poll!(fut2, notifier) else {
-            panic!("poll not ready");
-        };
+        let (bufs1, res1) = assert_ready!(poll!(fut1, notifier));
+        let (bufs2, res2) = assert_ready!(poll!(fut2, notifier));
 
         assert_eq!(bufs1, orig_bufs);
         assert_eq!(bufs2, orig_bufs_exact);
@@ -431,9 +413,7 @@ mod vectored {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((bufs1, res1)) = poll!(fut1, notifier) else {
-            panic!("poll not ready");
-        };
+        let (bufs1, res1) = assert_ready!(poll!(fut1, notifier));
         let wrote1 = res1.expect("write failed");
 
         assert_eq!(wrote1, 256 * 6);
@@ -502,9 +482,7 @@ mod fixed {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
-            panic!("poll not ready");
-        };
+        let (buf, res) = assert_ready!(poll!(fut, notifier));
         let wrote = res.expect("write failed");
 
         assert_eq!(wrote, MESSAGE.as_bytes().len());
@@ -532,9 +510,7 @@ mod fixed {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((view, res)) = poll!(fut, notifier) else {
-            panic!("poll not ready");
-        };
+        let (view, res) = assert_ready!(poll!(fut, notifier));
         let read = res.expect("write failed");
 
         assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
@@ -635,10 +611,7 @@ mod fixed {
 
         assert_eq!(notifier.try_recv(), Some(()));
 
-        let Poll::Ready((buf, res)) = poll!(fut, notifier) else {
-            panic!("poll not ready");
-        };
-
+        let (buf, res) = assert_ready!(poll!(fut, notifier));
         assert_eq!(buf.into_inner().as_slice(), MESSAGE.as_bytes());
         res.expect_err("write didn't fail");
     }

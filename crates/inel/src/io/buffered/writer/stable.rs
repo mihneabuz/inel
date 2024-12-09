@@ -31,10 +31,8 @@ where
     }
 
     pub fn with_capacity(capacity: usize, sink: S) -> Self {
-        Self(BufWriterGeneric {
-            state: BufWriterState::Ready(Vec::with_capacity(capacity)),
-            sink,
-        })
+        let state = BufWriterState::Ready(Vec::with_capacity(capacity));
+        Self(BufWriterGeneric { state, sink })
     }
 
     pub fn fix(self) -> Result<FixedBufWriter<S>> {
@@ -88,14 +86,15 @@ where
             }
 
             BufWriterState::Ready(vec) => {
-                if vec.spare_capacity_mut().len() >= buf.len() {
-                    let res = std::io::Write::write(vec, buf);
-
-                    Poll::Ready(res)
-                } else {
+                let spare_capacity = vec.spare_capacity_mut().len();
+                if spare_capacity == 0 {
                     let mut pinned = Pin::new(this);
                     ready!(pinned.as_mut().poll_flush(cx))?;
                     pinned.as_mut().poll_write(cx, buf)
+                } else {
+                    let len = spare_capacity.min(buf.len());
+                    let res = std::io::Write::write(vec, &buf[..len]);
+                    Poll::Ready(res)
                 }
             }
         }

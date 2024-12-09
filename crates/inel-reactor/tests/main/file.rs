@@ -5,7 +5,7 @@ use inel_interface::Reactor;
 use inel_macro::test_repeat;
 use inel_reactor::op::{self, Op};
 
-use crate::helpers::{poll, runtime, TempFile, MESSAGE};
+use crate::helpers::{assert_ready, poll, runtime, TempFile, MESSAGE};
 
 #[test]
 fn create() {
@@ -33,14 +33,10 @@ fn create() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(fd1) = poll!(fut1, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd1 = assert_ready!(poll!(fut1, notifier));
     assert!(fd1.is_ok_and(|fd| fd > 0));
 
-    let Poll::Ready(fd2) = poll!(fut2, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_ok_and(|fd| fd > 0));
 
     assert!(fut1.is_terminated());
@@ -77,14 +73,10 @@ fn relative() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(fd1) = poll!(fut1, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd1 = assert_ready!(poll!(fut1, notifier));
     assert!(fd1.as_ref().is_ok_and(|&fd| fd > 0));
 
-    let Poll::Ready(fd2) = poll!(fut2, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.as_ref().is_ok_and(|&fd| fd > 0));
 
     assert!(fut1.is_terminated());
@@ -115,14 +107,10 @@ fn error() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(fd1) = poll!(fut1, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd1 = assert_ready!(poll!(fut1, notifier));
     assert!(fd1.is_err());
 
-    let Poll::Ready(fd2) = poll!(fut2, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_err());
 
     assert!(fut1.is_terminated());
@@ -189,8 +177,8 @@ fn close() {
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert_eq!(poll!(fut, notifier), Poll::Ready(()));
-    assert_eq!(poll!(bad, notifier), Poll::Ready(()));
+    assert!(assert_ready!(poll!(fut, notifier)).is_ok());
+    assert!(assert_ready!(poll!(bad, notifier)).is_err());
 
     assert!(fut.is_terminated());
     assert!(bad.is_terminated());
@@ -212,9 +200,7 @@ fn stats() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(fd) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd = assert_ready!(poll!(fut, notifier));
     assert!(fd.as_ref().is_ok_and(|&fd| fd > 0));
 
     assert!(fut.is_terminated());
@@ -237,13 +223,8 @@ fn stats() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(stats1) = poll!(fut1, notifier) else {
-        panic!("poll not ready");
-    };
-
-    let Poll::Ready(stats2) = poll!(fut2, notifier) else {
-        panic!("poll not ready");
-    };
+    let stats1 = assert_ready!(poll!(fut1, notifier));
+    let stats2 = assert_ready!(poll!(fut2, notifier));
 
     assert!(stats1.is_ok());
     assert!(stats2.is_ok());
@@ -268,9 +249,7 @@ fn stats_cancel() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let Poll::Ready(fd) = poll!(fut, notifier) else {
-        panic!("poll not ready");
-    };
+    let fd = assert_ready!(poll!(fut, notifier));
     assert!(fd.as_ref().is_ok_and(|&fd| fd > 0));
 
     assert!(fut.is_terminated());
