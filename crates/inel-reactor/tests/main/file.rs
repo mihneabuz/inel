@@ -177,8 +177,8 @@ fn close() {
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert_eq!(poll!(fut, notifier), Poll::Ready(()));
-    assert_eq!(poll!(bad, notifier), Poll::Ready(()));
+    assert!(assert_ready!(poll!(fut, notifier)).is_ok());
+    assert!(assert_ready!(poll!(bad, notifier)).is_err());
 
     assert!(fut.is_terminated());
     assert!(bad.is_terminated());

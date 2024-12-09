@@ -31,6 +31,7 @@ pub mod fs;
 pub mod io;
 pub mod net;
 pub mod time;
+mod util;
 
 #[inline]
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>

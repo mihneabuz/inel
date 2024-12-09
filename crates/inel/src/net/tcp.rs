@@ -83,6 +83,12 @@ impl AsRawFd for TcpListener {
     }
 }
 
+impl Drop for TcpListener {
+    fn drop(&mut self) {
+        crate::util::spawn_drop(self.as_raw_fd());
+    }
+}
+
 pub struct TcpStream {
     sock: RawFd,
 }
@@ -131,5 +137,11 @@ impl TcpStream {
 impl AsRawFd for TcpStream {
     fn as_raw_fd(&self) -> RawFd {
         self.sock
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        crate::util::spawn_drop(self.as_raw_fd());
     }
 }

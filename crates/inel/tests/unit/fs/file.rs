@@ -165,6 +165,18 @@ fn no_options() {
 }
 
 #[test]
+fn errors() {
+    setup_tracing();
+
+    inel::block_on(async move {
+        let file = unsafe { inel::fs::File::from_raw_fd(6543) };
+        assert!(file.sync().await.is_err());
+        assert!(file.metadata().await.is_err());
+        std::mem::forget(file);
+    });
+}
+
+#[test]
 fn drop_close() {
     setup_tracing();
 
@@ -173,7 +185,7 @@ fn drop_close() {
 
     std::fs::File::create(&name).unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(60));
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     let fd = inel::block_on(async move {
         let file = inel::fs::File::open(name_clone).await.unwrap();
