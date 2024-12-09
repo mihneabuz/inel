@@ -1,3 +1,4 @@
+use futures::future::FusedFuture;
 use inel::{buffer::StableBufferExt, io::AsyncWriteOwned};
 
 use crate::helpers::{setup_tracing, temp_file};
@@ -145,11 +146,41 @@ fn cancel() {
                 .await
                 .unwrap();
 
+            let mut write = file.write_fixed_at((index * 4_000) as u64, buf);
+
             futures::select! {
-                (_, _) = file.write_fixed_at((index * 4_000) as u64, buf) => {
+                (_, _) = write => {
                     false
                 },
-                () = inel::time::sleep(std::time::Duration::from_micros(0)) => {
+                () = inel::time::instant() => {
+                    assert!(!write.is_terminated());
+                    true
+                }
+            }
+        });
+    }
+
+    for _ in 0..1000 {
+        let index = rand::random::<usize>() % 16;
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            let buf = Box::new([b'a'; 16_000]);
+            let mut file = inel::fs::File::options()
+                .writable(true)
+                .direct(true)
+                .open(name_clone)
+                .await
+                .unwrap();
+
+            let mut write = file.write_owned_at((index * 4_000) as u64, buf);
+
+            futures::select! {
+                (_, _) = write => {
+                    false
+                },
+                () = inel::time::instant() => {
+                    assert!(!write.is_terminated());
                     true
                 }
             }

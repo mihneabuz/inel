@@ -62,3 +62,20 @@ fn nops() {
 
     assert!(reactor.is_done());
 }
+
+#[test]
+#[should_panic]
+fn panic() {
+    let (reactor, notifier) = runtime();
+
+    let mut nop = pin!(op::Nop.run_on(reactor.clone()));
+
+    assert!(poll!(nop, notifier).is_pending());
+
+    reactor.wait();
+
+    assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+    assert!(nop.is_terminated());
+
+    let _ = poll!(nop, notifier);
+}

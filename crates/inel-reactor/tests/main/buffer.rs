@@ -138,6 +138,14 @@ mod view {
     }
 
     #[test]
+    fn string() {
+        let mut view = View::new(String::from("Hello World!"), 0..5);
+        view.as_mut_slice().copy_from_slice(b"Never");
+
+        assert_eq!(view.inner().as_str(), "Never World!");
+    }
+
+    #[test]
     fn capacity() {
         let buf = Box::new([b'_'; 256]);
         let view = View::new(buf, 64..128 + 64);
@@ -153,6 +161,9 @@ mod view {
 
         assert_eq!(view.inner().len(), 256);
         assert_eq!(view.inner_mut().drain(..).count(), 256);
+
+        view.inner_mut().truncate(0);
+        assert_eq!(view.inner().len(), 0);
     }
 }
 
