@@ -1,4 +1,5 @@
 use std::{
+    fmt::{self, Debug},
     future::Future,
     io::{self, Result},
     net::{Shutdown, SocketAddr, ToSocketAddrs},
@@ -43,19 +44,19 @@ pub struct TcpListener {
     sock: RawFd,
 }
 
+impl Debug for TcpListener {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TcpListener").finish()
+    }
+}
+
 impl TcpListener {
     pub async fn bind<A>(addr: A) -> Result<Self>
     where
         A: ToSocketAddrs,
     {
         for_each_addr(addr, |addr| async move {
-            let domain = if addr.is_ipv4() {
-                libc::AF_INET
-            } else {
-                libc::AF_INET6
-            };
-
-            let sock = op::Socket::new(domain, libc::SOCK_STREAM)
+            let sock = op::Socket::stream_from_addr(&addr)
                 .run_on(GlobalReactor)
                 .await?;
 
@@ -107,6 +108,12 @@ pub struct TcpStream {
     sock: RawFd,
 }
 
+impl Debug for TcpStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TcpStream").finish()
+    }
+}
+
 impl ReadSource for TcpStream {}
 impl WriteSource for TcpStream {}
 
@@ -116,13 +123,7 @@ impl TcpStream {
         A: ToSocketAddrs,
     {
         for_each_addr(addr, |addr| async move {
-            let domain = if addr.is_ipv4() {
-                libc::AF_INET
-            } else {
-                libc::AF_INET6
-            };
-
-            let sock = op::Socket::new(domain, libc::SOCK_STREAM)
+            let sock = op::Socket::stream_from_addr(&addr)
                 .run_on(GlobalReactor)
                 .await?;
 

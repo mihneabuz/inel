@@ -26,6 +26,16 @@ pub struct Socket {
 }
 
 impl Socket {
+    pub fn stream_from_addr(addr: &SocketAddr) -> Self {
+        let domain = if addr.is_ipv4() {
+            libc::AF_INET
+        } else {
+            libc::AF_INET6
+        };
+
+        Self::new(domain, libc::SOCK_STREAM)
+    }
+
     pub fn new(domain: i32, typ: i32) -> Self {
         Self {
             domain,
