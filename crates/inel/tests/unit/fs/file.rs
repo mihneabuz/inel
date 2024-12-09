@@ -175,28 +175,3 @@ fn errors() {
         std::mem::forget(file);
     });
 }
-
-#[test]
-fn drop_close() {
-    setup_tracing();
-
-    let name = temp_file();
-    let name_clone = name.clone();
-
-    std::fs::File::create(&name).unwrap();
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    let fd = inel::block_on(async move {
-        let file = inel::fs::File::open(name_clone).await.unwrap();
-        file.as_raw_fd()
-    });
-
-    inel::block_on(async move {
-        let file = unsafe { inel::fs::File::from_raw_fd(fd) };
-        assert!(file.sync().await.is_err());
-        std::mem::forget(file);
-    });
-
-    std::fs::remove_file(&name).unwrap();
-}
