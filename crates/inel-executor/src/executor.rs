@@ -32,12 +32,13 @@ impl Executor {
     {
         let (sender, receiver) = oneshot::channel();
 
-        self.queue.schedule(
-            async move {
-                let _ = sender.send(future.await);
-            }
-            .fuse(),
-        );
+        let task = future
+            .then(|res| async {
+                let _ = sender.send(res);
+            })
+            .fuse();
+
+        self.queue.schedule(task);
 
         JoinHandle::new(receiver)
     }
