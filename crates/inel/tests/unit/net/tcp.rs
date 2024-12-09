@@ -52,6 +52,7 @@ fn connect() {
             .unwrap();
         assert!(stream.local_addr().is_ok());
         assert!(stream.peer_addr().is_ok());
+        assert!(stream.shutdown(std::net::Shutdown::Both).await.is_ok());
     });
 
     assert!(handle.join().is_ok());

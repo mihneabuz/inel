@@ -1,7 +1,7 @@
 use std::{
     future::Future,
     io::{self, Result},
-    net::{SocketAddr, ToSocketAddrs},
+    net::{Shutdown, SocketAddr, ToSocketAddrs},
     os::fd::{AsRawFd, RawFd},
 };
 
@@ -119,6 +119,12 @@ impl TcpStream {
 
     pub fn peer_addr(&self) -> Result<SocketAddr> {
         util::getpeername(self.sock)
+    }
+
+    pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
+        op::Shutdown::new(self.sock, how)
+            .run_on(GlobalReactor)
+            .await
     }
 }
 
