@@ -173,6 +173,8 @@ fn drop_close() {
 
     std::fs::File::create(&name).unwrap();
 
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
     let fd = inel::block_on(async move {
         let file = inel::fs::File::open(name_clone).await.unwrap();
         file.as_raw_fd()
@@ -180,8 +182,7 @@ fn drop_close() {
 
     inel::block_on(async move {
         let file = unsafe { inel::fs::File::from_raw_fd(fd) };
-        let meta = file.metadata().await;
-        assert!(meta.is_err());
+        assert!(file.sync().await.is_err());
         std::mem::forget(file);
     });
 
