@@ -2,7 +2,6 @@ use futures::task::{self, ArcWake};
 use inel_reactor::Ring;
 use std::{
     cell::RefCell,
-    fmt,
     fs::{self, File},
     os::fd::{AsRawFd, RawFd},
     path::{Path, PathBuf},
@@ -64,12 +63,6 @@ impl inel_interface::Reactor for ScopedReactor {
     {
         let mut guard = self.inner.borrow_mut();
         f(&mut guard)
-    }
-}
-
-impl fmt::Debug for ScopedReactor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScopedReactor").finish()
     }
 }
 
@@ -252,18 +245,6 @@ labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitatio
 nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit
 esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt
 in culpa qui officia deserunt mollit anim id est laborum.";
-
-macro_rules! assert_in_range {
-    ($range:expr, $value:expr) => {{
-        let range = $range;
-        let value = $value;
-        if (!range.contains(value)) {
-            panic!("assertion `value in range` failed\n value: {value:?}\n range: {range:?}");
-        }
-    }};
-}
-
-pub(crate) use assert_in_range;
 
 macro_rules! assert_ready {
     ($poll:expr) => {{

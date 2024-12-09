@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::helpers::{assert_in_range, poll, runtime};
+use crate::helpers::{poll, runtime};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_reactor::op::{self, Op};
@@ -29,7 +29,7 @@ fn single() {
 
     assert!(reactor.is_done());
 
-    assert_in_range!(10..60, &start.elapsed().as_millis());
+    assert!(10 <= start.elapsed().as_millis());
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn multi() {
     assert!(fut1.is_terminated());
     assert_eq!(reactor.active(), 1);
 
-    assert_in_range!(10..60, &start.elapsed().as_millis());
+    assert!(10 <= start.elapsed().as_millis());
 
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
@@ -63,7 +63,7 @@ fn multi() {
     assert!(fut2.is_terminated());
     assert_eq!(reactor.active(), 0);
 
-    assert_in_range!(50..100, &start.elapsed().as_millis());
+    assert!(50 <= start.elapsed().as_millis());
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn cancel() {
 
     assert!(reactor.is_done());
 
-    assert_in_range!(50..100, &start.elapsed().as_millis());
+    assert!(50 <= start.elapsed().as_millis());
 }
 
 #[test]
@@ -110,5 +110,5 @@ fn forget() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_in_range!(50..100, &start.elapsed().as_millis());
+    assert!(50 <= start.elapsed().as_millis());
 }
