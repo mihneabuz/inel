@@ -1,5 +1,5 @@
 use crate::helpers::{assert_ready, poll, runtime};
-use futures::future::FusedFuture;
+use futures::{future::FusedFuture, StreamExt};
 use std::{
     io::Result,
     net::{Shutdown, SocketAddr},
@@ -232,6 +232,51 @@ fn accept_cancel_test(sock: RawFd) {
     assert!(reactor.is_done());
 }
 
+fn accept_multi_test(sock: RawFd, count: usize) {
+    let (reactor, notifier) = runtime();
+
+    let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let mut stream = pin!(&mut con);
+
+    for _ in 0..count {
+        let mut next = pin!(stream.next());
+
+        let fd = match poll!(next, notifier) {
+            Poll::Ready(fd) => fd,
+            Poll::Pending => {
+                reactor.wait();
+                assert_eq!(notifier.try_recv(), Some(()));
+
+                assert_ready!(poll!(next, notifier))
+            }
+        };
+
+        assert!(fd.is_some_and(|fd| fd.is_ok()));
+    }
+
+    assert!(!stream.is_terminated());
+
+    std::mem::drop(con);
+
+    reactor.wait();
+    reactor.wait();
+
+    assert!(reactor.is_done());
+}
+
+fn accept_multi_error_test(sock: RawFd) {
+    let (reactor, notifier) = runtime();
+
+    let mut accept = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let mut fut = pin!(accept);
+
+    assert!(poll!(fut, notifier).is_pending());
+    reactor.wait();
+
+    let fd = assert_ready!(poll!(fut, notifier));
+    assert!(fd.is_err());
+}
+
 fn shutdown_test(sock: RawFd, how: Shutdown) -> Result<()> {
     let (reactor, notifier) = runtime();
 
@@ -334,6 +379,25 @@ fn accept() {
 }
 
 #[test]
+fn accept_multi() {
+    for _ in 0..4 {
+        let (sock, port) = create_listener_ipv4();
+        for _ in 0..10 {
+            connect_test_ipv4(port);
+        }
+        accept_multi_test(sock, 10);
+    }
+
+    for _ in 0..4 {
+        let (sock, port) = create_listener_ipv6();
+        for _ in 0..10 {
+            connect_test_ipv6(port);
+        }
+        accept_multi_test(sock, 10);
+    }
+}
+
+#[test]
 fn shutdown() {
     for how in [Shutdown::Read, Shutdown::Write, Shutdown::Both] {
         let (listener, port) = create_listener_ipv4();
@@ -354,6 +418,8 @@ fn error() {
 
     accept_error_test(create_socket_test(libc::AF_INET, libc::SOCK_STREAM));
     accept_error_test(create_socket_test(libc::AF_INET6, libc::SOCK_STREAM));
+    accept_multi_error_test(create_socket_test(libc::AF_INET, libc::SOCK_STREAM));
+    accept_multi_error_test(create_socket_test(libc::AF_INET6, libc::SOCK_STREAM));
 
     assert!(bind(i32::MAX, make_addr("127.0.0.1", u16::MAX)).is_err());
     assert!(listen(i32::MAX, i32::MAX as u32).is_err());

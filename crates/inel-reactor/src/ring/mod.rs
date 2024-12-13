@@ -4,7 +4,7 @@ mod register;
 use std::io::Result;
 use std::task::Waker;
 
-use io_uring::{squeue::Entry, IoUring};
+use io_uring::{cqueue, squeue::Entry, IoUring};
 use tracing::debug;
 
 use crate::{buffer::StableBuffer, Cancellation};
@@ -67,7 +67,7 @@ impl Ring {
         key
     }
 
-    pub fn check_result(&mut self, key: Key) -> Option<i32> {
+    pub fn check_result(&mut self, key: Key) -> Option<(i32, bool)> {
         self.completions.result(key)
     }
 
@@ -125,10 +125,14 @@ impl Ring {
                 continue;
             }
 
-            self.completions
-                .notify(Key::from_u64(entry.user_data()), entry.result());
+            let has_more = cqueue::more(entry.flags());
 
-            self.active -= 1;
+            self.completions
+                .notify(Key::from_u64(entry.user_data()), entry.result(), has_more);
+
+            if !has_more {
+                self.active -= 1;
+            }
         }
     }
 

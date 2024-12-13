@@ -44,6 +44,15 @@ pub unsafe trait Op {
     }
 }
 
+/// This trait allows implementing safe multishot operations over a [crate::Ring].
+///
+/// # Safety
+/// todo!
+pub unsafe trait MultiOp: Op {
+    /// Consume self and io_uring result to produce final result
+    fn next(&self, ret: i32) -> Self::Output;
+}
+
 pub struct Nop;
 
 unsafe impl Op for Nop {
@@ -54,6 +63,12 @@ unsafe impl Op for Nop {
     }
 
     fn result(self, ret: i32) -> Self::Output {
+        assert_eq!(ret, 0);
+    }
+}
+
+unsafe impl MultiOp for Nop {
+    fn next(&self, ret: i32) -> Self::Output {
         assert_eq!(ret, 0);
     }
 }

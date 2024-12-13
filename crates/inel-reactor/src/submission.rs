@@ -3,11 +3,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future::FusedFuture, Future};
+use futures::{future::FusedFuture, Future, Stream};
 use inel_interface::Reactor;
 use pin_project_lite::pin_project;
 
-use crate::{op::Op, Key, Ring, RingReactor};
+use crate::{
+    op::{MultiOp, Op},
+    Key, Ring, RingReactor,
+};
 
 pub enum SubmissionState {
     Initial,
@@ -18,6 +21,10 @@ pub enum SubmissionState {
 impl SubmissionState {
     pub fn take(&mut self) -> Self {
         std::mem::replace(self, Self::Initial)
+    }
+
+    pub fn update(&mut self, state: Self) {
+        *self = state;
     }
 }
 
@@ -67,7 +74,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        let (ret, next_state) = match this.state.take() {
+        let (res, next_state) = match this.state.take() {
             SubmissionState::Initial => {
                 let entry = this.op.as_mut().unwrap().entry();
                 let waker = cx.waker().clone();
@@ -78,7 +85,7 @@ where
 
             SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
-                Some(ret) => {
+                Some((ret, _)) => {
                     let op = this.op.take().unwrap();
                     (Poll::Ready(op.result(ret)), SubmissionState::Completed)
                 }
@@ -89,9 +96,8 @@ where
             }
         };
 
-        *this.state = next_state;
-
-        ret
+        this.state.update(next_state);
+        res
     }
 }
 
@@ -102,5 +108,48 @@ where
 {
     fn is_terminated(&self) -> bool {
         matches!(self.state, SubmissionState::Completed)
+    }
+}
+
+impl<T, R> Stream for Submission<T, R>
+where
+    T: MultiOp,
+    R: Reactor<Handle = Ring>,
+{
+    type Item = T::Output;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+
+        let (res, next_state) = match this.state.take() {
+            SubmissionState::Initial => {
+                let entry = this.op.as_mut().unwrap().entry();
+                let waker = cx.waker().clone();
+                let key = unsafe { this.reactor.submit(entry, waker) };
+
+                (Poll::Pending, SubmissionState::Submitted(key))
+            }
+
+            SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
+                None => (Poll::Pending, SubmissionState::Submitted(key)),
+                Some((ret, has_more)) => {
+                    let res = Poll::Ready(this.op.as_ref().map(|op| op.next(ret)));
+
+                    (
+                        res,
+                        if has_more {
+                            SubmissionState::Submitted(key)
+                        } else {
+                            SubmissionState::Completed
+                        },
+                    )
+                }
+            },
+
+            SubmissionState::Completed => (Poll::Ready(None), SubmissionState::Completed),
+        };
+
+        this.state.update(next_state);
+        res
     }
 }
