@@ -14,20 +14,33 @@ pub use read::*;
 pub use time::*;
 pub use write::*;
 
-/// This trait allows implementing safe operations over a [crate::Ring].
+/// Implements safe operations over a [Ring] by wrapping an [io_uring::opcode]
+///
+/// For driving an [Op], check [Submission]
 ///
 /// # Safety
-/// todo!
+/// If the sqe entry returned by [Op::entry] contains any pointers to buffers,
+/// then those buffers *must* be valid until the sqe completes or, if [Op::cancel]
+/// is called, ownership of those buffers *must* be transfered to the returned
+/// [Cancellation], so they can be dropped safely when the sqe completes.
+///
+/// Dropping an [Op] before completion without calling [Op::cancel] _might_ cause
+/// writes/reads to/from freed memory.
+///
 pub unsafe trait Op {
     type Output;
 
-    /// Build io_uring entry that is submitted
+    /// Build the sqe entry
     fn entry(&mut self) -> Entry;
 
-    /// Consume self and io_uring result to produce final result
+    /// Produce the final result by consuming self and cqe result
     fn result(self, ret: i32) -> Self::Output;
 
-    /// Create cancelation entry if necessary
+    /// Attempt to cancel the sqe by returning:
+    ///  - an sqe entry that signals the io_uring instance to
+    ///    cancel the sqe returned by [Op::entry], if applicable
+    ///  - a [Cancellation] that contains any buffers currently
+    ///    referenced by the sqe returned by [Op::entry]
     fn cancel(self, _user_data: u64) -> (Option<Entry>, Cancellation)
     where
         Self: Sized,
@@ -35,6 +48,7 @@ pub unsafe trait Op {
         (None, Cancellation::empty())
     }
 
+    /// Wraps self into a [crate::Submission]
     fn run_on<R>(self, reactor: R) -> Submission<Self, R>
     where
         R: inel_interface::Reactor<Handle = Ring>,
@@ -44,12 +58,10 @@ pub unsafe trait Op {
     }
 }
 
-/// This trait allows implementing safe multishot operations over a [crate::Ring].
-///
-/// # Safety
-/// todo!
-pub unsafe trait MultiOp: Op {
-    /// Consume self and io_uring result to produce final result
+/// Implements safe multishot operations over a [Ring]
+/// by wrapping an [io_uring::opcode]
+pub trait MultiOp: Op {
+    /// Produces a result without consuming self
     fn next(&self, ret: i32) -> Self::Output;
 }
 
@@ -67,7 +79,7 @@ unsafe impl Op for Nop {
     }
 }
 
-unsafe impl MultiOp for Nop {
+impl MultiOp for Nop {
     fn next(&self, ret: i32) -> Self::Output {
         assert_eq!(ret, 0);
     }

@@ -17,6 +17,12 @@ pub use register::BufferKey;
 
 const CANCEL_KEY: u64 = 1_333_337;
 
+/// Reactor implemented over a [IoUring].
+///
+/// Used by [Submission](crate::Submission) to submit sqes and get notified
+/// of completions by use of [Waker].
+///
+/// Also used to register other resources, such as fixed buffers.
 pub struct Ring {
     ring: IoUring,
     active: u32,
@@ -42,16 +48,23 @@ impl Ring {
         }
     }
 
+    /// Returns number of active ops.
     pub fn active(&self) -> u32 {
         self.active
     }
 
+    /// Returns true if all sqes have been completed and all cqes have been consumed.
     pub fn is_done(&self) -> bool {
         self.active == 0 && self.completions.is_empty()
     }
 
+    /// Submit an sqe with an associated [Waker] which will be called
+    /// when the entry completes.
+    /// Returns a [Key] which allowes the caller to get the cqe result
+    /// by calling [Ring::check_result].
+    ///
     /// # Safety
-    /// Caller must ensure that the entry is valid until the waker is called
+    /// Caller must ensure that the entry is valid until the waker is called.
     pub unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
         let key = self.completions.insert(waker);
 
@@ -67,12 +80,16 @@ impl Ring {
         key
     }
 
+    /// Attempt to get the result of an entry.
     pub fn check_result(&mut self, key: Key) -> Option<(i32, bool)> {
         self.completions.result(key)
     }
 
+    /// Attempt to cancel the entry referenced by `key`, by submitting a [Cancellation] and,
+    /// optionally, another sqe entry which cancels the initial one.
+    ///
     /// # Safety
-    /// Caller must ensure that the entry is valid until the waker is called
+    /// Caller must ensure that the cancel entry is valid until it completes.
     pub unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation) {
         if !self.completions.cancel(key, cancel) {
             return;
@@ -90,6 +107,7 @@ impl Ring {
         }
     }
 
+    /// Blocks until at least 1 completion
     pub fn wait(&mut self) {
         self.submit_and_wait();
         self.handle_completions();
@@ -136,6 +154,8 @@ impl Ring {
         }
     }
 
+    /// Attempt to register a [StableBuffer] for use with fixed operations.
+    ///
     /// # Safety
     /// Caller must ensure that the buffer is valid until the ring is destroyed
     pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
@@ -157,6 +177,7 @@ impl Ring {
         Ok(key)
     }
 
+    /// Unregister a [StableBuffer]
     pub fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
     where
         B: StableBuffer,

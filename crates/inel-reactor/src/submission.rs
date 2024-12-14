@@ -29,6 +29,7 @@ impl SubmissionState {
 }
 
 pin_project! {
+    /// State machine that drives an [Op] to completion.
     pub struct Submission<T: Op, R: Reactor<Handle = Ring>> {
         op: Option<T>,
         state: SubmissionState,

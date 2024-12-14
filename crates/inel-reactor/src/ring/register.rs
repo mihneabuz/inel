@@ -1,10 +1,12 @@
 use crate::buffer::StableBuffer;
 
+/// Register for fixed buffers
 pub struct BufferRegister {
     buffers: Vec<libc::iovec>,
     vacant: Vec<usize>,
 }
 
+/// Identifies a fixed buffer registered with the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
 pub struct BufferKey(u16);
 

@@ -203,7 +203,7 @@ unsafe impl Op for AcceptMulti {
     }
 }
 
-unsafe impl MultiOp for AcceptMulti {
+impl MultiOp for AcceptMulti {
     fn next(&self, ret: i32) -> Self::Output {
         if ret < 0 {
             Err(Error::from_raw_os_error(-ret))

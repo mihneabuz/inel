@@ -173,6 +173,7 @@ impl CompletionSet {
     }
 }
 
+/// Idenitifies an operation submitted to the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
 pub struct Key(usize);
 
