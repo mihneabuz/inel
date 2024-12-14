@@ -12,7 +12,7 @@ use inel_reactor::{
 };
 
 use crate::{
-    io::{ReadSource, WriteSource},
+    io::{BufReader, BufWriter, ReadHandle, ReadSource, WriteHandle, WriteSource},
     GlobalReactor,
 };
 
@@ -146,6 +146,14 @@ impl TcpStream {
         op::Shutdown::new(self.sock, how)
             .run_on(GlobalReactor)
             .await
+    }
+
+    pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
+        crate::io::split(self)
+    }
+
+    pub fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>) {
+        crate::io::split_buffered(self)
     }
 }
 
