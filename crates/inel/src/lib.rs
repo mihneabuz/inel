@@ -16,11 +16,11 @@ impl inel_interface::Reactor for GlobalReactor {
         REACTOR.with_borrow_mut(|react| react.wait());
     }
 
-    fn with<F, T>(&self, f: F) -> T
+    fn with<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&mut Self::Handle) -> T,
     {
-        REACTOR.with_borrow_mut(|react| f(react))
+        REACTOR.try_with(|react| f(&mut react.borrow_mut())).ok()
     }
 }
 

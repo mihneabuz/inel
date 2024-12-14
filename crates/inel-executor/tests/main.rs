@@ -56,12 +56,12 @@ impl Reactor for TestReactor {
         self.inner.waited.set(count);
     }
 
-    fn with<F, T>(&self, f: F) -> T
+    fn with<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&mut Self::Handle) -> T,
     {
         let mut wakers = self.inner.wakers.borrow_mut();
-        f(&mut wakers)
+        Some(f(&mut wakers))
     }
 }
 
@@ -95,7 +95,9 @@ impl Future for Wait {
         }
 
         match self.reactor.as_ref() {
-            Some(react) => react.with(|wakers| wakers.push(cx.waker().clone())),
+            Some(react) => react
+                .with(|wakers| wakers.push(cx.waker().clone()))
+                .unwrap(),
             None => cx.waker().wake_by_ref(),
         }
 

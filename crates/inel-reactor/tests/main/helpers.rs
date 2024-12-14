@@ -57,12 +57,12 @@ impl inel_interface::Reactor for ScopedReactor {
         self.inner.borrow_mut().wait()
     }
 
-    fn with<F, T>(&self, f: F) -> T
+    fn with<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&mut Self::Handle) -> T,
     {
         let mut guard = self.inner.borrow_mut();
-        f(&mut guard)
+        Some(f(&mut guard))
     }
 }
 
