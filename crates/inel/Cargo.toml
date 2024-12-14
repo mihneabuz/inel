@@ -17,6 +17,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing = "0.1.41"
 oneshot = "0.1"
 uuid = { version = "1.10.0", features = ["v4"] }
 rand = "0.8"
