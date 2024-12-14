@@ -4,11 +4,14 @@ use std::{
     io::{self, Result},
     net::{Shutdown, SocketAddr, ToSocketAddrs},
     os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
+    pin::Pin,
+    task::{Context, Poll},
 };
 
+use futures::{Stream, StreamExt};
 use inel_reactor::{
-    op::{self, Op},
-    util,
+    op::{self, AcceptMulti, Op},
+    util, Submission,
 };
 
 use crate::{
@@ -76,6 +79,10 @@ impl TcpListener {
         let (sock, peer) = op::Accept::new(self.sock).run_on(GlobalReactor).await?;
         Ok((TcpStream { sock }, peer))
     }
+
+    pub fn incoming(self) -> Incoming {
+        Incoming::new(self)
+    }
 }
 
 impl AsRawFd for TcpListener {
@@ -101,6 +108,30 @@ impl FromRawFd for TcpListener {
 impl Drop for TcpListener {
     fn drop(&mut self) {
         crate::util::spawn_drop(self.as_raw_fd());
+    }
+}
+
+pub struct Incoming {
+    #[allow(dead_code)]
+    listener: TcpListener,
+    stream: Submission<AcceptMulti, GlobalReactor>,
+}
+
+impl Incoming {
+    pub fn new(listener: TcpListener) -> Self {
+        let stream = AcceptMulti::new(listener.as_raw_fd()).run_on(GlobalReactor);
+        Self { listener, stream }
+    }
+}
+
+impl Stream for Incoming {
+    type Item = Result<TcpStream>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::into_inner(self)
+            .stream
+            .poll_next_unpin(cx)
+            .map(|next| next.map(|res| res.map(|sock| TcpStream { sock })))
     }
 }
 
