@@ -8,8 +8,10 @@ use std::{
 
 use flume::{Receiver, Sender};
 
+type BoxFuture = Pin<Box<dyn Future<Output = ()>>>;
+
 pub struct Task {
-    future: RefCell<Pin<Box<dyn Future<Output = ()>>>>,
+    future: RefCell<BoxFuture>,
     queue: Sender<Rc<Task>>,
 }
 
