@@ -9,7 +9,7 @@ use std::{
 use inel_reactor::op::{self, Op};
 
 use crate::{
-    io::{ReadHandle, ReadSource, WriteHandle, WriteSource},
+    io::{BufReader, BufWriter, ReadHandle, ReadSource, WriteHandle, WriteSource},
     GlobalReactor,
 };
 
@@ -192,6 +192,10 @@ impl File {
 
     pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
         crate::io::split(self)
+    }
+
+    pub fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>) {
+        crate::io::split_buffered(self)
     }
 }
 

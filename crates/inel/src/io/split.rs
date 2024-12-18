@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{ReadSource, WriteSource};
+use super::{BufReader, BufWriter, ReadSource, WriteSource};
 
 pub fn split<S>(source: S) -> (ReadHandle<S>, WriteHandle<S>)
 where
@@ -13,6 +13,14 @@ where
     let rc1 = Rc::new(source);
     let rc2 = Rc::clone(&rc1);
     (ReadHandle { inner: rc1 }, WriteHandle { inner: rc2 })
+}
+
+pub fn split_buffered<S>(source: S) -> (BufReader<ReadHandle<S>>, BufWriter<WriteHandle<S>>)
+where
+    S: ReadSource + WriteSource,
+{
+    let (read, write) = split(source);
+    (BufReader::new(read), BufWriter::new(write))
 }
 
 pub struct ReadHandle<T> {

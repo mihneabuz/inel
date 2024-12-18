@@ -12,7 +12,7 @@ use std::{
     task::Poll,
 };
 
-use futures::future::FusedFuture;
+use futures::{future::FusedFuture, StreamExt};
 use helpers::{poll, runtime};
 use inel_interface::Reactor;
 use inel_reactor::op::{self, Op};
@@ -79,6 +79,26 @@ fn polling() {
     assert_eq!(notifier.try_recv(), Some(()));
 
     assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+    assert!(nop.is_terminated());
+
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn stream() {
+    let (reactor, notifier) = runtime();
+
+    let mut nop = op::Nop.run_on(reactor.clone());
+    let fut = pin!(&mut nop);
+
+    let mut stream = pin!(fut.collect::<Vec<_>>());
+
+    assert!(poll!(stream, notifier).is_pending());
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    assert_eq!(poll!(stream, notifier), Poll::Ready(vec![()]));
     assert!(nop.is_terminated());
 
     assert!(reactor.is_done());

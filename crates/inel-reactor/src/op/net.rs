@@ -17,7 +17,7 @@ use crate::{
     Cancellation,
 };
 
-use super::Op;
+use super::{MultiOp, Op};
 
 pub struct Socket {
     domain: i32,
@@ -170,6 +170,45 @@ unsafe impl Op for Shutdown {
             Err(Error::from_raw_os_error(-ret))
         } else {
             Ok(())
+        }
+    }
+}
+
+pub struct AcceptMulti {
+    fd: RawFd,
+}
+
+impl AcceptMulti {
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+}
+
+unsafe impl Op for AcceptMulti {
+    type Output = Result<RawFd>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::AcceptMulti::new(Fd(self.fd)).build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        self.next(ret)
+    }
+
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        (
+            Some(AsyncCancel::new(user_data).build()),
+            Cancellation::empty(),
+        )
+    }
+}
+
+impl MultiOp for AcceptMulti {
+    fn next(&self, ret: i32) -> Self::Output {
+        if ret < 0 {
+            Err(Error::from_raw_os_error(-ret))
+        } else {
+            Ok(ret)
         }
     }
 }

@@ -19,7 +19,7 @@ pub trait Reactor {
     type Handle;
 
     fn wait(&self);
-    fn with<F, T>(&self, f: F) -> T
+    fn with<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&mut Self::Handle) -> T;
 }
