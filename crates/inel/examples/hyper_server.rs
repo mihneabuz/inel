@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 
 use futures::StreamExt;
-use http_body_util::Full;
-use hyper::{body::Bytes, server::conn::http1, service::service_fn, Request, Response};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use hyper::{body::Bytes, server::conn::http1, service::service_fn, Request, Response, StatusCode};
 use inel::io::AsyncWriteOwned;
 
 fn main() {
@@ -19,15 +19,17 @@ async fn run() -> std::io::Result<()> {
     while let Some(Ok(stream)) = incoming.next().await {
         print("Received connection\n".to_string()).await;
 
-        let hyper = stream::HyperStream::new(stream)?;
+        inel::spawn(async move {
+            let hyper = stream::HyperStream::new(stream).unwrap();
 
-        let res = http1::Builder::new()
-            .serve_connection(hyper, service_fn(hello))
-            .await;
+            let res = http1::Builder::new()
+                .serve_connection(hyper, service_fn(service))
+                .await;
 
-        if let Err(e) = res {
-            print(format!("Error: {:?}", e)).await;
-        }
+            if let Err(e) = res {
+                print(format!("Error: {:?}", e)).await;
+            }
+        });
     }
 
     Ok(())
@@ -37,8 +39,26 @@ async fn print(message: String) {
     let _ = inel::io::stdout().write_owned(message).await;
 }
 
-async fn hello(_: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
-    Ok(Response::new(Full::new(Bytes::from("Hello from inel!\n"))))
+async fn service(
+    req: Request<hyper::body::Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
+    match req.uri().path() {
+        "/" => Ok(Response::new(req.into_body().boxed())),
+        "/hello" => Ok(Response::new(
+            Full::new(Bytes::from("Hello from hyper + inel!\n"))
+                .map_err(|never| match never {})
+                .boxed(),
+        )),
+        _ => {
+            let mut not_found = Response::new(
+                Empty::<Bytes>::new()
+                    .map_err(|never| match never {})
+                    .boxed(),
+            );
+            *not_found.status_mut() = StatusCode::NOT_FOUND;
+            Ok(not_found)
+        }
+    }
 }
 
 mod stream {
@@ -54,16 +74,17 @@ mod stream {
     pin_project_lite::pin_project! {
         pub struct HyperStream {
             #[pin]
-            reader: inel::io::BufReader<inel::io::ReadHandle<inel::net::TcpStream>>,
+            reader: inel::io::FixedBufReader<inel::io::ReadHandle<inel::net::TcpStream>>,
 
             #[pin]
-            writer: inel::io::BufWriter<inel::io::WriteHandle<inel::net::TcpStream>>,
+            writer: inel::io::FixedBufWriter<inel::io::WriteHandle<inel::net::TcpStream>>,
         }
     }
 
     impl HyperStream {
         pub fn new(stream: inel::net::TcpStream) -> std::io::Result<Self> {
             let (reader, writer) = stream.split_buffered();
+            let (reader, writer) = (reader.fix()?, writer.fix()?);
             Ok(Self { reader, writer })
         }
     }
