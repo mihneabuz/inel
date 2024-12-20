@@ -6,7 +6,8 @@ edition = "2021"
 [features]
 default = []
 sys = []
-hyper = ["dep:hyper"]
+compat = []
+hyper = ["dep:hyper", "compat"]
 
 [dependencies]
 inel-interface = { path = "../inel-interface" }

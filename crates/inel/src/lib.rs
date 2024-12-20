@@ -32,7 +32,7 @@ pub mod io;
 pub mod net;
 pub mod time;
 
-#[cfg(feature = "hyper")]
+#[cfg(feature = "compat")]
 pub mod compat;
 
 mod util;

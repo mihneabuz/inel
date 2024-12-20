@@ -6,41 +6,25 @@ use std::{
 
 use futures::{AsyncBufRead, AsyncWrite};
 
-use crate::{
-    compat::stream::{BufTcpStream, FixedBufTcpStream},
-    net::TcpStream,
-};
+use crate::{compat::stream::BufTcpStream, net::TcpStream};
 
-pub struct HyperStream<S> {
-    inner: S,
+pub struct HyperStream {
+    inner: BufTcpStream,
 }
 
-impl HyperStream<BufTcpStream> {
+impl HyperStream {
     pub fn new(stream: TcpStream) -> Self {
-        HyperStream {
+        Self {
             inner: BufTcpStream::new(stream),
         }
     }
-}
 
-impl HyperStream<FixedBufTcpStream> {
-    pub fn new_fixed(stream: TcpStream) -> Result<Self> {
-        Ok(HyperStream {
-            inner: BufTcpStream::new(stream).fix()?,
-        })
-    }
-}
-
-impl<S: Unpin> HyperStream<S> {
-    fn project(self: Pin<&mut Self>) -> Pin<&mut S> {
+    fn project(self: Pin<&mut Self>) -> Pin<&mut BufTcpStream> {
         Pin::new(&mut Pin::into_inner(self).inner)
     }
 }
 
-impl<S> hyper::rt::Read for HyperStream<S>
-where
-    S: AsyncBufRead + Unpin,
-{
+impl hyper::rt::Read for HyperStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -55,10 +39,7 @@ where
     }
 }
 
-impl<S> hyper::rt::Write for HyperStream<S>
-where
-    S: AsyncWrite + Unpin,
-{
+impl hyper::rt::Write for HyperStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
         self.project().poll_write(cx, buf)
     }
