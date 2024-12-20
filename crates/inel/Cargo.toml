@@ -15,6 +15,7 @@ inel-reactor = { path = "../inel-reactor" }
 inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
+
 hyper = { version = "1", optional = true }
 
 [dev-dependencies]
