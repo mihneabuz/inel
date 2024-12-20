@@ -2,7 +2,10 @@ mod fs;
 mod io;
 mod net;
 
-pub mod helpers;
+#[cfg(feature = "compat")]
+mod compat;
+
+mod helpers;
 
 use std::sync::mpsc;
 
