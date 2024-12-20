@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["sys"]
+default = []
 sys = []
+hyper = ["dep:hyper"]
 
 [dependencies]
 inel-interface = { path = "../inel-interface" }
@@ -14,6 +15,7 @@ inel-reactor = { path = "../inel-reactor" }
 inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
+hyper = { version = "1", optional = true }
 
 [dev-dependencies]
 # tests

@@ -1,5 +1,5 @@
 use futures::AsyncReadExt;
-use inel::{io::AsyncReadOwned, sys::StableBuffer};
+use inel::io::AsyncReadOwned;
 
 use super::*;
 

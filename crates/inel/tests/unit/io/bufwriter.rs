@@ -1,5 +1,5 @@
 use futures::AsyncWriteExt;
-use inel::{io::AsyncWriteOwned, sys::StableBuffer};
+use inel::io::AsyncWriteOwned;
 
 use super::*;
 

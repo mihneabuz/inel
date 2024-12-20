@@ -31,6 +31,10 @@ pub mod fs;
 pub mod io;
 pub mod net;
 pub mod time;
+
+#[cfg(feature = "hyper")]
+pub mod compat;
+
 mod util;
 
 #[inline]
