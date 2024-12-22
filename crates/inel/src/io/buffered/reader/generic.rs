@@ -2,19 +2,15 @@ use std::cmp;
 
 use inel_reactor::buffer::StableBuffer;
 
-pub(crate) struct Buffer<B: StableBuffer> {
+pub(crate) struct RBuffer<B: StableBuffer> {
     buf: B,
     pos: usize,
     filled: usize,
 }
 
-impl<B: StableBuffer> Buffer<B> {
-    pub(crate) fn new(buf: B, filled: usize) -> Self {
-        Self {
-            buf,
-            pos: 0,
-            filled,
-        }
+impl<B: StableBuffer> RBuffer<B> {
+    pub(crate) fn new(buf: B, pos: usize, filled: usize) -> Self {
+        Self { buf, pos, filled }
     }
 
     pub(crate) fn buffer(&self) -> &[u8] {
@@ -33,14 +29,14 @@ impl<B: StableBuffer> Buffer<B> {
         self.pos = cmp::min(self.pos + amt, self.filled);
     }
 
-    pub(crate) fn into_inner(self) -> B {
-        self.buf
+    pub(crate) fn into_raw_parts(self) -> (B, usize, usize) {
+        (self.buf, self.pos, self.filled)
     }
 }
 
-impl Buffer<Box<[u8]>> {
+impl RBuffer<Box<[u8]>> {
     pub(crate) fn empty(capacity: usize) -> Self {
-        Self::new(vec![0; capacity].into_boxed_slice(), 0)
+        Self::new(vec![0; capacity].into_boxed_slice(), 0, 0)
     }
 }
 
@@ -49,7 +45,7 @@ pub(crate) enum BufReaderState<B: StableBuffer, F> {
     #[default]
     Empty,
     Pending(F),
-    Ready(Buffer<B>),
+    Ready(RBuffer<B>),
 }
 
 pub(crate) struct BufReaderGeneric<S, B: StableBuffer, F> {
@@ -61,7 +57,7 @@ impl<S, B, F> BufReaderGeneric<S, B, F>
 where
     B: StableBuffer,
 {
-    fn ready(&self) -> Option<&Buffer<B>> {
+    fn ready(&self) -> Option<&RBuffer<B>> {
         match &self.state {
             BufReaderState::Ready(buf) => Some(buf),
             _ => None,
@@ -88,10 +84,10 @@ where
         self.source
     }
 
-    pub(crate) fn into_raw_parts(self) -> (S, Option<B>) {
+    pub(crate) fn into_raw_parts(self) -> (S, Option<(B, usize, usize)>) {
         let Self { state, source } = self;
         let buf = match state {
-            BufReaderState::Ready(buf) => Some(buf.into_inner()),
+            BufReaderState::Ready(buf) => Some(buf.into_raw_parts()),
             _ => None,
         };
         (source, buf)

@@ -1,4 +1,5 @@
 use futures::future::FusedFuture;
+use inel::buffer::Fixed;
 
 use {inel::buffer::StableBufferExt, inel::io::AsyncReadOwned};
 
@@ -70,7 +71,7 @@ fn fixed() {
     let new = inel::block_on(async move {
         let mut file = inel::fs::File::open(name_clone).await.unwrap();
 
-        let new = Box::new([0; 256]).fix().unwrap();
+        let new = Fixed::new(256).unwrap();
         let (new, res) = file.read_fixed_at(128, new).await;
 
         assert!(res.is_ok_and(|read| read == 128));
@@ -78,8 +79,8 @@ fn fixed() {
         new
     });
 
-    assert_eq!(&new.inner().as_slice()[0..128], &[b'a'; 128]);
-    assert_eq!(&new.inner().as_slice()[128..], &[0; 128]);
+    assert_eq!(&new[0..128], &[b'a'; 128]);
+    assert_eq!(&new[128..], &[0; 128]);
 
     std::fs::remove_file(&name).unwrap();
 }
@@ -122,7 +123,7 @@ fn cancel() {
         let name_clone = name.clone();
 
         inel::block_on(async move {
-            let buf = Box::new([0; 16_000]).fix().unwrap();
+            let buf = Fixed::new(16_000).unwrap();
             let mut file = inel::fs::File::options()
                 .readable(true)
                 .direct(true)

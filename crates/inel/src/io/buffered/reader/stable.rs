@@ -8,7 +8,7 @@ use futures::{AsyncBufRead, AsyncRead, FutureExt};
 
 use super::{fixed::FixedBufReader, generic::*};
 use crate::{
-    buffer::StableBufferExt,
+    buffer::Fixed,
     io::{owned::ReadOwned, AsyncReadOwned},
 };
 
@@ -26,15 +26,19 @@ impl<S> BufReader<S> {
 
     pub fn with_capacity(capacity: usize, source: S) -> Self {
         Self(BufReaderGeneric {
-            state: BufReaderState::Ready(Buffer::empty(capacity)),
+            state: BufReaderState::Ready(RBuffer::empty(capacity)),
             source,
         })
     }
 
     pub fn fix(self) -> Result<FixedBufReader<S>> {
         let (source, buf) = self.0.into_raw_parts();
-        let fixed = buf.ok_or(Error::other("BufReader was in use"))?.fix()?;
-        Ok(FixedBufReader::from_raw(source, fixed))
+        let (buf, pos, filled) = buf.ok_or(Error::other("BufReader was in use"))?;
+
+        let fixed = Fixed::register(buf)?;
+        let buffer = RBuffer::new(fixed, pos, filled);
+
+        Ok(FixedBufReader::from_raw(source, buffer))
     }
 
     pub fn capacity(&self) -> Option<usize> {
@@ -88,11 +92,11 @@ where
                 let (buf, res) = ready!(fut.poll_unpin(cx));
                 match res {
                     Ok(filled) => {
-                        this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
+                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, filled));
                     }
 
                     Err(err) => {
-                        this.0.state = BufReaderState::Ready(Buffer::new(buf, 0));
+                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, 0));
 
                         return Poll::Ready(Err(err));
                     }
@@ -105,7 +109,7 @@ where
                         unreachable!();
                     };
 
-                    let fut = this.0.source.read_owned(buf.into_inner());
+                    let fut = this.0.source.read_owned(buf.into_raw_parts().0);
 
                     this.0.state = BufReaderState::Pending(fut);
 

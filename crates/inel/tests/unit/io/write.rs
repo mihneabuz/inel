@@ -1,5 +1,8 @@
 use futures::future::FusedFuture;
-use inel::{buffer::StableBufferExt, io::AsyncWriteOwned};
+use inel::{
+    buffer::{Fixed, StableBufferExt},
+    io::AsyncWriteOwned,
+};
 
 use crate::helpers::{setup_tracing, temp_file};
 
@@ -64,17 +67,17 @@ fn fixed() {
     let buf = inel::block_on(async move {
         let mut file = inel::fs::File::create(name_clone).await.unwrap();
 
-        let buf = Box::new([b'a'; 256]).fix().unwrap();
+        let buf = Fixed::register(Box::new([b'a'; 256])).unwrap();
         let (buf, res) = file.write_fixed_at(128, buf).await;
 
         assert!(res.is_ok_and(|wrote| wrote == 256));
-        assert_eq!(buf.inner(), &Box::new([b'a'; 256]));
+        assert_eq!(&buf[..], &[b'a'; 256]);
 
         buf
     });
 
     let data = std::fs::read_to_string(&name).unwrap();
-    assert_eq!(buf.into_inner().as_slice(), &data.as_bytes()[128..]);
+    assert_eq!(&buf[..], &data.as_bytes()[128..]);
     assert_eq!(&data.as_bytes()[..128], &[0; 128]);
 
     std::fs::remove_file(&name).unwrap();
@@ -138,7 +141,7 @@ fn cancel() {
         let name_clone = name.clone();
 
         inel::block_on(async move {
-            let buf = Box::new([b'a'; 16_000]).fix().unwrap();
+            let buf = Fixed::register(Box::new([b'a'; 16_000])).unwrap();
             let mut file = inel::fs::File::options()
                 .writable(true)
                 .direct(true)

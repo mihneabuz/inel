@@ -12,15 +12,14 @@ use crate::{
     io::{owned::ReadFixed, AsyncReadOwned},
 };
 
-type FixedBoxBuf = Fixed<Box<[u8]>>;
-type FixedReadFut = ReadFixed<FixedBoxBuf>;
+type FixedReadFut = ReadFixed<Fixed>;
 
-pub struct FixedBufReader<S>(BufReaderGeneric<S, FixedBoxBuf, FixedReadFut>);
+pub struct FixedBufReader<S>(BufReaderGeneric<S, Fixed, FixedReadFut>);
 
 impl<S> FixedBufReader<S> {
-    pub(crate) fn from_raw(source: S, buffer: FixedBoxBuf) -> Self {
+    pub(crate) fn from_raw(source: S, buffer: RBuffer<Fixed>) -> Self {
         Self(BufReaderGeneric {
-            state: BufReaderState::Ready(Buffer::new(buffer, 0)),
+            state: BufReaderState::Ready(buffer),
             source,
         })
     }
@@ -76,11 +75,11 @@ where
                 let (buf, res) = ready!(fut.poll_unpin(cx));
                 match res {
                     Ok(filled) => {
-                        this.0.state = BufReaderState::Ready(Buffer::new(buf, filled));
+                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, filled));
                     }
 
                     Err(err) => {
-                        this.0.state = BufReaderState::Ready(Buffer::new(buf, 0));
+                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, 0));
 
                         return Poll::Ready(Err(err));
                     }
@@ -93,7 +92,7 @@ where
                         unreachable!();
                     };
 
-                    let fut = this.0.source.read_fixed(buf.into_inner());
+                    let fut = this.0.source.read_fixed(buf.into_raw_parts().0);
                     this.0.state = BufReaderState::Pending(fut);
 
                     return Pin::new(this).poll_fill_buf(cx);
