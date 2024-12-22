@@ -20,23 +20,39 @@ mod hyper {
 
     use ::hyper::{
         body::{Bytes, Incoming},
-        client, server,
+        client, rt, server,
         service::service_fn,
         Error, Request, Response,
     };
     use http_body_util::{combinators::BoxBody, BodyExt, Full};
-    use std::convert::Infallible;
+    use std::{convert::Infallible, rc::Rc};
 
     #[test]
     fn simple() {
+        run_server(|stream| inel::compat::hyper::HyperStream::new(stream));
+    }
+
+    #[test]
+    fn fixed() {
+        run_server(|stream| inel::compat::hyper::HyperStream::new_fixed(stream).unwrap());
+    }
+
+    fn run_server<F, S>(wrap: F)
+    where
+        F: Fn(inel::net::TcpStream) -> S + 'static,
+        S: rt::Read + rt::Write + Unpin + 'static,
+    {
         setup_tracing();
+
+        let wrap1 = Rc::new(wrap);
+        let wrap2 = Rc::clone(&wrap1);
 
         inel::block_on(async {
             let (listener, stream) = pair().await;
 
             inel::spawn(async move {
                 let (stream, _) = listener.accept().await.unwrap();
-                let hyper = inel::compat::hyper::HyperStream::new(stream);
+                let hyper = wrap1(stream);
 
                 let res = server::conn::http1::Builder::new()
                     .serve_connection(hyper, service_fn(echo))
@@ -46,7 +62,7 @@ mod hyper {
             });
 
             inel::spawn(async move {
-                let hyper = inel::compat::hyper::HyperStream::new(stream);
+                let hyper = wrap2(stream);
                 let (mut sender, conn) =
                     hyper::client::conn::http1::handshake(hyper).await.unwrap();
 
