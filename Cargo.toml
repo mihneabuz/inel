@@ -12,7 +12,7 @@ members = [
 [workspace.dependencies]
 flume = "0.11"
 futures = "0.3"
-io-uring = "0.7"
+io-uring = { git = "https://github.com/mihneabuz/io-uring.git" }
 libc = "0.2"
 oneshot = "0.1"
 tracing = "0.1"

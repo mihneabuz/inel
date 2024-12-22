@@ -1,71 +1,43 @@
-use crate::buffer::StableBuffer;
-
-/// Register for fixed buffers
-pub struct BufferRegister {
-    buffers: Vec<libc::iovec>,
-    vacant: Vec<usize>,
+pub struct SlotRegister {
+    vacant: Vec<u16>,
+    len: u16,
 }
 
-/// Identifies a fixed buffer registered with the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
-pub struct BufferKey(u16);
+pub struct SlotKey(u16);
 
-impl BufferRegister {
+impl SlotRegister {
     pub fn new() -> Self {
         Self {
-            buffers: Vec::with_capacity(16),
             vacant: Vec::new(),
+            len: 0,
         }
     }
 
-    pub fn insert<B>(&mut self, buffer: &mut B) -> BufferKey
-    where
-        B: StableBuffer,
-    {
+    pub fn get(&mut self) -> SlotKey {
         let index = match self.vacant.pop() {
-            Some(spot) => {
-                self.buffers[spot].iov_base = buffer.stable_mut_ptr() as *mut _;
-                self.buffers[spot].iov_len = buffer.capacity();
-
-                spot
-            }
+            Some(spot) => spot,
             None => {
-                let index = self.buffers.len();
-
-                self.buffers.push(libc::iovec {
-                    iov_base: buffer.stable_mut_ptr() as *mut _,
-                    iov_len: buffer.capacity(),
-                });
-
+                let index = self.len;
+                self.len += 1;
                 index
             }
         };
 
-        BufferKey::from_usize(index)
+        SlotKey(index)
     }
 
-    pub fn remove<B>(&mut self, buffer: &mut B, key: BufferKey)
-    where
-        B: StableBuffer,
-    {
-        let index = key.index() as usize;
-
-        if self.buffers[index].iov_base == buffer.stable_mut_ptr() as *mut _ {
-            self.vacant.push(index);
-        }
-    }
-
-    pub fn iovecs(&self) -> &[libc::iovec] {
-        self.buffers.as_slice()
+    pub fn remove(&mut self, key: SlotKey) {
+        self.vacant.push(key.0);
     }
 }
 
-impl BufferKey {
-    fn from_usize(key: usize) -> Self {
-        Self(key as u16)
-    }
-
+impl SlotKey {
     pub fn index(&self) -> u16 {
         self.0
+    }
+
+    pub fn offset(&self) -> u32 {
+        self.0 as u32
     }
 }

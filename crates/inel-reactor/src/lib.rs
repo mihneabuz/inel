@@ -9,5 +9,5 @@ pub mod util;
 pub(crate) use reactor::RingReactor;
 
 pub use cancellation::Cancellation;
-pub use ring::{BufferKey, Key, Ring};
+pub use ring::{Key, Ring, SlotKey};
 pub use submission::Submission;

@@ -452,7 +452,7 @@ mod fixed {
         let read = res.expect("read failed");
 
         assert_eq!(read, 1024);
-        assert_eq!(&buf.inner()[..read], &MESSAGE.as_bytes()[..read]);
+        assert_eq!(&buf[..read], &MESSAGE.as_bytes()[..read]);
 
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
@@ -481,8 +481,8 @@ mod fixed {
         assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[..read]);
 
         let buf = view.unview();
-        assert_eq!(&buf.inner()[0..64], &[0; 64]);
-        assert_eq!(&buf.inner()[512..], &[0; 512]);
+        assert_eq!(&buf[0..64], &[0; 64]);
+        assert_eq!(&buf[512..], &[0; 512]);
 
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
@@ -501,9 +501,9 @@ mod fixed {
         const READ_LEN2: usize = 256;
         const READ_LEN3: usize = 512;
 
-        let buf1 = Fixed::register(Box::new([0; READ_LEN1]), reactor.clone()).unwrap();
-        let buf2 = Fixed::register(Box::new([0; READ_LEN2]), reactor.clone()).unwrap();
-        let buf3 = Fixed::register(Vec::from([0; READ_LEN3]), reactor.clone()).unwrap();
+        let buf1 = Fixed::new(READ_LEN1, reactor.clone()).unwrap();
+        let buf2 = Fixed::new(READ_LEN2, reactor.clone()).unwrap();
+        let buf3 = Fixed::new(READ_LEN3, reactor.clone()).unwrap();
 
         let mut read1 = op::ReadFixed::new(file1.fd(), buf1).run_on(reactor.clone());
         let mut read2 = op::ReadFixed::new(file2.fd(), buf2).run_on(reactor.clone());
@@ -547,13 +547,13 @@ mod fixed {
         let read3 = res3.expect("read 3 failed");
 
         assert_eq!(read1, READ_LEN1);
-        assert_eq!(&buf1.inner()[..read1], &MESSAGE.as_bytes()[..read1]);
+        assert_eq!(&buf1[..read1], &MESSAGE.as_bytes()[..read1]);
 
         assert_eq!(read2, READ_LEN2);
-        assert_eq!(&buf2.inner()[..read2], &MESSAGE.as_bytes()[..read2]);
+        assert_eq!(&buf2[..read2], &MESSAGE.as_bytes()[..read2]);
 
         assert_eq!(read3, READ_LEN3);
-        assert_eq!(&buf3.inner()[..read3], &MESSAGE.as_bytes()[..read3]);
+        assert_eq!(&buf3[..read3], &MESSAGE.as_bytes()[..read3]);
 
         assert!(fut1.is_terminated());
         assert!(fut2.is_terminated());
@@ -578,7 +578,7 @@ mod fixed {
         assert_eq!(notifier.try_recv(), Some(()));
 
         let (buf, res) = assert_ready!(poll!(fut, notifier));
-        assert_eq!(buf.into_inner(), Box::new([0; 128]));
+        assert_eq!(&buf[..], &[0; 128]);
         res.expect_err("read didn't fail");
     }
 
@@ -594,9 +594,9 @@ mod fixed {
         const READ_LEN2: usize = 2048;
         const READ_LEN3: usize = 2048;
 
-        let buf1 = Fixed::register(Box::new([0; READ_LEN1]), reactor.clone()).unwrap();
-        let buf2 = Fixed::register(Box::new([0; READ_LEN2]), reactor.clone()).unwrap();
-        let buf3 = Fixed::register(Vec::from([0; READ_LEN3]), reactor.clone()).unwrap();
+        let buf1 = Fixed::new(READ_LEN1, reactor.clone()).unwrap();
+        let buf2 = Fixed::new(READ_LEN2, reactor.clone()).unwrap();
+        let buf3 = Fixed::new(READ_LEN3, reactor.clone()).unwrap();
 
         let mut read1 = op::ReadFixed::new(file1.fd(), buf1).run_on(reactor.clone());
         let mut read2 = op::ReadFixed::new(file2.fd(), buf2)

@@ -8,7 +8,6 @@ fn string() {
     s.push_str("Hello World!\n");
 
     assert_eq!(StableBuffer::size(&s), 13);
-    assert_eq!(StableBuffer::capacity(&s), 256);
 
     s.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
 
@@ -22,7 +21,6 @@ fn vec() {
     v.extend_from_slice("Hello World!\n".as_bytes());
 
     assert_eq!(StableBuffer::size(&v), 13);
-    assert_eq!(StableBuffer::capacity(&v), 256);
 
     v.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
 
@@ -38,7 +36,6 @@ fn boxed() {
     let mut b = Box::new([0; 256]);
 
     assert_eq!(StableBuffer::size(&b), 256);
-    assert_eq!(StableBuffer::capacity(&b), 256);
 
     b.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
 
@@ -151,7 +148,6 @@ mod view {
         let view = View::new(buf, 64..128 + 64);
 
         assert_eq!(view.size(), 128);
-        assert_eq!(view.capacity(), 128);
     }
 
     #[test]
@@ -168,6 +164,8 @@ mod view {
 }
 
 mod fixed {
+    use std::ops::Deref;
+
     use inel_reactor::buffer::{Fixed, StableBuffer, View};
 
     use crate::helpers::runtime;
@@ -182,24 +180,9 @@ mod fixed {
         assert!(res.is_ok());
 
         let mut fixed = res.unwrap();
-        fixed.inner_mut().fill_with(|| b'a');
+        fixed.fill_with(|| b'a');
 
-        assert_eq!(fixed.inner(), &Box::new([b'a'; 1024]));
-    }
-
-    #[test]
-    fn double() {
-        let (reactor, _) = runtime();
-
-        let buf = Box::new([b'_'; 1024]);
-        let res1 = Fixed::register(buf, reactor.clone());
-        let fixed1 = res1.unwrap();
-        let res2 = Fixed::register(fixed1, reactor.clone());
-        let mut fixed2 = res2.unwrap();
-
-        fixed2.inner_mut().inner_mut().fill_with(|| b'a');
-
-        assert_eq!(fixed2.inner().inner(), &Box::new([b'a'; 1024]));
+        assert_eq!(fixed.deref(), &[b'a'; 1024]);
     }
 
     #[test]
@@ -207,12 +190,15 @@ mod fixed {
         let (reactor, _) = runtime();
 
         let fixed1 = Fixed::register(Box::new([b'_'; 400]), reactor.clone()).unwrap();
-        let fixed2 = Fixed::register(Vec::from([b'_'; 400]), reactor.clone()).unwrap();
-        let fixed3 = Fixed::register(Box::new([b'_'; 400]), reactor.clone()).unwrap();
-        let fixed4 = Fixed::register(Vec::from([b'_'; 400]), reactor.clone()).unwrap();
+        let mut fixed2 = Fixed::new(400, reactor.clone()).unwrap();
+        fixed2.fill(b'_');
 
-        assert_eq!(fixed1.inner().as_slice(), fixed2.inner().as_slice());
-        assert_eq!(fixed3.inner().as_slice(), fixed4.inner().as_slice());
+        let fixed3 = Fixed::register(Box::new([b'_'; 400]), reactor.clone()).unwrap();
+        let mut fixed4 = Fixed::new(400, reactor.clone()).unwrap();
+        fixed4.fill(b'_');
+
+        assert_eq!(fixed1.as_slice(), fixed2.as_slice());
+        assert_eq!(fixed3.as_slice(), fixed4.as_slice());
     }
 
     #[test]
@@ -221,42 +207,24 @@ mod fixed {
         const LEN: usize = 64;
 
         let fixed1 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
-        let fixed2 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
+        let fixed2 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
 
         {
             let _fixed1 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
-            let _fixed2 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
+            let _fixed2 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
         }
 
         let fixed3 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
 
         {
             let _fixed1 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
-            let _fixed2 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
+            let _fixed2 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
         }
 
-        let fixed4 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
+        let fixed4 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
 
-        assert_eq!(fixed1.inner().as_slice(), fixed2.inner().as_slice());
-        assert_eq!(fixed3.inner().as_slice(), fixed4.inner().as_slice());
-    }
-
-    #[test]
-    fn unwrap() {
-        let (reactor, _) = runtime();
-        const LEN: usize = 80;
-
-        let wrapped1 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
-        let wrapped2 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
-
-        let buf1 = wrapped1.into_inner();
-        let buf2 = wrapped2.into_inner();
-
-        let fixed1 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
-        let fixed2 = Fixed::register(Vec::from([b'_'; LEN]), reactor.clone()).unwrap();
-
-        assert_eq!(buf1.as_slice(), fixed2.inner().as_slice());
-        assert_eq!(buf2.as_slice(), fixed1.inner().as_slice());
+        assert_eq!(fixed1.as_slice(), fixed2.as_slice());
+        assert_eq!(fixed3.as_slice(), fixed4.as_slice());
     }
 
     #[test]
@@ -264,7 +232,7 @@ mod fixed {
         let (reactor, _) = runtime();
 
         let mut buf = Fixed::register(Box::new([b'_'; 256]), reactor).unwrap();
-        buf.inner_mut()[10..=20].copy_from_slice(&[b'A'; 11]);
+        buf[10..=20].copy_from_slice(&[b'A'; 11]);
 
         let view = View::new(buf, 10..=20);
         assert_eq!(view.as_slice(), &[b'A'; 11]);

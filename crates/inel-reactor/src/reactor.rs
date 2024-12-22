@@ -3,20 +3,15 @@ use std::{io::Result, task::Waker};
 use inel_interface::Reactor;
 use io_uring::squeue::Entry;
 
-use crate::{buffer::StableBuffer, BufferKey, Cancellation, Key, Ring};
+use crate::{buffer::StableBuffer, Cancellation, Key, Ring, SlotKey};
 
 pub trait RingReactor {
     unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key;
     unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation);
     fn check_result(&mut self, key: Key) -> Option<(i32, bool)>;
 
-    unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
-    where
-        B: StableBuffer;
-
-    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
-    where
-        B: StableBuffer;
+    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<SlotKey>;
+    fn unregister_buffer(&mut self, key: SlotKey);
 }
 
 impl<R> RingReactor for R
@@ -35,18 +30,11 @@ where
         self.with(|react| react.check_result(key)).unwrap()
     }
 
-    unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
-    where
-        B: StableBuffer,
-    {
+    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<SlotKey> {
         self.with(|react| react.register_buffer(buffer)).unwrap()
     }
 
-    unsafe fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
-    where
-        B: StableBuffer,
-    {
-        self.with(|react| react.unregister_buffer(buffer, key))
-            .unwrap()
+    fn unregister_buffer(&mut self, key: SlotKey) {
+        self.with(|react| react.unregister_buffer(key)).unwrap()
     }
 }

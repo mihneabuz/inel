@@ -1,19 +1,18 @@
 use std::{
     io::Result,
-    ops::{Bound, RangeBounds},
+    ops::{Bound, Deref, DerefMut, RangeBounds},
     slice,
 };
 
 use inel_interface::Reactor;
 
-use crate::{BufferKey, Cancellation, Ring, RingReactor};
+use crate::{Cancellation, Ring, RingReactor, SlotKey};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
     fn stable_mut_ptr(&mut self) -> *mut u8;
 
     fn size(&self) -> usize;
-    fn capacity(&self) -> usize;
 
     fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.stable_ptr(), self.size()) }
@@ -25,7 +24,7 @@ pub trait StableBuffer: Into<Cancellation> {
 }
 
 pub trait FixedBuffer: StableBuffer {
-    fn key(&self) -> &BufferKey;
+    fn key(&self) -> &SlotKey;
 }
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
@@ -39,28 +38,6 @@ impl<const N: usize> StableBuffer for Box<[u8; N]> {
 
     fn size(&self) -> usize {
         self.as_ref().len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.size()
-    }
-}
-
-impl StableBuffer for Box<str> {
-    fn stable_ptr(&self) -> *const u8 {
-        self.as_ptr()
-    }
-
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.as_mut_ptr()
-    }
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.size()
     }
 }
 
@@ -76,10 +53,6 @@ impl StableBuffer for Box<[u8]> {
     fn size(&self) -> usize {
         self.len()
     }
-
-    fn capacity(&self) -> usize {
-        self.size()
-    }
 }
 
 impl StableBuffer for Vec<u8> {
@@ -93,10 +66,6 @@ impl StableBuffer for Vec<u8> {
 
     fn size(&self) -> usize {
         self.len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.capacity()
     }
 }
 
@@ -112,29 +81,32 @@ impl StableBuffer for String {
     fn size(&self) -> usize {
         self.len()
     }
-
-    fn capacity(&self) -> usize {
-        self.capacity()
-    }
 }
 
 #[derive(Debug)]
-pub struct Fixed<B: StableBuffer, R: Reactor<Handle = Ring>> {
-    inner: Option<B>,
-    key: BufferKey,
+pub struct Fixed<R: Reactor<Handle = Ring>> {
+    inner: Option<Box<[u8]>>,
+    key: SlotKey,
     reactor: R,
 }
 
-impl<B, R> Fixed<B, R>
+impl<R> Fixed<R>
 where
-    B: StableBuffer,
     R: Reactor<Handle = Ring>,
 {
-    pub fn register(mut buffer: B, mut reactor: R) -> Result<Self>
+    pub fn new(size: usize, reactor: R) -> Result<Self>
     where
         R: Reactor<Handle = Ring>,
     {
-        let key = unsafe { reactor.register_buffer(&mut buffer) }?;
+        let buffer = vec![0; size].into_boxed_slice();
+        Self::register(buffer, reactor)
+    }
+
+    pub fn register(mut buffer: Box<[u8]>, mut reactor: R) -> Result<Self>
+    where
+        R: Reactor<Handle = Ring>,
+    {
+        let key = reactor.register_buffer(&mut buffer)?;
 
         Ok(Self {
             inner: Some(buffer),
@@ -143,76 +115,71 @@ where
         })
     }
 
-    fn unregister(&mut self) -> Result<()> {
-        if let Some(buffer) = self.inner.as_mut() {
-            unsafe { self.reactor.unregister_buffer(buffer, self.key) };
-        };
-
-        Ok(())
-    }
-
-    pub fn inner(&self) -> &B {
-        self.inner.as_ref().unwrap()
-    }
-
-    pub fn inner_mut(&mut self) -> &mut B {
-        self.inner.as_mut().unwrap()
-    }
-
-    pub fn into_inner(mut self) -> B {
-        let _ = self.unregister();
-        self.inner.take().unwrap()
+    fn unregister(&mut self) {
+        self.reactor.unregister_buffer(self.key);
     }
 }
 
-impl<B, R> Drop for Fixed<B, R>
+impl<R> Drop for Fixed<R>
 where
-    B: StableBuffer,
     R: Reactor<Handle = Ring>,
 {
     fn drop(&mut self) {
-        let _ = self.unregister();
+        self.unregister();
     }
 }
 
-impl<B, R> From<Fixed<B, R>> for Cancellation
+impl<R> Deref for Fixed<R>
 where
-    B: StableBuffer,
     R: Reactor<Handle = Ring>,
 {
-    fn from(value: Fixed<B, R>) -> Self {
-        value.into_inner().into()
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref().unwrap()
     }
 }
 
-impl<B, R> StableBuffer for Fixed<B, R>
+impl<R> DerefMut for Fixed<R>
 where
-    B: StableBuffer,
+    R: Reactor<Handle = Ring>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.as_mut().unwrap()
+    }
+}
+
+impl<R> From<Fixed<R>> for Cancellation
+where
+    R: Reactor<Handle = Ring>,
+{
+    fn from(mut value: Fixed<R>) -> Self {
+        value.inner.take().unwrap().into()
+    }
+}
+
+impl<R> StableBuffer for Fixed<R>
+where
     R: Reactor<Handle = Ring>,
 {
     fn stable_ptr(&self) -> *const u8 {
-        self.inner().stable_ptr()
+        self.inner.as_ref().unwrap().stable_ptr()
     }
 
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.inner_mut().stable_mut_ptr()
+        self.inner.as_mut().unwrap().stable_mut_ptr()
     }
 
     fn size(&self) -> usize {
-        self.inner().size()
-    }
-
-    fn capacity(&self) -> usize {
-        self.inner().capacity()
+        self.inner.as_ref().unwrap().size()
     }
 }
 
-impl<B, R> FixedBuffer for Fixed<B, R>
+impl<R> FixedBuffer for Fixed<R>
 where
-    B: StableBuffer,
     R: Reactor<Handle = Ring>,
 {
-    fn key(&self) -> &BufferKey {
+    fn key(&self) -> &SlotKey {
         &self.key
     }
 }
@@ -232,6 +199,10 @@ where
             inner: buffer,
             range,
         }
+    }
+
+    pub fn range(&self) -> &R {
+        &self.range
     }
 
     pub fn inner(&self) -> &B {
@@ -314,10 +285,6 @@ where
     fn size(&self) -> usize {
         self.end().saturating_sub(self.start())
     }
-
-    fn capacity(&self) -> usize {
-        self.size()
-    }
 }
 
 impl<B, R> FixedBuffer for View<B, R>
@@ -325,7 +292,7 @@ where
     B: FixedBuffer,
     R: RangeBounds<usize>,
 {
-    fn key(&self) -> &BufferKey {
+    fn key(&self) -> &SlotKey {
         self.inner.key()
     }
 }

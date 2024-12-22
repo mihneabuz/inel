@@ -483,7 +483,11 @@ mod fixed {
         let (reactor, notifier) = runtime();
         let mut file = TempFile::with_content("");
 
-        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let buf = Fixed::register(
+            MESSAGE.as_bytes().to_vec().into_boxed_slice(),
+            reactor.clone(),
+        )
+        .unwrap();
         let mut write = op::WriteFixed::new(file.fd(), buf).run_on(reactor.clone());
         let mut fut = pin!(&mut write);
 
@@ -498,7 +502,7 @@ mod fixed {
         let wrote = res.expect("write failed");
 
         assert_eq!(wrote, MESSAGE.as_bytes().len());
-        assert_eq!(buf.inner().as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
         assert_eq!(file.read(), MESSAGE.to_string());
 
         assert!(fut.is_terminated());
@@ -510,7 +514,11 @@ mod fixed {
         let (reactor, notifier) = runtime();
         let file = TempFile::with_content(&MESSAGE);
 
-        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let buf = Fixed::register(
+            MESSAGE.as_bytes().to_vec().into_boxed_slice(),
+            reactor.clone(),
+        )
+        .unwrap();
         let mut read =
             op::WriteFixed::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
@@ -528,7 +536,7 @@ mod fixed {
         assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
 
         let buf = view.unview();
-        assert_eq!(buf.into_inner().as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
 
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
@@ -543,7 +551,7 @@ mod fixed {
         let mut file2 = TempFile::with_content("");
         let mut file3 = TempFile::with_content("");
 
-        let content = MESSAGE.as_bytes().to_vec();
+        let content = MESSAGE.as_bytes().to_vec().into_boxed_slice();
         let buf1 = Fixed::register(content.clone(), reactor.clone()).unwrap();
         let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
         let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
@@ -590,15 +598,15 @@ mod fixed {
         let write3 = res3.expect("write 3 failed");
 
         assert_eq!(write1, MESSAGE.as_bytes().len());
-        assert_eq!(&buf1.inner()[..write1], &MESSAGE.as_bytes()[..write1]);
+        assert_eq!(&buf1[..write1], &MESSAGE.as_bytes()[..write1]);
         assert_eq!(file1.read(), MESSAGE.to_string());
 
         assert_eq!(write2, MESSAGE.as_bytes().len());
-        assert_eq!(&buf2.inner()[..write2], &MESSAGE.as_bytes()[..write2]);
+        assert_eq!(&buf2[..write2], &MESSAGE.as_bytes()[..write2]);
         assert_eq!(file2.read(), MESSAGE.to_string());
 
         assert_eq!(write3, MESSAGE.as_bytes().len());
-        assert_eq!(&buf3.inner()[..write3], &MESSAGE.as_bytes()[..write3]);
+        assert_eq!(&buf3[..write3], &MESSAGE.as_bytes()[..write3]);
         assert_eq!(file3.read(), MESSAGE.to_string());
 
         assert!(fut1.is_terminated());
@@ -612,7 +620,11 @@ mod fixed {
     fn error() {
         let (reactor, notifier) = runtime();
 
-        let buf = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let buf = Fixed::register(
+            MESSAGE.as_bytes().to_vec().into_boxed_slice(),
+            reactor.clone(),
+        )
+        .unwrap();
         let mut write = op::WriteFixed::new(RawFd::from(9999), buf).run_on(reactor.clone());
         let mut fut = pin!(&mut write);
 
@@ -624,7 +636,7 @@ mod fixed {
         assert_eq!(notifier.try_recv(), Some(()));
 
         let (buf, res) = assert_ready!(poll!(fut, notifier));
-        assert_eq!(buf.into_inner().as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
         res.expect_err("write didn't fail");
     }
 
@@ -636,9 +648,10 @@ mod fixed {
         let file2 = TempFile::with_content("");
         let file3 = TempFile::with_content("");
 
-        let buf1 = Fixed::register(MESSAGE.to_string(), reactor.clone()).unwrap();
-        let buf2 = Fixed::register(MESSAGE.to_string().into_boxed_str(), reactor.clone()).unwrap();
-        let buf3 = Fixed::register(MESSAGE.as_bytes().to_vec(), reactor.clone()).unwrap();
+        let content = MESSAGE.as_bytes().to_vec().into_boxed_slice();
+        let buf1 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
+        let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
 
         let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
         let mut write2 = op::WriteFixed::new(file2.fd(), buf2)

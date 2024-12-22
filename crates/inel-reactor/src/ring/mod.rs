@@ -10,10 +10,10 @@ use tracing::debug;
 use crate::{buffer::StableBuffer, Cancellation};
 
 use completion::CompletionSet;
-use register::BufferRegister;
+use register::SlotRegister;
 
 pub use completion::Key;
-pub use register::BufferKey;
+pub use register::SlotKey;
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -28,8 +28,7 @@ pub struct Ring {
     active: u32,
     canceled: u32,
     completions: CompletionSet,
-    buffers: BufferRegister,
-    buffers_registered: bool,
+    buffers: SlotRegister,
 }
 
 impl Ring {
@@ -38,13 +37,18 @@ impl Ring {
             .build(capacity)
             .expect("Failed to create io_uring");
 
+        unsafe {
+            ring.submitter()
+                .register_buffers_sparse(1024)
+                .expect("Failed to register buffers sparse");
+        }
+
         Self {
             ring,
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(capacity as usize),
-            buffers: BufferRegister::new(),
-            buffers_registered: false,
+            buffers: SlotRegister::new(),
         }
     }
 
@@ -155,33 +159,26 @@ impl Ring {
     }
 
     /// Attempt to register a [StableBuffer] for use with fixed operations.
-    ///
-    /// # Safety
-    /// Caller must ensure that the buffer is valid until the ring is destroyed
-    pub unsafe fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferKey>
+    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<SlotKey>
     where
         B: StableBuffer,
     {
-        if self.buffers_registered {
-            self.ring.submitter().unregister_buffers()?;
-        } else {
-            self.buffers_registered = true;
-        }
+        let key = self.buffers.get();
 
-        let key = self.buffers.insert(buffer);
+        let iovec = libc::iovec {
+            iov_base: buffer.stable_mut_ptr() as _,
+            iov_len: buffer.size(),
+        };
 
         self.ring
             .submitter()
-            .register_buffers(self.buffers.iovecs())?;
+            .register_buffers_update(key.offset(), &[iovec], None)?;
 
         Ok(key)
     }
 
-    /// Unregister a [StableBuffer]
-    pub fn unregister_buffer<B>(&mut self, buffer: &mut B, key: BufferKey)
-    where
-        B: StableBuffer,
-    {
-        self.buffers.remove(buffer, key);
+    /// Unregister a buffer
+    pub fn unregister_buffer(&mut self, key: SlotKey) {
+        self.buffers.remove(key);
     }
 }

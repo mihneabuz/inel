@@ -82,12 +82,6 @@ impl<T> From<Vec<T>> for Cancellation {
     }
 }
 
-impl From<Box<str>> for Cancellation {
-    fn from(value: Box<str>) -> Self {
-        value.into_boxed_bytes().into()
-    }
-}
-
 impl From<String> for Cancellation {
     fn from(value: String) -> Self {
         value.into_bytes().into()
