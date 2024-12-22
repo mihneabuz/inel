@@ -1,10 +1,10 @@
 pub struct SlotRegister {
-    vacant: Vec<u16>,
-    len: u16,
+    vacant: Vec<u32>,
+    len: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SlotKey(u16);
+pub struct SlotKey(u32);
 
 impl SlotRegister {
     pub fn new() -> Self {
@@ -33,7 +33,7 @@ impl SlotRegister {
 }
 
 impl SlotKey {
-    pub fn index(&self) -> u16 {
+    pub fn index(&self) -> u32 {
         self.0
     }
 }

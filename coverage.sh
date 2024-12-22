@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cargo tarpaulin -p inel -p inel-reactor -p inel-executor
+cargo tarpaulin --all-features -p inel -p inel-reactor -p inel-executor

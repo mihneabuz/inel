@@ -100,7 +100,7 @@ where
             Fd(self.fd),
             self.buf.stable_ptr(),
             self.buf.size() as u32,
-            self.buf.key().index(),
+            self.buf.key(),
         )
         .offset(self.offset)
         .build()

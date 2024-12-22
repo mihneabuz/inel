@@ -1,8 +1,8 @@
 mod completion;
 mod register;
 
-use std::io::Result;
 use std::task::Waker;
+use std::{io::Result, os::fd::RawFd};
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
 use tracing::debug;
@@ -29,6 +29,7 @@ pub struct Ring {
     canceled: u32,
     completions: CompletionSet,
     buffers: SlotRegister,
+    files: SlotRegister,
 }
 
 impl Ring {
@@ -41,12 +42,17 @@ impl Ring {
             .register_buffers_sparse(1024)
             .expect("Failed to register buffers sparse");
 
+        ring.submitter()
+            .register_files_sparse(1024)
+            .expect("Failed to register files sparse");
+
         Self {
             ring,
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(capacity as usize),
             buffers: SlotRegister::new(),
+            files: SlotRegister::new(),
         }
     }
 
@@ -171,7 +177,7 @@ impl Ring {
         unsafe {
             self.ring
                 .submitter()
-                .register_buffers_update(key.index() as u32, &[iovec], None)?;
+                .register_buffers_update(key.index(), &[iovec], None)?;
         }
 
         Ok(key)
@@ -180,5 +186,21 @@ impl Ring {
     /// Unregister a buffer
     pub fn unregister_buffer(&mut self, key: SlotKey) {
         self.buffers.remove(key);
+    }
+
+    /// Attempt to register a [StableBuffer] for use with fixed operations.
+    pub fn register_file(&mut self, fd: RawFd) -> Result<SlotKey> {
+        let key = self.files.get();
+
+        self.ring
+            .submitter()
+            .register_files_update(key.index(), &[fd])?;
+
+        Ok(key)
+    }
+
+    /// Unregister a buffer
+    pub fn unregister_file(&mut self, key: SlotKey) {
+        self.files.remove(key);
     }
 }

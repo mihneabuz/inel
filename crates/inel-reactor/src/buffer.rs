@@ -24,7 +24,7 @@ pub trait StableBuffer: Into<Cancellation> {
 }
 
 pub trait FixedBuffer: StableBuffer {
-    fn key(&self) -> &SlotKey;
+    fn key(&self) -> u16;
 }
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
@@ -179,8 +179,8 @@ impl<R> FixedBuffer for Fixed<R>
 where
     R: Reactor<Handle = Ring>,
 {
-    fn key(&self) -> &SlotKey {
-        &self.key
+    fn key(&self) -> u16 {
+        self.key.index() as u16
     }
 }
 
@@ -292,7 +292,7 @@ where
     B: FixedBuffer,
     R: RangeBounds<usize>,
 {
-    fn key(&self) -> &SlotKey {
+    fn key(&self) -> u16 {
         self.inner.key()
     }
 }

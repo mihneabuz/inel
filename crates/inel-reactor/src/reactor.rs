@@ -1,4 +1,4 @@
-use std::{io::Result, task::Waker};
+use std::{io::Result, os::fd::RawFd, task::Waker};
 
 use inel_interface::Reactor;
 use io_uring::squeue::Entry;
@@ -12,6 +12,9 @@ pub trait RingReactor {
 
     fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<SlotKey>;
     fn unregister_buffer(&mut self, key: SlotKey);
+
+    fn _register_file(&mut self, fd: RawFd) -> Result<SlotKey>;
+    fn _unregister_file(&mut self, key: SlotKey);
 }
 
 impl<R> RingReactor for R
@@ -36,5 +39,13 @@ where
 
     fn unregister_buffer(&mut self, key: SlotKey) {
         self.with(|react| react.unregister_buffer(key)).unwrap()
+    }
+
+    fn _register_file(&mut self, fd: RawFd) -> Result<SlotKey> {
+        self.with(|react| react.register_file(fd)).unwrap()
+    }
+
+    fn _unregister_file(&mut self, key: SlotKey) {
+        self.with(|react| react.unregister_file(key)).unwrap()
     }
 }
