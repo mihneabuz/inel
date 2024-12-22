@@ -37,11 +37,9 @@ impl Ring {
             .build(capacity)
             .expect("Failed to create io_uring");
 
-        unsafe {
-            ring.submitter()
-                .register_buffers_sparse(1024)
-                .expect("Failed to register buffers sparse");
-        }
+        ring.submitter()
+            .register_buffers_sparse(1024)
+            .expect("Failed to register buffers sparse");
 
         Self {
             ring,
@@ -170,9 +168,11 @@ impl Ring {
             iov_len: buffer.size(),
         };
 
-        self.ring
-            .submitter()
-            .register_buffers_update(key.offset(), &[iovec], None)?;
+        unsafe {
+            self.ring
+                .submitter()
+                .register_buffers_update(key.index() as u32, &[iovec], None)?;
+        }
 
         Ok(key)
     }

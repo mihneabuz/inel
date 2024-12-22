@@ -36,8 +36,4 @@ impl SlotKey {
     pub fn index(&self) -> u16 {
         self.0
     }
-
-    pub fn offset(&self) -> u32 {
-        self.0 as u32
-    }
 }
