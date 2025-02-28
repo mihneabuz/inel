@@ -1,8 +1,8 @@
 mod completion;
 mod register;
 
-use std::io::Result;
 use std::task::Waker;
+use std::{io::Result, os::fd::RawFd};
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
 use tracing::debug;
@@ -10,10 +10,10 @@ use tracing::debug;
 use crate::{buffer::StableBuffer, Cancellation};
 
 use completion::CompletionSet;
-use register::SlotRegister;
+use register::{SlotRegister, WrapSlotKey};
 
 pub use completion::Key;
-pub use register::SlotKey;
+pub use register::{BufferSlotKey, FileSlotKey};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -29,6 +29,7 @@ pub struct Ring {
     canceled: u32,
     completions: CompletionSet,
     buffers: SlotRegister,
+    files: SlotRegister,
 }
 
 impl Ring {
@@ -41,12 +42,17 @@ impl Ring {
             .register_buffers_sparse(1024)
             .expect("Failed to register buffers sparse");
 
+        ring.submitter()
+            .register_files_sparse(1024)
+            .expect("Failed to register files sparse");
+
         Self {
             ring,
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(capacity as usize),
             buffers: SlotRegister::new(),
+            files: SlotRegister::new(),
         }
     }
 
@@ -157,7 +163,7 @@ impl Ring {
     }
 
     /// Attempt to register a [StableBuffer] for use with fixed operations.
-    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<SlotKey>
+    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferSlotKey>
     where
         B: StableBuffer,
     {
@@ -171,14 +177,32 @@ impl Ring {
         unsafe {
             self.ring
                 .submitter()
-                .register_buffers_update(key.index() as u32, &[iovec], None)?;
+                .register_buffers_update(key.index(), &[iovec], None)?;
         }
 
-        Ok(key)
+        Ok(BufferSlotKey::wrap(key))
     }
 
     /// Unregister a buffer
-    pub fn unregister_buffer(&mut self, key: SlotKey) {
-        self.buffers.remove(key);
+    pub fn unregister_buffer(&mut self, key: BufferSlotKey) {
+        self.buffers.remove(key.unwrap());
+    }
+
+    /// Attempt to get an io_uring file index
+    pub fn register_file(&mut self, fd: Option<RawFd>) -> Result<FileSlotKey> {
+        let key = self.files.get();
+
+        if let Some(fd) = fd {
+            self.ring
+                .submitter()
+                .register_files_update(key.index(), &[fd])?;
+        }
+
+        Ok(FileSlotKey::wrap(key))
+    }
+
+    /// Unregister a buffer
+    pub fn unregister_file(&mut self, key: FileSlotKey) {
+        self.files.remove(key.unwrap());
     }
 }

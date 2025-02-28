@@ -1,19 +1,16 @@
-use std::{
-    io::{Error, Result},
-    os::fd::RawFd,
-};
+use std::io::{Error, Result};
 
-use io_uring::{opcode, squeue::Entry, types::Fd};
+use io_uring::{opcode, squeue::Entry};
 
 use crate::{
     buffer::{FixedBuffer, StableBuffer},
     op::Op,
-    Cancellation,
+    Cancellation, IntoTarget, Target,
 };
 
 pub struct Read<Buf: StableBuffer> {
     buf: Buf,
-    fd: RawFd,
+    target: Target,
     offset: u64,
 }
 
@@ -21,10 +18,10 @@ impl<Buf> Read<Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(fd: RawFd, buf: Buf) -> Self {
+    pub fn new(target: impl IntoTarget, buf: Buf) -> Self {
         Self {
             buf,
-            fd,
+            target: target.into_target(),
             offset: u64::MAX,
         }
     }
@@ -43,7 +40,7 @@ where
 
     fn entry(&mut self) -> Entry {
         opcode::Read::new(
-            Fd(self.fd),
+            self.target.as_raw(),
             self.buf.stable_mut_ptr(),
             self.buf.size() as u32,
         )
@@ -71,7 +68,7 @@ where
 
 pub struct ReadFixed<Buf: FixedBuffer> {
     buf: Buf,
-    fd: RawFd,
+    target: Target,
     offset: u64,
 }
 
@@ -79,10 +76,10 @@ impl<Buf> ReadFixed<Buf>
 where
     Buf: FixedBuffer,
 {
-    pub fn new(fd: RawFd, buf: Buf) -> Self {
+    pub fn new(target: impl IntoTarget, buf: Buf) -> Self {
         Self {
             buf,
-            fd,
+            target: target.into_target(),
             offset: u64::MAX,
         }
     }
@@ -101,10 +98,10 @@ where
 
     fn entry(&mut self) -> Entry {
         opcode::ReadFixed::new(
-            Fd(self.fd),
+            self.target.as_raw(),
             self.buf.stable_mut_ptr(),
             self.buf.size() as u32,
-            self.buf.key().index(),
+            self.buf.key().index() as u16,
         )
         .offset(self.offset)
         .build()
@@ -131,7 +128,7 @@ where
 pub struct ReadVectored<Buf: StableBuffer> {
     bufs: Vec<Buf>,
     iovecs: Vec<libc::iovec>,
-    fd: RawFd,
+    target: Target,
     offset: u64,
 }
 
@@ -139,22 +136,22 @@ impl<Buf> ReadVectored<Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(fd: RawFd, bufs: Vec<Buf>) -> Self {
+    pub fn new(target: impl IntoTarget, bufs: Vec<Buf>) -> Self {
         let iovecs = Vec::with_capacity(bufs.len());
         Self {
             bufs,
             iovecs,
-            fd,
+            target: target.into_target(),
             offset: u64::MAX,
         }
     }
 
-    pub fn from_iter<I>(fd: RawFd, bufs: I) -> Self
+    pub fn from_iter<I>(target: impl IntoTarget, bufs: I) -> Self
     where
         I: Iterator<Item = Buf>,
     {
         let bufs = bufs.collect::<Vec<_>>();
-        Self::new(fd, bufs)
+        Self::new(target, bufs)
     }
 
     pub fn offset(mut self, offset: u64) -> Self {
@@ -178,9 +175,13 @@ where
             })
             .for_each(|iovec| self.iovecs.push(iovec));
 
-        opcode::Readv::new(Fd(self.fd), self.iovecs.as_ptr(), self.iovecs.len() as u32)
-            .offset(self.offset)
-            .build()
+        opcode::Readv::new(
+            self.target.as_raw(),
+            self.iovecs.as_ptr(),
+            self.iovecs.len() as u32,
+        )
+        .offset(self.offset)
+        .build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -207,7 +208,7 @@ where
 pub struct ReadVectoredExact<const N: usize, Buf: StableBuffer> {
     bufs: [Buf; N],
     iovecs: [libc::iovec; N],
-    fd: RawFd,
+    target: Target,
     offset: u64,
 }
 
@@ -215,14 +216,14 @@ impl<const N: usize, Buf> ReadVectoredExact<N, Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(fd: RawFd, bufs: [Buf; N]) -> Self {
+    pub fn new(target: impl IntoTarget, bufs: [Buf; N]) -> Self {
         Self {
             bufs,
             iovecs: std::array::from_fn(|_| libc::iovec {
                 iov_base: std::ptr::null_mut(),
                 iov_len: 0,
             }),
-            fd,
+            target: target.into_target(),
             offset: u64::MAX,
         }
     }
@@ -245,9 +246,13 @@ where
             self.iovecs[i].iov_len = self.bufs[i].size();
         }
 
-        opcode::Readv::new(Fd(self.fd), self.iovecs.as_ptr(), self.iovecs.len() as u32)
-            .offset(self.offset)
-            .build()
+        opcode::Readv::new(
+            self.target.as_raw(),
+            self.iovecs.as_ptr(),
+            self.iovecs.len() as u32,
+        )
+        .offset(self.offset)
+        .build()
     }
 
     fn result(self, ret: i32) -> Self::Output {

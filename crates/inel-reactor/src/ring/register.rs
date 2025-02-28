@@ -1,16 +1,47 @@
 pub struct SlotRegister {
-    vacant: Vec<u16>,
-    len: u16,
+    vacant: Vec<u32>,
+    len: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SlotKey(u16);
+pub(crate) struct SlotKey(u32);
+
+#[derive(Clone, Copy, Debug)]
+pub struct BufferSlotKey(SlotKey);
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileSlotKey(SlotKey);
+
+pub(crate) trait WrapSlotKey {
+    fn wrap(key: SlotKey) -> Self;
+    fn unwrap(self) -> SlotKey;
+}
+
+impl WrapSlotKey for FileSlotKey {
+    fn wrap(key: SlotKey) -> Self {
+        FileSlotKey(key)
+    }
+
+    fn unwrap(self) -> SlotKey {
+        self.0
+    }
+}
+
+impl WrapSlotKey for BufferSlotKey {
+    fn wrap(key: SlotKey) -> Self {
+        BufferSlotKey(key)
+    }
+
+    fn unwrap(self) -> SlotKey {
+        self.0
+    }
+}
 
 impl SlotRegister {
     pub fn new() -> Self {
         Self {
             vacant: Vec::new(),
-            len: 0,
+            len: 1,
         }
     }
 
@@ -33,7 +64,19 @@ impl SlotRegister {
 }
 
 impl SlotKey {
-    pub fn index(&self) -> u16 {
+    pub fn index(&self) -> u32 {
         self.0
+    }
+}
+
+impl FileSlotKey {
+    pub fn index(&self) -> u32 {
+        self.0.index()
+    }
+}
+
+impl BufferSlotKey {
+    pub fn index(&self) -> u32 {
+        self.0.index()
     }
 }

@@ -9,10 +9,10 @@ use std::{
 use io_uring::{
     opcode::{self, AsyncCancel},
     squeue::Entry,
-    types::{Fd, FsyncFlags, OpenHow},
+    types::{DestinationSlot, Fd, FsyncFlags, OpenHow},
 };
 
-use crate::{op::Op, Cancellation};
+use crate::{op::Op, Cancellation, FileSlotKey, IntoTarget, Target};
 
 pub struct OpenAt<S> {
     dir: RawFd,
@@ -58,23 +58,30 @@ impl<S: AsRef<CStr>> OpenAt<S> {
         self.mode = mode;
         self
     }
+
+    pub fn fixed(self, slot: FileSlotKey) -> OpenAtFixed<S> {
+        OpenAtFixed::from_raw(self, slot)
+    }
+
+    fn raw_entry(&self) -> opcode::OpenAt {
+        opcode::OpenAt::new(Fd(self.dir), self.path.as_ref().as_ptr())
+            .flags(self.flags)
+            .mode(self.mode)
+    }
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
     type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
-        opcode::OpenAt::new(Fd(self.dir), self.path.as_ref().as_ptr())
-            .flags(self.flags)
-            .mode(self.mode)
-            .build()
+        self.raw_entry().build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret)
+        match ret {
+            1.. => Ok(ret),
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            0 => unreachable!(),
         }
     }
 
@@ -83,6 +90,42 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
             Some(AsyncCancel::new(user_data).build()),
             Cancellation::empty(),
         )
+    }
+}
+
+pub struct OpenAtFixed<S> {
+    inner: OpenAt<S>,
+    slot: FileSlotKey,
+}
+
+impl<S: AsRef<CStr>> OpenAtFixed<S> {
+    pub fn from_raw(inner: OpenAt<S>, slot: FileSlotKey) -> Self {
+        Self { inner, slot }
+    }
+}
+
+unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .raw_entry()
+            .file_index(Some(
+                DestinationSlot::try_from_slot_target(self.slot.index()).unwrap(),
+            ))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        match ret {
+            0 => Ok(self.slot),
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        self.inner.cancel(user_data)
     }
 }
 
@@ -131,20 +174,28 @@ impl<S: AsRef<CStr>> OpenAt2<S> {
         self.how = self.how.resolve(resolve);
         self
     }
+
+    pub fn fixed(self, slot: FileSlotKey) -> OpenAt2Fixed<S> {
+        OpenAt2Fixed::from_raw(self, slot)
+    }
+
+    fn raw_entry(&self) -> opcode::OpenAt2 {
+        opcode::OpenAt2::new(Fd(self.dir), self.path.as_ref().as_ptr(), &self.how)
+    }
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
     type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
-        opcode::OpenAt2::new(Fd(self.dir), self.path.as_ref().as_ptr(), &self.how).build()
+        self.raw_entry().build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret)
+        match ret {
+            1.. => Ok(ret),
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            0 => unreachable!(),
         }
     }
 
@@ -156,13 +207,51 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
     }
 }
 
+pub struct OpenAt2Fixed<S> {
+    inner: OpenAt2<S>,
+    slot: FileSlotKey,
+}
+
+impl<S: AsRef<CStr>> OpenAt2Fixed<S> {
+    pub fn from_raw(inner: OpenAt2<S>, slot: FileSlotKey) -> Self {
+        Self { inner, slot }
+    }
+}
+
+unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .raw_entry()
+            .file_index(Some(
+                DestinationSlot::try_from_slot_target(self.slot.index()).unwrap(),
+            ))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        match ret {
+            0 => Ok(self.slot),
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        self.inner.cancel(user_data)
+    }
+}
+
 pub struct Close {
-    fd: RawFd,
+    target: Target,
 }
 
 impl Close {
-    pub fn new(fd: RawFd) -> Self {
-        Self { fd }
+    pub fn new(target: impl IntoTarget) -> Self {
+        Self {
+            target: target.into_target(),
+        }
     }
 }
 
@@ -170,7 +259,7 @@ unsafe impl Op for Close {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        opcode::Close::new(Fd(self.fd)).build()
+        opcode::Close::new(self.target.as_raw()).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -183,13 +272,16 @@ unsafe impl Op for Close {
 }
 
 pub struct Fsync {
-    fd: RawFd,
+    target: Target,
     meta: bool,
 }
 
 impl Fsync {
-    pub fn new(fd: RawFd) -> Self {
-        Self { fd, meta: false }
+    pub fn new(target: impl IntoTarget) -> Self {
+        Self {
+            target: target.into_target(),
+            meta: false,
+        }
     }
 
     pub fn sync_meta(mut self) -> Self {
@@ -208,7 +300,7 @@ unsafe impl Op for Fsync {
             FsyncFlags::DATASYNC
         };
 
-        opcode::Fsync::new(Fd(self.fd)).flags(flag).build()
+        opcode::Fsync::new(self.target.as_raw()).flags(flag).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
