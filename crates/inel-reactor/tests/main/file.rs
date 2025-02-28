@@ -12,6 +12,7 @@ fn create() {
     let (reactor, notifier) = runtime();
     let filename1 = TempFile::new_name();
     let filename2 = TempFile::new_name();
+    let filename3 = TempFile::new_name();
 
     let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
         .mode(0)
@@ -20,16 +21,23 @@ fn create() {
         .mode(0)
         .resolve(0)
         .run_on(reactor.clone());
+    let mut creat3 = op::OpenAt2::new(&filename3, (libc::O_WRONLY | libc::O_CREAT) as u64)
+        .fixed(reactor.get_file_slot())
+        .run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
+    let mut fut3 = pin!(&mut creat3);
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
-    assert_eq!(reactor.active(), 2);
+    assert!(poll!(fut3, notifier).is_pending());
+    assert_eq!(reactor.active(), 3);
 
     reactor.wait();
     reactor.wait();
+    reactor.wait();
 
+    assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
@@ -39,8 +47,12 @@ fn create() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_ok_and(|fd| fd > 0));
 
+    let slot = assert_ready!(poll!(fut3, notifier));
+    assert!(slot.is_ok_and(|slot| slot.index() > 0));
+
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
+    assert!(fut3.is_terminated());
     assert!(reactor.is_done());
 
     assert!(std::fs::exists(&filename1).is_ok_and(|exists| exists));
@@ -48,6 +60,9 @@ fn create() {
 
     assert!(std::fs::exists(&filename2).is_ok_and(|exists| exists));
     assert!(std::fs::remove_file(&filename2).is_ok());
+
+    assert!(std::fs::exists(&filename3).is_ok_and(|exists| exists));
+    assert!(std::fs::remove_file(&filename3).is_ok());
 }
 
 #[test]
@@ -55,21 +70,29 @@ fn relative() {
     let (reactor, notifier) = runtime();
     let file1 = TempFile::with_content(MESSAGE);
     let file2 = TempFile::with_content(MESSAGE);
+    let file3 = TempFile::with_content(MESSAGE);
 
     let mut open1 = op::OpenAt::new(file1.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 =
         op::OpenAt2::new(file2.relative_path(), libc::O_RDONLY as u64).run_on(reactor.clone());
+    let mut open3 = op::OpenAt::new(file3.relative_path(), libc::O_RDONLY)
+        .fixed(reactor.get_file_slot())
+        .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
+    let mut fut3 = pin!(&mut open3);
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
-    assert_eq!(reactor.active(), 2);
+    assert!(poll!(fut3, notifier).is_pending());
+    assert_eq!(reactor.active(), 3);
 
     reactor.wait();
     reactor.wait();
+    reactor.wait();
 
+    assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
@@ -79,8 +102,12 @@ fn relative() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.as_ref().is_ok_and(|&fd| fd > 0));
 
+    let slot = assert_ready!(poll!(fut3, notifier));
+    assert!(slot.as_ref().is_ok_and(|&slot| slot.index() > 0));
+
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
+    assert!(fut3.is_terminated());
     assert!(reactor.is_done());
 }
 
@@ -91,19 +118,28 @@ fn error() {
     let path1 = file1.name() + "nopnop";
     let file2 = TempFile::with_content(MESSAGE);
     let path2 = file2.name() + "nopnop";
+    let file3 = TempFile::with_content(MESSAGE);
+    let path3 = file3.name() + "nopnop";
 
     let mut open1 = op::OpenAt::new(path1, libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 = op::OpenAt2::new(path2, libc::O_RDONLY as u64).run_on(reactor.clone());
+    let mut open3 = op::OpenAt2::new(path3, libc::O_RDONLY as u64)
+        .fixed(reactor.get_file_slot())
+        .run_on(reactor.clone());
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
+    let mut fut3 = pin!(&mut open3);
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
-    assert_eq!(reactor.active(), 2);
+    assert!(poll!(fut3, notifier).is_pending());
+    assert_eq!(reactor.active(), 3);
 
     reactor.wait();
     reactor.wait();
+    reactor.wait();
 
+    assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(notifier.try_recv(), Some(()));
 
@@ -113,8 +149,12 @@ fn error() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_err());
 
+    let slot = assert_ready!(poll!(fut3, notifier));
+    assert!(slot.is_err());
+
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
+    assert!(fut3.is_terminated());
     assert!(reactor.is_done());
 }
 
@@ -130,16 +170,34 @@ fn cancel() {
     let mut path2 = dir2.relative_path();
     path2.push("cancel");
 
+    let dir3 = TempFile::dir();
+    let mut path3 = dir3.relative_path();
+    path3.push("cancel");
+
+    let dir4 = TempFile::dir();
+    let mut path4 = dir4.relative_path();
+    path4.push("cancel");
+
     let mut creat1 = op::OpenAt::new(&path1, libc::O_CREAT).run_on(reactor.clone());
     let mut creat2 = op::OpenAt2::new(&path2, libc::O_CREAT as u64).run_on(reactor.clone());
+    let mut creat3 = op::OpenAt::new(&path3, libc::O_CREAT)
+        .fixed(reactor.get_file_slot())
+        .run_on(reactor.clone());
+    let mut creat4 = op::OpenAt2::new(&path3, libc::O_CREAT as u64)
+        .fixed(reactor.get_file_slot())
+        .run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
+    let mut fut3 = pin!(&mut creat3);
+    let mut fut4 = pin!(&mut creat4);
     let mut nop = pin!(&mut op::Nop.run_on(reactor.clone()));
 
     assert!(poll!(fut1, notifier).is_pending());
     assert!(poll!(fut2, notifier).is_pending());
+    assert!(poll!(fut3, notifier).is_pending());
+    assert!(poll!(fut4, notifier).is_pending());
     assert!(poll!(nop, notifier).is_pending());
-    assert_eq!(reactor.active(), 3);
+    assert_eq!(reactor.active(), 5);
 
     reactor.wait();
 
@@ -148,39 +206,52 @@ fn cancel() {
 
     drop(creat1);
     drop(creat2);
+    drop(creat3);
+    drop(creat4);
 
     let mut i = 0;
     while !reactor.is_done() {
         reactor.wait();
         i += 1;
-        assert!(i < 5);
+        assert!(i < 10);
     }
 }
 
 #[test]
 fn close() {
     let (reactor, notifier) = runtime();
-    let file = TempFile::with_content(&MESSAGE);
-    let fd = std::fs::File::open(file.name()).unwrap().into_raw_fd();
+    let file1 = TempFile::with_content(&MESSAGE);
+    let file2 = TempFile::with_content(&MESSAGE);
 
-    let mut close = op::Close::new(fd).run_on(reactor.clone());
+    let fd = std::fs::File::open(file1.name()).unwrap().into_raw_fd();
+    let slot = reactor.register_file(std::fs::File::open(file2.name()).unwrap().into_raw_fd());
+
+    let mut close1 = op::Close::new(fd).run_on(reactor.clone());
+    let mut close2 = op::Close::new(slot).run_on(reactor.clone());
     let mut error = op::Close::new(1337).run_on(reactor.clone());
 
-    let mut fut = pin!(&mut close);
+    let mut fut1 = pin!(&mut close1);
+    let mut fut2 = pin!(&mut close2);
     let mut bad = pin!(&mut error);
 
-    assert!(poll!(fut, notifier).is_pending());
+    assert!(poll!(fut1, notifier).is_pending());
+    assert!(poll!(fut2, notifier).is_pending());
     assert!(poll!(bad, notifier).is_pending());
-    assert_eq!(reactor.active(), 2);
+    assert_eq!(reactor.active(), 3);
 
+    reactor.wait();
     reactor.wait();
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert!(assert_ready!(poll!(fut, notifier)).is_ok());
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert!(assert_ready!(poll!(fut1, notifier)).is_ok());
+    assert!(assert_ready!(poll!(fut2, notifier)).is_ok());
     assert!(assert_ready!(poll!(bad, notifier)).is_err());
 
-    assert!(fut.is_terminated());
+    assert!(fut1.is_terminated());
+    assert!(fut2.is_terminated());
     assert!(bad.is_terminated());
     assert!(reactor.is_done());
 }

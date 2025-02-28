@@ -6,7 +6,7 @@ use std::{
 use crate::GlobalReactor;
 
 pub use inel_reactor::buffer::{FixedBuffer, StableBuffer, View};
-use inel_reactor::{Cancellation, SlotKey};
+use inel_reactor::{BufferSlotKey, Cancellation};
 
 pub trait StableBufferExt: StableBuffer {
     fn view<R>(self, range: R) -> View<Self, R>
@@ -73,7 +73,7 @@ impl StableBuffer for Fixed {
 }
 
 impl FixedBuffer for Fixed {
-    fn key(&self) -> &SlotKey {
+    fn key(&self) -> &BufferSlotKey {
         self.0.key()
     }
 }

@@ -6,7 +6,7 @@ use std::{
 
 use inel_interface::Reactor;
 
-use crate::{Cancellation, Ring, RingReactor, SlotKey};
+use crate::{BufferSlotKey, Cancellation, Ring, RingReactor};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
@@ -24,7 +24,7 @@ pub trait StableBuffer: Into<Cancellation> {
 }
 
 pub trait FixedBuffer: StableBuffer {
-    fn key(&self) -> &SlotKey;
+    fn key(&self) -> &BufferSlotKey;
 }
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
@@ -86,7 +86,7 @@ impl StableBuffer for String {
 #[derive(Debug)]
 pub struct Fixed<R: Reactor<Handle = Ring>> {
     inner: Option<Box<[u8]>>,
-    key: SlotKey,
+    key: BufferSlotKey,
     reactor: R,
 }
 
@@ -179,7 +179,7 @@ impl<R> FixedBuffer for Fixed<R>
 where
     R: Reactor<Handle = Ring>,
 {
-    fn key(&self) -> &SlotKey {
+    fn key(&self) -> &BufferSlotKey {
         &self.key
     }
 }
@@ -292,7 +292,7 @@ where
     B: FixedBuffer,
     R: RangeBounds<usize>,
 {
-    fn key(&self) -> &SlotKey {
+    fn key(&self) -> &BufferSlotKey {
         self.inner.key()
     }
 }
