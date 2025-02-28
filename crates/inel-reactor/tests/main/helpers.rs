@@ -1,5 +1,6 @@
 use futures::task::{self, ArcWake};
-use inel_reactor::Ring;
+use inel_interface::Reactor;
+use inel_reactor::{FileSlotKey, Ring};
 use std::{
     cell::RefCell,
     fs::{self, File},
@@ -47,6 +48,18 @@ impl ScopedReactor {
 
     pub fn is_done(&self) -> bool {
         self.inner.borrow().is_done()
+    }
+
+    pub fn register_file(&self, fd: RawFd) -> FileSlotKey {
+        self.with(|reactor| reactor.register_file(Some(fd)))
+            .unwrap()
+            .unwrap()
+    }
+
+    pub fn get_file_slot(&self) -> FileSlotKey {
+        self.with(|reactor| reactor.register_file(None))
+            .unwrap()
+            .unwrap()
     }
 }
 

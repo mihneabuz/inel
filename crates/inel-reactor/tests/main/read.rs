@@ -436,9 +436,10 @@ mod fixed {
     fn single() {
         let (reactor, notifier) = runtime();
         let file = TempFile::with_content(&MESSAGE);
+        let slot = reactor.register_file(file.fd());
 
         let buf = Fixed::register(Box::new([0; 1024]), reactor.clone()).unwrap();
-        let mut read = op::ReadFixed::new(file.fd(), buf).run_on(reactor.clone());
+        let mut read = op::ReadFixed::new(slot, buf).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -462,10 +463,10 @@ mod fixed {
     fn view() {
         let (reactor, notifier) = runtime();
         let file = TempFile::with_content(&MESSAGE);
+        let slot = reactor.register_file(file.fd());
 
         let buf = Fixed::register(Box::new([0; 1024]), reactor.clone()).unwrap();
-        let mut read =
-            op::ReadFixed::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
+        let mut read = op::ReadFixed::new(slot, View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
