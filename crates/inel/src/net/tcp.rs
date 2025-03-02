@@ -158,7 +158,7 @@ impl TcpStream {
                 .run_on(GlobalReactor)
                 .await?;
 
-            let sock = op::Connect::new(sock, addr).run_on(GlobalReactor).await?;
+            op::Connect::new(sock, addr).run_on(GlobalReactor).await?;
 
             Ok(Self { sock })
         })

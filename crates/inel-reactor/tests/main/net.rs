@@ -1,5 +1,7 @@
 use crate::helpers::{assert_ready, poll, runtime};
 use futures::{future::FusedFuture, StreamExt};
+use inel_macro::test_repeat;
+use libc::{AF_INET, SOCK_STREAM};
 use std::{
     io::Result,
     net::{Shutdown, SocketAddr},
@@ -14,6 +16,7 @@ use inel_reactor::{
     buffer::StableBuffer,
     op::{self, Op},
     util::{bind, getpeername, getsockname, listen},
+    FileSlotKey,
 };
 
 fn make_addr(ip: &str, port: u16) -> SocketAddr {
@@ -62,9 +65,64 @@ fn create_socket_error_test() {
 fn create_socket_cancel_test() {
     let (reactor, notifier) = runtime();
 
-    let mut op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
+    let mut op = op::Socket::new(AF_INET, SOCK_STREAM)
         .proto(0)
         .run_on(reactor.clone());
+    let mut fut = pin!(&mut op);
+
+    assert!(poll!(fut, notifier).is_pending());
+    std::mem::drop(op);
+
+    reactor.wait();
+    reactor.wait();
+
+    assert!(reactor.is_done());
+}
+
+fn create_fixed_socket_test(domain: i32, typ: i32) -> FileSlotKey {
+    let (reactor, notifier) = runtime();
+    let slot = reactor.get_file_slot();
+
+    let mut op = op::SocketFixed::new(domain, typ, slot)
+        .proto(0)
+        .run_on(reactor.clone());
+    let mut fut = pin!(op);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+
+    let sock = assert_ready!(poll!(fut, notifier));
+    assert!(sock.is_ok());
+
+    assert!(fut.is_terminated());
+    assert!(reactor.is_done());
+
+    sock.unwrap()
+}
+
+fn create_fixed_socket_error_test() {
+    let (reactor, notifier) = runtime();
+    let slot = reactor.get_file_slot();
+
+    let mut op = op::SocketFixed::new(i32::MAX - 10, i32::MAX / 3, slot).run_on(reactor.clone());
+    let mut fut = pin!(op);
+
+    assert!(poll!(fut, notifier).is_pending());
+    reactor.wait();
+
+    let sock = assert_ready!(poll!(fut, notifier));
+    assert!(sock.is_err());
+}
+
+fn create_fixed_socket_cancel_test() {
+    let (reactor, notifier) = runtime();
+    let slot = reactor.get_file_slot();
+
+    let mut op = op::SocketFixed::new(AF_INET, SOCK_STREAM, slot).run_on(reactor.clone());
     let mut fut = pin!(&mut op);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -99,13 +157,13 @@ fn connect_test(addr: &str, port: u16) -> RawFd {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let sock = assert_ready!(poll!(fut, notifier));
-    assert!(sock.is_ok());
+    let res = assert_ready!(poll!(fut, notifier));
+    assert!(res.is_ok());
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
 
-    sock.unwrap()
+    sock
 }
 
 fn connect_test_ipv4(port: u16) -> RawFd {
@@ -333,6 +391,12 @@ fn socket() {
 
         create_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
         create_socket_test(libc::AF_INET6, libc::SOCK_DGRAM);
+
+        create_fixed_socket_test(libc::AF_INET, libc::SOCK_STREAM);
+        create_fixed_socket_test(libc::AF_INET, libc::SOCK_DGRAM);
+
+        create_fixed_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
+        create_fixed_socket_test(libc::AF_INET6, libc::SOCK_DGRAM);
     }
 }
 
@@ -412,6 +476,7 @@ fn shutdown() {
 #[test]
 fn error() {
     create_socket_error_test();
+    create_fixed_socket_error_test();
 
     connect_error_test_ipv4();
     connect_error_test_ipv6();
@@ -434,8 +499,10 @@ fn error() {
 }
 
 #[test]
+#[test_repeat(10)]
 fn cancel() {
     create_socket_cancel_test();
+    create_fixed_socket_cancel_test();
 
     connect_cancel_test_ipv4();
     connect_cancel_test_ipv6();

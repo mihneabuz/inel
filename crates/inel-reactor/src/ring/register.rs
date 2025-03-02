@@ -1,3 +1,5 @@
+use io_uring::types::DestinationSlot;
+
 pub struct SlotRegister {
     vacant: Vec<u32>,
     len: u32,
@@ -72,6 +74,10 @@ impl SlotKey {
 impl FileSlotKey {
     pub fn index(&self) -> u32 {
         self.0.index()
+    }
+
+    pub(crate) fn as_destination_slot(&self) -> DestinationSlot {
+        DestinationSlot::try_from_slot_target(self.index()).unwrap()
     }
 }
 

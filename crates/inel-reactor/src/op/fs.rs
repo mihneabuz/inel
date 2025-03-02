@@ -9,7 +9,7 @@ use std::{
 use io_uring::{
     opcode::{self, AsyncCancel},
     squeue::Entry,
-    types::{DestinationSlot, Fd, FsyncFlags, OpenHow},
+    types::{Fd, FsyncFlags, OpenHow},
 };
 
 use crate::{op::Op, Cancellation, FileSlotKey, IntoTarget, Target};
@@ -110,9 +110,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
     fn entry(&mut self) -> Entry {
         self.inner
             .raw_entry()
-            .file_index(Some(
-                DestinationSlot::try_from_slot_target(self.slot.index()).unwrap(),
-            ))
+            .file_index(Some(self.slot.as_destination_slot()))
             .build()
     }
 
@@ -224,9 +222,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
     fn entry(&mut self) -> Entry {
         self.inner
             .raw_entry()
-            .file_index(Some(
-                DestinationSlot::try_from_slot_target(self.slot.index()).unwrap(),
-            ))
+            .file_index(Some(self.slot.as_destination_slot()))
             .build()
     }
 
