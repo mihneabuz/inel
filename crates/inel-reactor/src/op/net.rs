@@ -48,6 +48,10 @@ impl Socket {
         self
     }
 
+    pub fn fixed(self, slot: FileSlotKey) -> SocketFixed {
+        SocketFixed::from_raw(self, slot)
+    }
+
     fn entry_raw(&self) -> opcode::Socket {
         opcode::Socket::new(self.domain, self.typ, self.proto)
     }
@@ -75,28 +79,13 @@ pub struct SocketFixed {
 }
 
 impl SocketFixed {
-    pub fn stream_from_addr(addr: &SocketAddr, slot: FileSlotKey) -> Self {
-        Self {
-            inner: Socket::stream_from_addr(addr),
-            slot,
-        }
-    }
-
-    pub fn new(domain: i32, typ: i32, slot: FileSlotKey) -> Self {
-        Self {
-            inner: Socket::new(domain, typ),
-            slot,
-        }
-    }
-
-    pub fn proto(mut self, proto: i32) -> Self {
-        self.inner.proto = proto;
-        self
+    fn from_raw(op: Socket, slot: FileSlotKey) -> Self {
+        Self { inner: op, slot }
     }
 }
 
 unsafe impl Op for SocketFixed {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -107,7 +96,7 @@ unsafe impl Op for SocketFixed {
 
     fn result(self, ret: i32) -> Self::Output {
         match ret {
-            0 => Ok(self.slot),
+            0 => Ok(()),
             ..0 => Err(Error::from_raw_os_error(-ret)),
             _ => unreachable!(),
         }
@@ -166,18 +155,26 @@ impl Accept {
             addr: Box::new_uninit(),
         }
     }
+
+    pub fn fixed(self, slot: FileSlotKey) -> AcceptFixed {
+        AcceptFixed::from_raw(self, slot)
+    }
+
+    fn entry_raw(&mut self) -> opcode::Accept {
+        let ptr = self.addr.as_mut_ptr();
+        let (addr, len) = unsafe { (addr_of_mut!((*ptr).0), addr_of_mut!((*ptr).1)) };
+        unsafe {
+            len.write(mem::size_of::<SocketAddrCRepr>() as u32);
+        }
+        opcode::Accept::new(self.target.as_raw(), addr as *mut _, len)
+    }
 }
 
 unsafe impl Op for Accept {
     type Output = Result<(RawFd, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
-        let ptr = self.addr.as_mut_ptr();
-        let (addr, len) = unsafe { (addr_of_mut!((*ptr).0), addr_of_mut!((*ptr).1)) };
-        unsafe {
-            len.write(mem::size_of::<SocketAddrCRepr>() as u32);
-        }
-        opcode::Accept::new(self.target.as_raw(), addr as *mut _, len).build()
+        self.entry_raw().build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -191,6 +188,43 @@ unsafe impl Op for Accept {
 
     fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
         (Some(AsyncCancel::new(user_data).build()), self.addr.into())
+    }
+}
+
+pub struct AcceptFixed {
+    inner: Accept,
+    slot: FileSlotKey,
+}
+
+impl AcceptFixed {
+    fn from_raw(op: Accept, slot: FileSlotKey) -> Self {
+        Self { inner: op, slot }
+    }
+}
+
+unsafe impl Op for AcceptFixed {
+    type Output = Result<SocketAddr>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .entry_raw()
+            .file_index(Some(self.slot.as_destination_slot()))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        match ret {
+            0 => {
+                let res = unsafe { self.inner.addr.assume_init() };
+                Ok(from_raw_addr(&res.0, res.1))
+            }
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
+        self.inner.cancel(user_data)
     }
 }
 

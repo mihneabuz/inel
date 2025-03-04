@@ -105,7 +105,7 @@ impl<S: AsRef<CStr>> OpenAtFixed<S> {
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -116,7 +116,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
 
     fn result(self, ret: i32) -> Self::Output {
         match ret {
-            0 => Ok(self.slot),
+            0 => Ok(()),
             ..0 => Err(Error::from_raw_os_error(-ret)),
             _ => unreachable!(),
         }
@@ -217,7 +217,7 @@ impl<S: AsRef<CStr>> OpenAt2Fixed<S> {
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -228,7 +228,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
 
     fn result(self, ret: i32) -> Self::Output {
         match ret {
-            0 => Ok(self.slot),
+            0 => Ok(()),
             ..0 => Err(Error::from_raw_os_error(-ret)),
             _ => unreachable!(),
         }

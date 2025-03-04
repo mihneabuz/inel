@@ -47,8 +47,8 @@ fn create() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_ok_and(|fd| fd > 0));
 
-    let slot = assert_ready!(poll!(fut3, notifier));
-    assert!(slot.is_ok_and(|slot| slot.index() > 0));
+    let res = assert_ready!(poll!(fut3, notifier));
+    assert!(res.is_ok());
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
@@ -102,8 +102,8 @@ fn relative() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.as_ref().is_ok_and(|&fd| fd > 0));
 
-    let slot = assert_ready!(poll!(fut3, notifier));
-    assert!(slot.as_ref().is_ok_and(|&slot| slot.index() > 0));
+    let res = assert_ready!(poll!(fut3, notifier));
+    assert!(res.is_ok());
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());

@@ -112,13 +112,17 @@ impl ArcWake for Waker {
     }
 }
 
+pub fn reactor() -> ScopedReactor {
+    ScopedReactor::new()
+}
+
+pub fn notifier() -> WakeNotifier {
+    WakeNotifier::new()
+}
+
 pub fn runtime() -> (ScopedReactor, WakeNotifier) {
     setup_tracing();
-
-    let reactor = ScopedReactor::new();
-    let notifier = WakeNotifier::new();
-
-    (reactor, notifier)
+    (reactor(), notifier())
 }
 
 macro_rules! poll {
