@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    io::{BufReader, BufWriter, FixedBufReader, FixedBufWriter, ReadHandle, WriteHandle},
+    io::{BufReader, BufWriter, FixedBufReader, FixedBufWriter, ReadHandle, Split, WriteHandle},
     net::TcpStream,
 };
 use futures::{AsyncBufRead, AsyncRead, AsyncWrite};

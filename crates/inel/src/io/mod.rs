@@ -13,11 +13,9 @@ pub(crate) trait WriteSource {
 }
 
 pub use buffered::{BufReader, BufWriter, FixedBufReader, FixedBufWriter};
-use inel_reactor::{IntoSource, Source};
+use inel_reactor::{AsSource, Source};
 pub use owned::{AsyncReadOwned, AsyncWriteOwned};
-pub use split::{ReadHandle, WriteHandle};
-
-pub(crate) use split::{split, split_buffered};
+pub use split::{ReadHandle, Split, WriteHandle};
 
 pub fn stdin() -> Stdin {
     Stdin(())
@@ -44,12 +42,12 @@ impl AsRawFd for Stdout {
 
 impl ReadSource for Stdin {
     fn read_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }
 
 impl WriteSource for Stdout {
     fn write_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }

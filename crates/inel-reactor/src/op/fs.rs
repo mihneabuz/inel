@@ -12,7 +12,7 @@ use io_uring::{
     types::{Fd, FsyncFlags, OpenHow},
 };
 
-use crate::{op::Op, Cancellation, FileSlotKey, IntoSource, Source};
+use crate::{op::Op, AsSource, Cancellation, FileSlotKey, Source};
 
 pub struct OpenAt<S> {
     dir: RawFd,
@@ -244,9 +244,9 @@ pub struct Close {
 }
 
 impl Close {
-    pub fn new(source: impl IntoSource) -> Self {
+    pub fn new(source: impl AsSource) -> Self {
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
         }
     }
 }
@@ -273,9 +273,9 @@ pub struct Fsync {
 }
 
 impl Fsync {
-    pub fn new(source: impl IntoSource) -> Self {
+    pub fn new(source: impl AsSource) -> Self {
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
             meta: false,
         }
     }

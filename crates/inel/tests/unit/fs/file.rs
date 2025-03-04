@@ -2,7 +2,7 @@ use std::os::fd::{FromRawFd, IntoRawFd};
 
 use crate::helpers::*;
 use futures::{AsyncReadExt, AsyncWriteExt};
-use inel::io::{AsyncReadOwned, AsyncWriteOwned};
+use inel::io::{AsyncReadOwned, AsyncWriteOwned, Split};
 
 #[test]
 fn create() {

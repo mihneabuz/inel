@@ -5,7 +5,7 @@ use io_uring::{opcode, squeue::Entry};
 use crate::{
     buffer::{FixedBuffer, StableBuffer},
     op::Op,
-    Cancellation, IntoSource, Source,
+    AsSource, Cancellation, Source,
 };
 
 pub struct Read<Buf: StableBuffer> {
@@ -18,10 +18,10 @@ impl<Buf> Read<Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(source: impl IntoSource, buf: Buf) -> Self {
+    pub fn new(source: impl AsSource, buf: Buf) -> Self {
         Self {
             buf,
-            src: source.into_source(),
+            src: source.as_source(),
             offset: u64::MAX,
         }
     }
@@ -76,10 +76,10 @@ impl<Buf> ReadFixed<Buf>
 where
     Buf: FixedBuffer,
 {
-    pub fn new(source: impl IntoSource, buf: Buf) -> Self {
+    pub fn new(source: impl AsSource, buf: Buf) -> Self {
         Self {
             buf,
-            src: source.into_source(),
+            src: source.as_source(),
             offset: u64::MAX,
         }
     }
@@ -136,17 +136,17 @@ impl<Buf> ReadVectored<Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(source: impl IntoSource, bufs: Vec<Buf>) -> Self {
+    pub fn new(source: impl AsSource, bufs: Vec<Buf>) -> Self {
         let iovecs = Vec::with_capacity(bufs.len());
         Self {
             bufs,
             iovecs,
-            src: source.into_source(),
+            src: source.as_source(),
             offset: u64::MAX,
         }
     }
 
-    pub fn from_iter<I>(source: impl IntoSource, bufs: I) -> Self
+    pub fn from_iter<I>(source: impl AsSource, bufs: I) -> Self
     where
         I: Iterator<Item = Buf>,
     {
@@ -216,14 +216,14 @@ impl<const N: usize, Buf> ReadVectoredExact<N, Buf>
 where
     Buf: StableBuffer,
 {
-    pub fn new(source: impl IntoSource, bufs: [Buf; N]) -> Self {
+    pub fn new(source: impl AsSource, bufs: [Buf; N]) -> Self {
         Self {
             bufs,
             iovecs: std::array::from_fn(|_| libc::iovec {
                 iov_base: std::ptr::null_mut(),
                 iov_len: 0,
             }),
-            src: source.into_source(),
+            src: source.as_source(),
             offset: u64::MAX,
         }
     }

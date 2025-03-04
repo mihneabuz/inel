@@ -20,30 +20,24 @@ impl Source {
     }
 }
 
-pub trait IntoSource {
-    fn into_source(self) -> Source;
+pub trait AsSource {
+    fn as_source(&self) -> Source;
 }
 
-impl IntoSource for Source {
-    fn into_source(self) -> Source {
-        self
-    }
-}
-
-impl IntoSource for RawFd {
-    fn into_source(self) -> Source {
-        Source::fd(self)
-    }
-}
-
-impl IntoSource for FileSlotKey {
-    fn into_source(self) -> Source {
-        Source::fixed(self.index())
-    }
-}
-
-impl IntoSource for &Source {
-    fn into_source(self) -> Source {
+impl AsSource for Source {
+    fn as_source(&self) -> Source {
         self.clone()
+    }
+}
+
+impl AsSource for RawFd {
+    fn as_source(&self) -> Source {
+        Source::fd(*self)
+    }
+}
+
+impl AsSource for FileSlotKey {
+    fn as_source(&self) -> Source {
+        Source::fixed(self.index())
     }
 }

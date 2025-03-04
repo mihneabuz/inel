@@ -8,21 +8,30 @@ use inel_reactor::Source;
 
 use super::{BufReader, BufWriter, ReadSource, WriteSource};
 
-pub fn split<S>(source: S) -> (ReadHandle<S>, WriteHandle<S>)
-where
-    S: ReadSource + WriteSource,
-{
-    let rc1 = Rc::new(source);
-    let rc2 = Rc::clone(&rc1);
-    (ReadHandle { inner: rc1 }, WriteHandle { inner: rc2 })
+pub trait Split {
+    fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>)
+    where
+        Self: Sized;
+
+    fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>)
+    where
+        Self: Sized;
 }
 
-pub fn split_buffered<S>(source: S) -> (BufReader<ReadHandle<S>>, BufWriter<WriteHandle<S>>)
+impl<T> Split for T
 where
-    S: ReadSource + WriteSource,
+    T: ReadSource + WriteSource,
 {
-    let (read, write) = split(source);
-    (BufReader::new(read), BufWriter::new(write))
+    fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
+        let rc1 = Rc::new(self);
+        let rc2 = Rc::clone(&rc1);
+        (ReadHandle { inner: rc1 }, WriteHandle { inner: rc2 })
+    }
+
+    fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>) {
+        let (read, write) = Self::split(self);
+        (BufReader::new(read), BufWriter::new(write))
+    }
 }
 
 pub struct ReadHandle<T> {

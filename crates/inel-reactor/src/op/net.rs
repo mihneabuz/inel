@@ -13,7 +13,7 @@ use io_uring::{
 
 use crate::{
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
-    Cancellation, FileSlotKey, IntoSource, Source,
+    AsSource, Cancellation, FileSlotKey, Source,
 };
 
 use super::{MultiOp, Op};
@@ -110,10 +110,10 @@ pub struct Connect {
 }
 
 impl Connect {
-    pub fn new(source: impl IntoSource, addr: SocketAddr) -> Self {
+    pub fn new(source: impl AsSource, addr: SocketAddr) -> Self {
         let (addr, len) = into_raw_addr(addr);
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
             addr,
             len,
         }
@@ -149,9 +149,9 @@ pub struct Accept {
 }
 
 impl Accept {
-    pub fn new(source: impl IntoSource) -> Self {
+    pub fn new(source: impl AsSource) -> Self {
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
             addr: Box::new_uninit(),
         }
     }
@@ -234,9 +234,9 @@ pub struct Shutdown {
 }
 
 impl Shutdown {
-    pub fn new(source: impl IntoSource, how: std::net::Shutdown) -> Self {
+    pub fn new(source: impl AsSource, how: std::net::Shutdown) -> Self {
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
             how,
         }
     }
@@ -268,9 +268,9 @@ pub struct AcceptMulti {
 }
 
 impl AcceptMulti {
-    pub fn new(source: impl IntoSource) -> Self {
+    pub fn new(source: impl AsSource) -> Self {
         Self {
-            src: source.into_source(),
+            src: source.as_source(),
         }
     }
 }

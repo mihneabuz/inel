@@ -11,11 +11,11 @@ use std::{
 use futures::{Stream, StreamExt};
 use inel_reactor::{
     op::{self, AcceptMulti, Op},
-    util, IntoSource, Source, Submission,
+    util, AsSource, Source, Submission,
 };
 
 use crate::{
-    io::{BufReader, BufWriter, ReadHandle, ReadSource, WriteHandle, WriteSource},
+    io::{ReadSource, WriteSource},
     GlobalReactor,
 };
 
@@ -147,13 +147,13 @@ impl Debug for TcpStream {
 
 impl ReadSource for TcpStream {
     fn read_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }
 
 impl WriteSource for TcpStream {
     fn write_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }
 
@@ -186,14 +186,6 @@ impl TcpStream {
         op::Shutdown::new(self.sock, how)
             .run_on(GlobalReactor)
             .await
-    }
-
-    pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
-        crate::io::split(self)
-    }
-
-    pub fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>) {
-        crate::io::split_buffered(self)
     }
 }
 

@@ -6,13 +6,15 @@ use std::{
     path::Path,
 };
 
+use futures::FutureExt;
+use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, Op},
-    IntoSource, Source,
+    AsSource, FileSlotKey, Source,
 };
 
 use crate::{
-    io::{BufReader, BufWriter, ReadHandle, ReadSource, WriteHandle, WriteSource},
+    io::{ReadSource, WriteSource},
     GlobalReactor,
 };
 
@@ -111,6 +113,21 @@ impl OpenOptions {
 
         Ok(unsafe { File::from_raw_fd(fd) })
     }
+
+    pub async fn open_fixed<P: AsRef<Path>>(&self, path: P) -> Result<FixedFile> {
+        let (flags, mode) = self.libc_opts();
+        let slot = GlobalReactor
+            .with(|reactor| reactor.register_file(None))
+            .unwrap()?;
+
+        op::OpenAt::new(path, flags)
+            .mode(mode)
+            .fixed(slot)
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(FixedFile::from_raw_slot(slot))
+    }
 }
 
 #[derive(Clone)]
@@ -192,14 +209,6 @@ impl File {
             .run_on(GlobalReactor)
             .await
     }
-
-    pub fn split(self) -> (ReadHandle<Self>, WriteHandle<Self>) {
-        crate::io::split(self)
-    }
-
-    pub fn split_buffered(self) -> (BufReader<ReadHandle<Self>>, BufWriter<WriteHandle<Self>>) {
-        crate::io::split_buffered(self)
-    }
 }
 
 impl FromRawFd for File {
@@ -224,18 +233,85 @@ impl AsRawFd for File {
 
 impl ReadSource for File {
     fn read_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }
 
 impl WriteSource for File {
     fn write_source(&self) -> Source {
-        self.as_raw_fd().into_source()
+        self.as_raw_fd().as_source()
     }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
-        crate::util::spawn_drop(self.as_raw_fd());
+        let fd = self.fd;
+        if fd > 0 {
+            crate::spawn(async move {
+                let _ = op::Close::new(fd).run_on(GlobalReactor).await;
+            });
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FixedFile {
+    slot: FileSlotKey,
+}
+
+impl FixedFile {
+    fn from_raw_slot(slot: FileSlotKey) -> Self {
+        Self { slot }
+    }
+
+    pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        OpenOptions::new().readable(true).open_fixed(path).await
+    }
+
+    pub async fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        OpenOptions::new()
+            .create(true)
+            .writable(true)
+            .open_fixed(path)
+            .await
+    }
+
+    pub fn options() -> OpenOptions {
+        OpenOptions::new()
+    }
+
+    pub async fn sync_data(&self) -> Result<()> {
+        op::Fsync::new(self.slot).run_on(GlobalReactor).await
+    }
+
+    pub async fn sync_all(&self) -> Result<()> {
+        op::Fsync::new(self.slot)
+            .sync_meta()
+            .run_on(GlobalReactor)
+            .await
+    }
+}
+
+impl ReadSource for FixedFile {
+    fn read_source(&self) -> Source {
+        self.slot.as_source()
+    }
+}
+
+impl WriteSource for FixedFile {
+    fn write_source(&self) -> Source {
+        self.slot.as_source()
+    }
+}
+
+impl Drop for FixedFile {
+    fn drop(&mut self) {
+        let slot = self.slot;
+        crate::spawn(async move {
+            let _ = op::Close::new(slot)
+                .run_on(GlobalReactor)
+                .then(|_| async { GlobalReactor.with(|reactor| reactor.unregister_file(slot)) })
+                .await;
+        });
     }
 }

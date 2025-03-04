@@ -7,7 +7,7 @@ use std::{
 use futures::{select, AsyncBufReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt};
 use inel::{
     buffer::StableBufferExt,
-    io::{AsyncReadOwned, AsyncWriteOwned},
+    io::{AsyncReadOwned, AsyncWriteOwned, Split},
 };
 use inel_macro::test_repeat;
 
