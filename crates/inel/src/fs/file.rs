@@ -6,7 +6,10 @@ use std::{
     path::Path,
 };
 
-use inel_reactor::op::{self, Op};
+use inel_reactor::{
+    op::{self, Op},
+    IntoSource, Source,
+};
 
 use crate::{
     io::{BufReader, BufWriter, ReadHandle, ReadSource, WriteHandle, WriteSource},
@@ -219,8 +222,17 @@ impl AsRawFd for File {
     }
 }
 
-impl ReadSource for File {}
-impl WriteSource for File {}
+impl ReadSource for File {
+    fn read_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}
+
+impl WriteSource for File {
+    fn write_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}
 
 impl Drop for File {
     fn drop(&mut self) {

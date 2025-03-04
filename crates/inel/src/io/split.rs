@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use inel_reactor::Source;
+
 use super::{BufReader, BufWriter, ReadSource, WriteSource};
 
 pub fn split<S>(source: S) -> (ReadHandle<S>, WriteHandle<S>)
@@ -49,8 +51,23 @@ where
     }
 }
 
-impl<T> ReadSource for ReadHandle<T> where T: ReadSource {}
-impl<T> WriteSource for WriteHandle<T> where T: WriteSource {}
+impl<T> ReadSource for ReadHandle<T>
+where
+    T: ReadSource,
+{
+    fn read_source(&self) -> Source {
+        self.inner.read_source()
+    }
+}
+
+impl<T> WriteSource for WriteHandle<T>
+where
+    T: WriteSource,
+{
+    fn write_source(&self) -> Source {
+        self.inner.write_source()
+    }
+}
 
 impl<T> Deref for ReadHandle<T> {
     type Target = T;

@@ -24,6 +24,12 @@ pub trait IntoSource {
     fn into_source(self) -> Source;
 }
 
+impl IntoSource for Source {
+    fn into_source(self) -> Source {
+        self
+    }
+}
+
 impl IntoSource for RawFd {
     fn into_source(self) -> Source {
         Source::fd(self)

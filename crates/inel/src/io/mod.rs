@@ -4,10 +4,16 @@ mod split;
 
 use std::os::fd::{AsRawFd, RawFd};
 
-pub(crate) trait ReadSource: AsRawFd {}
-pub(crate) trait WriteSource: AsRawFd {}
+pub(crate) trait ReadSource {
+    fn read_source(&self) -> Source;
+}
+
+pub(crate) trait WriteSource {
+    fn write_source(&self) -> Source;
+}
 
 pub use buffered::{BufReader, BufWriter, FixedBufReader, FixedBufWriter};
+use inel_reactor::{IntoSource, Source};
 pub use owned::{AsyncReadOwned, AsyncWriteOwned};
 pub use split::{ReadHandle, WriteHandle};
 
@@ -36,5 +42,14 @@ impl AsRawFd for Stdout {
     }
 }
 
-impl ReadSource for Stdin {}
-impl WriteSource for Stdout {}
+impl ReadSource for Stdin {
+    fn read_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}
+
+impl WriteSource for Stdout {
+    fn write_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}

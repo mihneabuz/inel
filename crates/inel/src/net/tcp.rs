@@ -11,7 +11,7 @@ use std::{
 use futures::{Stream, StreamExt};
 use inel_reactor::{
     op::{self, AcceptMulti, Op},
-    util, Submission,
+    util, IntoSource, Source, Submission,
 };
 
 use crate::{
@@ -145,8 +145,17 @@ impl Debug for TcpStream {
     }
 }
 
-impl ReadSource for TcpStream {}
-impl WriteSource for TcpStream {}
+impl ReadSource for TcpStream {
+    fn read_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}
+
+impl WriteSource for TcpStream {
+    fn write_source(&self) -> Source {
+        self.as_raw_fd().into_source()
+    }
+}
 
 impl TcpStream {
     pub async fn connect<A>(addr: A) -> Result<Self>

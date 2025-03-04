@@ -39,13 +39,13 @@ where
 {
     fn read_owned<B: StableBuffer>(&mut self, buffer: B) -> ReadOwned<B> {
         ReadOwned {
-            sub: op::Read::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),
+            sub: op::Read::new(self.read_source(), buffer).run_on(GlobalReactor),
         }
     }
 
     fn read_owned_at<B: StableBuffer>(&mut self, offset: u64, buffer: B) -> ReadOwned<B> {
         ReadOwned {
-            sub: op::Read::new(self.as_raw_fd(), buffer)
+            sub: op::Read::new(self.read_source(), buffer)
                 .offset(offset)
                 .run_on(GlobalReactor),
         }
@@ -53,13 +53,13 @@ where
 
     fn read_fixed<B: FixedBuffer>(&mut self, buffer: B) -> ReadFixed<B> {
         ReadFixed {
-            sub: op::ReadFixed::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),
+            sub: op::ReadFixed::new(self.read_source(), buffer).run_on(GlobalReactor),
         }
     }
 
     fn read_fixed_at<B: FixedBuffer>(&mut self, offset: u64, buffer: B) -> ReadFixed<B> {
         ReadFixed {
-            sub: op::ReadFixed::new(self.as_raw_fd(), buffer)
+            sub: op::ReadFixed::new(self.read_source(), buffer)
                 .offset(offset)
                 .run_on(GlobalReactor),
         }
@@ -72,13 +72,13 @@ where
 {
     fn write_owned<B: StableBuffer>(&mut self, buffer: B) -> WriteOwned<B> {
         WriteOwned {
-            sub: op::Write::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),
+            sub: op::Write::new(self.write_source(), buffer).run_on(GlobalReactor),
         }
     }
 
     fn write_owned_at<B: StableBuffer>(&mut self, offset: u64, buffer: B) -> WriteOwned<B> {
         WriteOwned {
-            sub: op::Write::new(self.as_raw_fd(), buffer)
+            sub: op::Write::new(self.write_source(), buffer)
                 .offset(offset)
                 .run_on(GlobalReactor),
         }
@@ -86,13 +86,13 @@ where
 
     fn write_fixed<B: FixedBuffer>(&mut self, buffer: B) -> WriteFixed<B> {
         WriteFixed {
-            sub: op::WriteFixed::new(self.as_raw_fd(), buffer).run_on(GlobalReactor),
+            sub: op::WriteFixed::new(self.write_source(), buffer).run_on(GlobalReactor),
         }
     }
 
     fn write_fixed_at<B: FixedBuffer>(&mut self, offset: u64, buffer: B) -> WriteFixed<B> {
         WriteFixed {
-            sub: op::WriteFixed::new(self.as_raw_fd(), buffer)
+            sub: op::WriteFixed::new(self.write_source(), buffer)
                 .offset(offset)
                 .run_on(GlobalReactor),
         }
