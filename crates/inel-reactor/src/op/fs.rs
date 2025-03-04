@@ -12,7 +12,7 @@ use io_uring::{
     types::{Fd, FsyncFlags, OpenHow},
 };
 
-use crate::{op::Op, Cancellation, FileSlotKey, IntoTarget, Target};
+use crate::{op::Op, Cancellation, FileSlotKey, IntoSource, Source};
 
 pub struct OpenAt<S> {
     dir: RawFd,
@@ -240,13 +240,13 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
 }
 
 pub struct Close {
-    target: Target,
+    src: Source,
 }
 
 impl Close {
-    pub fn new(target: impl IntoTarget) -> Self {
+    pub fn new(source: impl IntoSource) -> Self {
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
         }
     }
 }
@@ -255,7 +255,7 @@ unsafe impl Op for Close {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        opcode::Close::new(self.target.as_raw()).build()
+        opcode::Close::new(self.src.as_raw()).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -268,14 +268,14 @@ unsafe impl Op for Close {
 }
 
 pub struct Fsync {
-    target: Target,
+    src: Source,
     meta: bool,
 }
 
 impl Fsync {
-    pub fn new(target: impl IntoTarget) -> Self {
+    pub fn new(source: impl IntoSource) -> Self {
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
             meta: false,
         }
     }
@@ -296,7 +296,7 @@ unsafe impl Op for Fsync {
             FsyncFlags::DATASYNC
         };
 
-        opcode::Fsync::new(self.target.as_raw()).flags(flag).build()
+        opcode::Fsync::new(self.src.as_raw()).flags(flag).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {

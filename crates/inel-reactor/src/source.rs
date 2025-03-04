@@ -4,9 +4,9 @@ use std::os::fd::RawFd;
 use crate::FileSlotKey;
 
 #[derive(Clone, Debug)]
-pub struct Target(RawTarget);
+pub struct Source(RawTarget);
 
-impl Target {
+impl Source {
     pub fn fd(fd: RawFd) -> Self {
         Self(RawTarget::Fd(fd))
     }
@@ -20,24 +20,24 @@ impl Target {
     }
 }
 
-pub trait IntoTarget {
-    fn into_target(self) -> Target;
+pub trait IntoSource {
+    fn into_source(self) -> Source;
 }
 
-impl IntoTarget for RawFd {
-    fn into_target(self) -> Target {
-        Target::fd(self)
+impl IntoSource for RawFd {
+    fn into_source(self) -> Source {
+        Source::fd(self)
     }
 }
 
-impl IntoTarget for FileSlotKey {
-    fn into_target(self) -> Target {
-        Target::fixed(self.index())
+impl IntoSource for FileSlotKey {
+    fn into_source(self) -> Source {
+        Source::fixed(self.index())
     }
 }
 
-impl IntoTarget for &Target {
-    fn into_target(self) -> Target {
+impl IntoSource for &Source {
+    fn into_source(self) -> Source {
         self.clone()
     }
 }

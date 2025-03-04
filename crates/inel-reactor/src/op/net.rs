@@ -13,7 +13,7 @@ use io_uring::{
 
 use crate::{
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
-    Cancellation, FileSlotKey, IntoTarget, Target,
+    Cancellation, FileSlotKey, IntoSource, Source,
 };
 
 use super::{MultiOp, Op};
@@ -104,16 +104,16 @@ unsafe impl Op for SocketFixed {
 }
 
 pub struct Connect {
-    target: Target,
+    src: Source,
     addr: SocketAddrCRepr,
     len: u32,
 }
 
 impl Connect {
-    pub fn new(target: impl IntoTarget, addr: SocketAddr) -> Self {
+    pub fn new(source: impl IntoSource, addr: SocketAddr) -> Self {
         let (addr, len) = into_raw_addr(addr);
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
             addr,
             len,
         }
@@ -124,7 +124,7 @@ unsafe impl Op for Connect {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        opcode::Connect::new(self.target.as_raw(), self.addr.as_ptr(), self.len).build()
+        opcode::Connect::new(self.src.as_raw(), self.addr.as_ptr(), self.len).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -144,14 +144,14 @@ unsafe impl Op for Connect {
 }
 
 pub struct Accept {
-    target: Target,
+    src: Source,
     addr: Box<MaybeUninit<(SocketAddrCRepr, u32)>>,
 }
 
 impl Accept {
-    pub fn new(target: impl IntoTarget) -> Self {
+    pub fn new(source: impl IntoSource) -> Self {
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
             addr: Box::new_uninit(),
         }
     }
@@ -166,7 +166,7 @@ impl Accept {
         unsafe {
             len.write(mem::size_of::<SocketAddrCRepr>() as u32);
         }
-        opcode::Accept::new(self.target.as_raw(), addr as *mut _, len)
+        opcode::Accept::new(self.src.as_raw(), addr as *mut _, len)
     }
 }
 
@@ -229,14 +229,14 @@ unsafe impl Op for AcceptFixed {
 }
 
 pub struct Shutdown {
-    target: Target,
+    src: Source,
     how: std::net::Shutdown,
 }
 
 impl Shutdown {
-    pub fn new(target: impl IntoTarget, how: std::net::Shutdown) -> Self {
+    pub fn new(source: impl IntoSource, how: std::net::Shutdown) -> Self {
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
             how,
         }
     }
@@ -251,7 +251,7 @@ unsafe impl Op for Shutdown {
             std::net::Shutdown::Write => libc::SHUT_WR,
             std::net::Shutdown::Both => libc::SHUT_RDWR,
         };
-        opcode::Shutdown::new(self.target.as_raw(), how).build()
+        opcode::Shutdown::new(self.src.as_raw(), how).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
@@ -264,13 +264,13 @@ unsafe impl Op for Shutdown {
 }
 
 pub struct AcceptMulti {
-    target: Target,
+    src: Source,
 }
 
 impl AcceptMulti {
-    pub fn new(target: impl IntoTarget) -> Self {
+    pub fn new(source: impl IntoSource) -> Self {
         Self {
-            target: target.into_target(),
+            src: source.into_source(),
         }
     }
 }
@@ -279,7 +279,7 @@ unsafe impl Op for AcceptMulti {
     type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
-        opcode::AcceptMulti::new(self.target.as_raw()).build()
+        opcode::AcceptMulti::new(self.src.as_raw()).build()
     }
 
     fn result(self, ret: i32) -> Self::Output {
