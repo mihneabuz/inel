@@ -1,18 +1,21 @@
 use std::{
     ffi::{CStr, CString},
-    io::{Error, Result},
+    io::Result,
     mem::MaybeUninit,
     os::{fd::RawFd, unix::ffi::OsStrExt},
     path::Path,
 };
 
 use io_uring::{
-    opcode::{self, AsyncCancel},
+    opcode,
     squeue::Entry,
     types::{Fd, FsyncFlags, OpenHow},
 };
 
-use crate::{op::Op, AsSource, Cancellation, FileSlotKey, Source};
+use crate::{
+    op::{util, Op},
+    AsSource, Cancellation, FileSlotKey, Source,
+};
 
 pub struct OpenAt<S> {
     dir: RawFd,
@@ -78,18 +81,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            1.. => Ok(ret),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            0 => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
+        util::expect_fd(ret)
     }
 }
 
@@ -115,15 +107,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        self.inner.cancel(user_data)
+        util::expect_zero(ret)
     }
 }
 
@@ -190,18 +174,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            1.. => Ok(ret),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            0 => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
+        util::expect_fd(ret)
     }
 }
 
@@ -227,15 +200,7 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        self.inner.cancel(user_data)
+        util::expect_zero(ret)
     }
 }
 
@@ -259,11 +224,11 @@ unsafe impl Op for Close {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(())
-        }
+        util::expect_zero(ret)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
     }
 }
 
@@ -300,11 +265,7 @@ unsafe impl Op for Fsync {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..=-1 => Err(Error::from_raw_os_error(-ret)),
-            1.. => unreachable!(),
-        }
+        util::expect_zero(ret)
     }
 }
 
@@ -377,15 +338,11 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(unsafe { self.stats.assume_init() }),
-            ..=-1 => Err(Error::from_raw_os_error(-ret)),
-            1.. => unreachable!(),
-        }
+        util::expect_zero(ret).map(|_| unsafe { self.stats.assume_init() })
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (Some(AsyncCancel::new(user_data).build()), self.stats.into())
+    fn cancel(self) -> Cancellation {
+        self.stats.into()
     }
 }
 
@@ -439,17 +396,6 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..=-1 => Err(Error::from_raw_os_error(-ret)),
-            1.. => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
+        util::expect_zero(ret)
     }
 }

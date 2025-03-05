@@ -1,22 +1,20 @@
 use std::{
-    io::{Error, Result},
+    io::Result,
     mem::{self, MaybeUninit},
     net::SocketAddr,
     os::fd::RawFd,
     ptr::addr_of_mut,
 };
 
-use io_uring::{
-    opcode::{self, AsyncCancel},
-    squeue::Entry,
-};
+use io_uring::{opcode, squeue::Entry};
 
 use crate::{
+    op::{util, MultiOp, Op},
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
     AsSource, Cancellation, FileSlotKey, Source,
 };
 
-use super::{MultiOp, Op};
+use super::util::expect_fd;
 
 pub struct Socket {
     domain: i32,
@@ -65,11 +63,11 @@ unsafe impl Op for Socket {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret)
-        }
+        util::expect_fd(ret)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
     }
 }
 
@@ -95,11 +93,11 @@ unsafe impl Op for SocketFixed {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
-        }
+        util::expect_zero(ret)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
     }
 }
 
@@ -128,18 +126,7 @@ unsafe impl Op for Connect {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => Ok(()),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
-        }
-    }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
+        util::expect_zero(ret)
     }
 }
 
@@ -178,16 +165,14 @@ unsafe impl Op for Accept {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
+        util::expect_fd(ret).map(|fd| {
             let res = unsafe { self.addr.assume_init() };
-            Ok((ret, from_raw_addr(&res.0, res.1)))
-        }
+            (fd, from_raw_addr(&res.0, res.1))
+        })
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (Some(AsyncCancel::new(user_data).build()), self.addr.into())
+    fn cancel(self) -> Cancellation {
+        self.addr.into()
     }
 }
 
@@ -213,18 +198,14 @@ unsafe impl Op for AcceptFixed {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        match ret {
-            0 => {
-                let res = unsafe { self.inner.addr.assume_init() };
-                Ok(from_raw_addr(&res.0, res.1))
-            }
-            ..0 => Err(Error::from_raw_os_error(-ret)),
-            _ => unreachable!(),
-        }
+        util::expect_zero(ret).map(|_| {
+            let res = unsafe { self.inner.addr.assume_init() };
+            from_raw_addr(&res.0, res.1)
+        })
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        self.inner.cancel(user_data)
+    fn cancel(self) -> Cancellation {
+        self.inner.cancel()
     }
 }
 
@@ -255,11 +236,11 @@ unsafe impl Op for Shutdown {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(())
-        }
+        util::expect_zero(ret)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
     }
 }
 
@@ -285,21 +266,10 @@ unsafe impl Op for AcceptMulti {
     fn result(self, ret: i32) -> Self::Output {
         self.next(ret)
     }
-
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            Cancellation::empty(),
-        )
-    }
 }
 
 impl MultiOp for AcceptMulti {
     fn next(&self, ret: i32) -> Self::Output {
-        if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret)
-        }
+        expect_fd(ret)
     }
 }

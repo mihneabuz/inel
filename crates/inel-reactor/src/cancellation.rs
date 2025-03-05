@@ -13,6 +13,12 @@ pub struct Cancellation {
     drop: Option<unsafe fn(*mut (), usize)>,
 }
 
+impl Default for Cancellation {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl Cancellation {
     pub fn empty() -> Self {
         Self {

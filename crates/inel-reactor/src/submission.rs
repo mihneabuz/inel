@@ -44,7 +44,8 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             if let SubmissionState::Submitted(key) = this.state {
                 let this = this.project();
-                let (entry, cancel) = this.op.take().unwrap().cancel(key.as_u64());
+                let cancel = this.op.take().map(|op| op.cancel()).unwrap_or_default();
+                let entry = T::entry_cancel(key.as_u64());
                 unsafe { this.reactor.cancel(key, entry, cancel) };
             }
         }
@@ -86,9 +87,17 @@ where
 
             SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
-                Some((ret, _)) => {
+                Some((ret, has_more)) => {
                     let op = this.op.take().unwrap();
-                    (Poll::Ready(op.result(ret)), SubmissionState::Completed)
+
+                    (
+                        Poll::Ready(op.result(ret)),
+                        if has_more {
+                            SubmissionState::Submitted(key)
+                        } else {
+                            SubmissionState::Completed
+                        },
+                    )
                 }
             },
 
@@ -134,10 +143,10 @@ where
             SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some((ret, has_more)) => {
-                    let res = Poll::Ready(this.op.as_ref().map(|op| op.next(ret)));
+                    let op = this.op.as_ref();
 
                     (
-                        res,
+                        Poll::Ready(op.map(|op| op.next(ret))),
                         if has_more {
                             SubmissionState::Submitted(key)
                         } else {

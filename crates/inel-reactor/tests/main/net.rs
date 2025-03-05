@@ -327,6 +327,29 @@ fn accept_multi_test(sock: RawFd, count: usize) {
     assert!(reactor.is_done());
 }
 
+fn accept_multi_once_test(sock: RawFd) {
+    let (reactor, notifier) = runtime();
+
+    let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let mut fut = pin!(&mut con);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert!(poll!(fut, notifier).is_ready());
+
+    assert!(!fut.is_terminated());
+    assert!(!reactor.is_done());
+
+    std::mem::drop(con);
+
+    reactor.wait();
+
+    assert!(reactor.is_done());
+}
+
 fn accept_multi_error_test(sock: RawFd) {
     let (reactor, notifier) = runtime();
 
@@ -554,6 +577,12 @@ fn accept_multi() {
             connect_test_ipv6(port);
         }
         accept_multi_test(sock, 10);
+    }
+
+    for _ in 0..4 {
+        let (sock, port) = create_listener_ipv4();
+        connect_test_ipv4(port);
+        accept_multi_once_test(sock);
     }
 }
 

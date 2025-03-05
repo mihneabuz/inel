@@ -1,10 +1,10 @@
-use std::io::{Error, Result};
+use std::io::Result;
 
 use io_uring::{opcode, squeue::Entry};
 
 use crate::{
     buffer::{FixedBuffer, StableBuffer},
-    op::Op,
+    op::{util, Op},
     AsSource, Cancellation, Source,
 };
 
@@ -49,20 +49,11 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        let result = if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret as usize)
-        };
-
-        (self.buf, result)
+        (self.buf, util::expect_positive(ret))
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(opcode::AsyncCancel::new(user_data).build()),
-            self.buf.into(),
-        )
+    fn cancel(self) -> Cancellation {
+        self.buf.into()
     }
 }
 
@@ -108,20 +99,11 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        let result = if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret as usize)
-        };
-
-        (self.buf, result)
+        (self.buf, util::expect_positive(ret))
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(opcode::AsyncCancel::new(user_data).build()),
-            self.buf.into(),
-        )
+    fn cancel(self) -> Cancellation {
+        self.buf.into()
     }
 }
 
@@ -185,23 +167,11 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        let result = if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret as usize)
-        };
-
-        (self.bufs, result)
+        (self.bufs, util::expect_positive(ret))
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        let mut bufs = self.bufs;
-        let cancels: Vec<Cancellation> = bufs.drain(..).map(|buf| buf.into()).collect();
-
-        (
-            Some(opcode::AsyncCancel::new(user_data).build()),
-            Cancellation::combine(cancels),
-        )
+    fn cancel(mut self) -> Cancellation {
+        Cancellation::combine(self.bufs.drain(..).map(|buf| buf.into()).collect())
     }
 }
 
@@ -256,21 +226,10 @@ where
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        let result = if ret < 0 {
-            Err(Error::from_raw_os_error(-ret))
-        } else {
-            Ok(ret as usize)
-        };
-
-        (self.bufs, result)
+        (self.bufs, util::expect_positive(ret))
     }
 
-    fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        let cancels: Vec<Cancellation> = self.bufs.into_iter().map(|buf| buf.into()).collect();
-
-        (
-            Some(opcode::AsyncCancel::new(user_data).build()),
-            Cancellation::combine(cancels),
-        )
+    fn cancel(self) -> Cancellation {
+        Cancellation::combine(self.bufs.into_iter().map(|buf| buf.into()).collect())
     }
 }
