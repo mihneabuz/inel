@@ -1,7 +1,6 @@
 use std::{
     fmt::{self, Debug, Formatter},
     io::Result,
-    mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     path::Path,
 };
@@ -71,10 +70,9 @@ impl OpenOptions {
         self
     }
 
-    fn libc_opts(&self) -> (libc::c_int, libc::mode_t) {
+    fn raw_opts(&self) -> (libc::c_int, libc::mode_t) {
         let mut flags: libc::c_int = 0;
-        // TODO: handle mode flags properly :)
-        let mut mode: libc::mode_t = 0;
+        let mode: libc::mode_t = 0o666;
 
         flags |= match (self.read, self.write) {
             (true, true) => libc::O_RDWR,
@@ -89,7 +87,6 @@ impl OpenOptions {
 
         if self.create {
             flags |= libc::O_CREAT;
-            mode |= libc::S_IWUSR | libc::S_IRUSR;
         }
 
         if self.truncate {
@@ -104,7 +101,7 @@ impl OpenOptions {
     }
 
     pub async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        let (flags, mode) = self.libc_opts();
+        let (flags, mode) = self.raw_opts();
 
         let fd = op::OpenAt::new(path, flags)
             .mode(mode)
@@ -115,7 +112,7 @@ impl OpenOptions {
     }
 
     pub async fn open_fixed<P: AsRef<Path>>(&self, path: P) -> Result<FixedFile> {
-        let (flags, mode) = self.libc_opts();
+        let (flags, mode) = self.raw_opts();
         let slot = GlobalReactor
             .with(|reactor| reactor.register_file(None))
             .unwrap()?;
@@ -132,29 +129,25 @@ impl OpenOptions {
 
 #[derive(Clone)]
 pub struct Metadata {
-    raw: Box<MaybeUninit<libc::statx>>,
+    raw: Box<libc::statx>,
 }
 
 impl Metadata {
     // TODO: add more stats
-    fn assume_init(&self) -> &libc::statx {
-        unsafe { self.raw.assume_init_ref() }
-    }
-
     pub fn is_dir(&self) -> bool {
-        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFDIR
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFDIR
     }
 
     pub fn is_file(&self) -> bool {
-        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFREG
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFREG
     }
 
     pub fn is_symlink(&self) -> bool {
-        (self.assume_init().stx_mode as u32 & libc::S_IFMT) == libc::S_IFLNK
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFLNK
     }
 
     pub fn len(&self) -> u64 {
-        self.assume_init().stx_size
+        self.raw.stx_size
     }
 
     pub fn is_empty(&self) -> bool {

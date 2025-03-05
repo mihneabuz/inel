@@ -313,7 +313,7 @@ pub struct Statx<P> {
     path: P,
     flags: libc::c_int,
     mask: libc::c_uint,
-    stats: Option<Box<MaybeUninit<libc::statx>>>,
+    stats: Box<MaybeUninit<libc::statx>>,
 }
 
 impl Statx<&CStr> {
@@ -323,7 +323,7 @@ impl Statx<&CStr> {
             path: unsafe { CStr::from_ptr("\0".as_ptr() as *const _) },
             flags: libc::AT_EMPTY_PATH,
             mask: 0,
-            stats: Some(Box::new(MaybeUninit::uninit())),
+            stats: Box::new_uninit(),
         }
     }
 }
@@ -353,7 +353,7 @@ impl Statx<CString> {
             path,
             flags: libc::AT_EMPTY_PATH,
             mask: 0,
-            stats: Some(Box::new(MaybeUninit::uninit())),
+            stats: Box::new_uninit(),
         }
     }
 }
@@ -366,10 +366,10 @@ impl<P: AsRef<CStr>> Statx<P> {
 }
 
 unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
-    type Output = Result<Box<MaybeUninit<libc::statx>>>;
+    type Output = Result<Box<libc::statx>>;
 
     fn entry(&mut self) -> Entry {
-        let output = self.stats.as_mut().unwrap().as_mut_ptr();
+        let output = self.stats.as_mut().as_mut_ptr();
         opcode::Statx::new(Fd(self.dir), self.path.as_ref().as_ptr(), output as *mut _)
             .flags(self.flags)
             .mask(self.mask)
@@ -378,17 +378,14 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
 
     fn result(self, ret: i32) -> Self::Output {
         match ret {
-            0 => Ok(self.stats.unwrap()),
+            0 => Ok(unsafe { self.stats.assume_init() }),
             ..=-1 => Err(Error::from_raw_os_error(-ret)),
             1.. => unreachable!(),
         }
     }
 
     fn cancel(self, user_data: u64) -> (Option<Entry>, Cancellation) {
-        (
-            Some(AsyncCancel::new(user_data).build()),
-            self.stats.unwrap().into(),
-        )
+        (Some(AsyncCancel::new(user_data).build()), self.stats.into())
     }
 }
 
