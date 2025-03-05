@@ -174,20 +174,28 @@ pub struct File {
 }
 
 impl File {
+    pub fn options() -> OpenOptions {
+        OpenOptions::new()
+    }
+
     pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        OpenOptions::new().readable(true).open(path).await
+        Self::options().readable(true).open(path).await
     }
 
     pub async fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        OpenOptions::new()
-            .create(true)
-            .writable(true)
-            .open(path)
-            .await
+        Self::options().create(true).writable(true).open(path).await
     }
 
-    pub fn options() -> OpenOptions {
-        OpenOptions::new()
+    pub async fn open_fixed<P: AsRef<Path>>(path: P) -> Result<FixedFile> {
+        Self::options().readable(true).open_fixed(path).await
+    }
+
+    pub async fn create_fixed<P: AsRef<Path>>(path: P) -> Result<FixedFile> {
+        Self::options()
+            .create(true)
+            .writable(true)
+            .open_fixed(path)
+            .await
     }
 
     pub async fn metadata(&self) -> Result<Metadata> {
@@ -262,22 +270,6 @@ pub struct FixedFile {
 impl FixedFile {
     fn from_raw_slot(slot: FileSlotKey) -> Self {
         Self { slot }
-    }
-
-    pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        OpenOptions::new().readable(true).open_fixed(path).await
-    }
-
-    pub async fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        OpenOptions::new()
-            .create(true)
-            .writable(true)
-            .open_fixed(path)
-            .await
-    }
-
-    pub fn options() -> OpenOptions {
-        OpenOptions::new()
     }
 
     pub async fn sync_data(&self) -> Result<()> {

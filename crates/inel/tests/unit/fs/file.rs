@@ -291,3 +291,119 @@ fn errors() {
         std::mem::forget(file);
     });
 }
+
+mod fixed {
+    use super::*;
+
+    #[test]
+    fn create() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            assert!(inel::fs::File::create_fixed(name_clone).await.is_ok());
+        });
+
+        assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
+
+        std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn open() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        std::fs::File::create(&name).unwrap();
+
+        inel::block_on(async move {
+            assert!(inel::fs::File::open_fixed(name_clone).await.is_ok());
+        });
+
+        std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn append() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        std::fs::write(&name, "Hello World!\n").unwrap();
+
+        inel::block_on(async move {
+            let res = inel::fs::File::options()
+                .writable(true)
+                .readable(true)
+                .append(true)
+                .open_fixed(name_clone)
+                .await;
+
+            assert!(res.is_ok());
+
+            let mut file = res.unwrap();
+
+            let (_, res) = file.write_owned("Appended!\n".to_string()).await;
+            assert!(res.is_ok());
+
+            let res = file.sync_all().await;
+            assert!(res.is_ok());
+        });
+
+        assert_eq!(
+            std::fs::read_to_string(&name).unwrap(),
+            "Hello World!\nAppended!\n".to_string()
+        );
+
+        std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn split() {
+        setup_tracing();
+
+        let name = temp_file();
+        let name_clone = name.clone();
+
+        inel::block_on(async move {
+            let file = inel::fs::File::options()
+                .readable(true)
+                .writable(true)
+                .create(true)
+                .open_fixed(name_clone)
+                .await
+                .unwrap();
+
+            let (mut reader, mut writer) = file.split();
+
+            let read = inel::spawn(async move {
+                let (buf, res) = reader.read_owned(Box::new([0; 256])).await;
+                assert!(res.is_ok_and(|r| r == 0));
+                assert_eq!(buf, Box::new([0; 256]));
+
+                true
+            });
+
+            let write = inel::spawn(async move {
+                let (buf, res) = writer.write_owned(Box::new([b'A'; 512])).await;
+                assert!(res.is_ok_and(|w| w == 512));
+                assert_eq!(buf, Box::new([b'A'; 512]));
+
+                let res = writer.sync_data().await;
+                assert!(res.is_ok());
+
+                true
+            });
+
+            assert_eq!(read.join().await, Some(true));
+            assert_eq!(write.join().await, Some(true));
+        });
+
+        std::fs::remove_file(&name).unwrap();
+    }
+}
