@@ -13,7 +13,7 @@ use futures::future::FusedFuture;
 
 #[test]
 fn sanity() {
-    let (send, recv) = oneshot::channel::<i32>();
+    let (send, recv) = mpsc::channel::<i32>();
 
     inel::block_on(async move {
         send.send(10).unwrap();

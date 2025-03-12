@@ -45,7 +45,7 @@ fn listen() {
 fn connect() {
     setup_tracing();
 
-    let (port_send, port_recv) = oneshot::channel::<u16>();
+    let (port_send, port_recv) = std::sync::mpsc::channel::<u16>();
 
     let handle = std::thread::spawn(move || {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();

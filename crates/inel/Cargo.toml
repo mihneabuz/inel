@@ -17,20 +17,18 @@ inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
 
-hyper = { version = "1", optional = true }
+hyper = { version = "1.6", optional = true }
 
 [dev-dependencies]
 # tests
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracing = "0.1.41"
-oneshot = "0.1"
+tracing = { workspace = true }
 uuid = { version = "1.10.0", features = ["v4"] }
 rand = "0.8"
 
 # server example
-hyper = { version = "1", features = ["full"] }
+hyper = "1.6"
 http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["full"] }
-pin-project-lite = "0.2"
+hyper-util = { version = "0.1", features = ["client"] }
 axum = "0.8"
 tower = "0.5"
