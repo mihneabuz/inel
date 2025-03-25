@@ -303,7 +303,7 @@ mod fixed {
         let name_clone = name.clone();
 
         inel::block_on(async move {
-            assert!(inel::fs::File::create_fixed(name_clone).await.is_ok());
+            assert!(inel::fs::File::create_direct(name_clone).await.is_ok());
         });
 
         assert!(std::fs::exists(&name).is_ok_and(|exists| exists));
@@ -321,7 +321,7 @@ mod fixed {
         std::fs::File::create(&name).unwrap();
 
         inel::block_on(async move {
-            assert!(inel::fs::File::open_fixed(name_clone).await.is_ok());
+            assert!(inel::fs::File::open_direct(name_clone).await.is_ok());
         });
 
         std::fs::remove_file(&name).unwrap();
@@ -341,7 +341,7 @@ mod fixed {
                 .writable(true)
                 .readable(true)
                 .append(true)
-                .open_fixed(name_clone)
+                .open_direct(name_clone)
                 .await;
 
             assert!(res.is_ok());
@@ -375,7 +375,7 @@ mod fixed {
                 .readable(true)
                 .writable(true)
                 .create(true)
-                .open_fixed(name_clone)
+                .open_direct(name_clone)
                 .await
                 .unwrap();
 

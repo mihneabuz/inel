@@ -5,7 +5,6 @@ use std::{
     path::Path,
 };
 
-use futures::FutureExt;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, Op},
@@ -111,7 +110,7 @@ impl OpenOptions {
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 
-    pub async fn open_fixed<P: AsRef<Path>>(&self, path: P) -> Result<FixedFile> {
+    pub async fn open_direct<P: AsRef<Path>>(&self, path: P) -> Result<DirectFile> {
         let (flags, mode) = self.raw_opts();
         let slot = GlobalReactor
             .with(|reactor| reactor.register_file(None))
@@ -123,7 +122,7 @@ impl OpenOptions {
             .run_on(GlobalReactor)
             .await?;
 
-        Ok(FixedFile::from_raw_slot(slot))
+        Ok(DirectFile::from_raw_slot(slot))
     }
 }
 
@@ -179,15 +178,15 @@ impl File {
         Self::options().create(true).writable(true).open(path).await
     }
 
-    pub async fn open_fixed<P: AsRef<Path>>(path: P) -> Result<FixedFile> {
-        Self::options().readable(true).open_fixed(path).await
+    pub async fn open_direct<P: AsRef<Path>>(path: P) -> Result<DirectFile> {
+        Self::options().readable(true).open_direct(path).await
     }
 
-    pub async fn create_fixed<P: AsRef<Path>>(path: P) -> Result<FixedFile> {
+    pub async fn create_direct<P: AsRef<Path>>(path: P) -> Result<DirectFile> {
         Self::options()
             .create(true)
             .writable(true)
-            .open_fixed(path)
+            .open_direct(path)
             .await
     }
 
@@ -256,11 +255,11 @@ impl Drop for File {
 }
 
 #[derive(Clone, Debug)]
-pub struct FixedFile {
+pub struct DirectFile {
     slot: FileSlotKey,
 }
 
-impl FixedFile {
+impl DirectFile {
     fn from_raw_slot(slot: FileSlotKey) -> Self {
         Self { slot }
     }
@@ -277,26 +276,20 @@ impl FixedFile {
     }
 }
 
-impl ReadSource for FixedFile {
+impl ReadSource for DirectFile {
     fn read_source(&self) -> Source {
         self.slot.as_source()
     }
 }
 
-impl WriteSource for FixedFile {
+impl WriteSource for DirectFile {
     fn write_source(&self) -> Source {
         self.slot.as_source()
     }
 }
 
-impl Drop for FixedFile {
+impl Drop for DirectFile {
     fn drop(&mut self) {
-        let slot = self.slot;
-        crate::spawn(async move {
-            let _ = op::Close::new(slot)
-                .run_on(GlobalReactor)
-                .then(|_| async { GlobalReactor.with(|reactor| reactor.unregister_file(slot)) })
-                .await;
-        });
+        crate::util::spawn_drop_direct(self.slot);
     }
 }
