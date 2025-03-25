@@ -9,9 +9,10 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
+use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, AcceptMulti, Op},
-    util, AsSource, Source, Submission,
+    util, AsSource, FileSlotKey, Source, Submission,
 };
 
 use crate::{
@@ -174,6 +175,27 @@ impl TcpStream {
         .await
     }
 
+    pub async fn connect_direct<A>(addr: A) -> Result<DirectTcpStream>
+    where
+        A: ToSocketAddrs,
+    {
+        for_each_addr(addr, |addr| async move {
+            let slot = GlobalReactor
+                .with(|reactor| reactor.register_file(None))
+                .unwrap()?;
+
+            op::Socket::stream_from_addr(&addr)
+                .fixed(slot)
+                .run_on(GlobalReactor)
+                .await?;
+
+            op::Connect::new(slot, addr).run_on(GlobalReactor).await?;
+
+            Ok(DirectTcpStream { slot })
+        })
+        .await
+    }
+
     pub fn local_addr(&self) -> Result<SocketAddr> {
         util::getsockname(self.sock)
     }
@@ -212,5 +234,41 @@ impl FromRawFd for TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         crate::util::spawn_drop(self.as_raw_fd());
+    }
+}
+
+pub struct DirectTcpStream {
+    slot: FileSlotKey,
+}
+
+impl Debug for DirectTcpStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DirectTcpStream").finish()
+    }
+}
+
+impl ReadSource for DirectTcpStream {
+    fn read_source(&self) -> Source {
+        self.slot.as_source()
+    }
+}
+
+impl WriteSource for DirectTcpStream {
+    fn write_source(&self) -> Source {
+        self.slot.as_source()
+    }
+}
+
+impl DirectTcpStream {
+    pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
+        op::Shutdown::new(self.slot, how)
+            .run_on(GlobalReactor)
+            .await
+    }
+}
+
+impl Drop for DirectTcpStream {
+    fn drop(&mut self) {
+        crate::util::spawn_drop_direct(self.slot);
     }
 }
