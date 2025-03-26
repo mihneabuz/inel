@@ -63,7 +63,10 @@ impl Ring {
 
     /// Returns true if all sqes have been completed and all cqes have been consumed.
     pub fn is_done(&self) -> bool {
-        self.active == 0 && self.completions.is_empty()
+        self.buffers.is_full()
+            && self.files.is_full()
+            && self.active == 0
+            && self.completions.is_empty()
     }
 
     /// Submit an sqe with an associated [Waker] which will be called

@@ -505,6 +505,8 @@ mod fixed {
         assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
         assert_eq!(file.read(), MESSAGE.to_string());
 
+        std::mem::drop(buf);
+
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
     }
@@ -537,6 +539,8 @@ mod fixed {
 
         let buf = view.unview();
         assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
+
+        std::mem::drop(buf);
 
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
@@ -612,6 +616,10 @@ mod fixed {
         assert!(fut1.is_terminated());
         assert!(fut2.is_terminated());
         assert!(fut3.is_terminated());
+
+        std::mem::drop(buf1);
+        std::mem::drop(buf2);
+        std::mem::drop(buf3);
 
         assert!(reactor.is_done());
     }

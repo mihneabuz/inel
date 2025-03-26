@@ -383,6 +383,7 @@ mod direct {
         });
 
         assert!(handle.join().is_ok());
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -410,6 +411,7 @@ mod direct {
         });
 
         assert!(handle.join().is_ok());
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -438,6 +440,7 @@ mod direct {
         });
 
         handle.join().unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -479,6 +482,7 @@ mod direct {
         });
 
         handle.join().unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -504,6 +508,8 @@ mod direct {
             let res = inel::net::TcpListener::bind_direct(("127.0.0.1", port)).await;
             assert!(res.is_err());
         });
+
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -542,6 +548,8 @@ mod direct {
             assert!(h1.join().await.is_some());
             assert!(h2.join().await.is_some());
         });
+
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -558,7 +566,8 @@ mod direct {
 
             let (tx, rx) = futures::channel::mpsc::unbounded();
             let run_server = async move {
-                while let Ok((stream, _)) = listener.accept().await {
+                for _ in 0..clients {
+                    let stream = listener.accept().await.unwrap().0;
                     tracing::info!("server accepted");
                     let mut completed = tx.clone();
 
@@ -634,5 +643,7 @@ mod direct {
 
             let _ = server.join().await;
         });
+
+        assert!(inel::is_done());
     }
 }

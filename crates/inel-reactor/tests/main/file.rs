@@ -21,8 +21,9 @@ fn create() {
         .mode(0)
         .resolve(0)
         .run_on(reactor.clone());
+    let slot = reactor.get_file_slot();
     let mut creat3 = op::OpenAt2::new(&filename3, (libc::O_WRONLY | libc::O_CREAT) as u64)
-        .fixed(reactor.get_file_slot())
+        .fixed(slot)
         .run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
@@ -50,6 +51,8 @@ fn create() {
     let res = assert_ready!(poll!(fut3, notifier));
     assert!(res.is_ok());
 
+    reactor.release_file_slot(slot);
+
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
     assert!(fut3.is_terminated());
@@ -75,8 +78,9 @@ fn relative() {
     let mut open1 = op::OpenAt::new(file1.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 =
         op::OpenAt2::new(file2.relative_path(), libc::O_RDONLY as u64).run_on(reactor.clone());
+    let slot = reactor.get_file_slot();
     let mut open3 = op::OpenAt::new(file3.relative_path(), libc::O_RDONLY)
-        .fixed(reactor.get_file_slot())
+        .fixed(slot)
         .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut open1);
@@ -105,6 +109,8 @@ fn relative() {
     let res = assert_ready!(poll!(fut3, notifier));
     assert!(res.is_ok());
 
+    reactor.release_file_slot(slot);
+
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
     assert!(fut3.is_terminated());
@@ -123,8 +129,9 @@ fn error() {
 
     let mut open1 = op::OpenAt::new(path1, libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 = op::OpenAt2::new(path2, libc::O_RDONLY as u64).run_on(reactor.clone());
+    let slot = reactor.get_file_slot();
     let mut open3 = op::OpenAt2::new(path3, libc::O_RDONLY as u64)
-        .fixed(reactor.get_file_slot())
+        .fixed(slot)
         .run_on(reactor.clone());
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
@@ -149,8 +156,10 @@ fn error() {
     let fd2 = assert_ready!(poll!(fut2, notifier));
     assert!(fd2.is_err());
 
-    let slot = assert_ready!(poll!(fut3, notifier));
-    assert!(slot.is_err());
+    let res = assert_ready!(poll!(fut3, notifier));
+    assert!(res.is_err());
+
+    reactor.release_file_slot(slot);
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
@@ -180,11 +189,13 @@ fn cancel() {
 
     let mut creat1 = op::OpenAt::new(&path1, libc::O_CREAT).run_on(reactor.clone());
     let mut creat2 = op::OpenAt2::new(&path2, libc::O_CREAT as u64).run_on(reactor.clone());
+    let slot3 = reactor.get_file_slot();
     let mut creat3 = op::OpenAt::new(&path3, libc::O_CREAT)
-        .fixed(reactor.get_file_slot())
+        .fixed(slot3)
         .run_on(reactor.clone());
+    let slot4 = reactor.get_file_slot();
     let mut creat4 = op::OpenAt2::new(&path3, libc::O_CREAT as u64)
-        .fixed(reactor.get_file_slot())
+        .fixed(slot4)
         .run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
@@ -208,6 +219,9 @@ fn cancel() {
     drop(creat2);
     drop(creat3);
     drop(creat4);
+
+    reactor.release_file_slot(slot3);
+    reactor.release_file_slot(slot4);
 
     let mut i = 0;
     while !reactor.is_done() {
@@ -249,6 +263,8 @@ fn close() {
     assert!(assert_ready!(poll!(fut1, notifier)).is_ok());
     assert!(assert_ready!(poll!(fut2, notifier)).is_ok());
     assert!(assert_ready!(poll!(bad, notifier)).is_err());
+
+    reactor.release_file_slot(slot);
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());

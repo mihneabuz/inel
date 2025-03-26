@@ -79,7 +79,7 @@ fn create_socket_cancel_test() {
     assert!(reactor.is_done());
 }
 
-fn create_fixed_socket_test(domain: i32, typ: i32) -> (ScopedReactor, FileSlotKey) {
+fn create_direct_socket_test(domain: i32, typ: i32) -> (ScopedReactor, FileSlotKey) {
     let (reactor, notifier) = runtime();
     let slot = reactor.get_file_slot();
 
@@ -100,12 +100,11 @@ fn create_fixed_socket_test(domain: i32, typ: i32) -> (ScopedReactor, FileSlotKe
     assert!(res.is_ok());
 
     assert!(fut.is_terminated());
-    assert!(reactor.is_done());
 
     (reactor, slot)
 }
 
-fn create_fixed_socket_error_test() {
+fn create_direct_socket_error_test() {
     let (reactor, notifier) = runtime();
     let slot = reactor.get_file_slot();
 
@@ -121,7 +120,7 @@ fn create_fixed_socket_error_test() {
     assert!(sock.is_err());
 }
 
-fn create_fixed_socket_cancel_test() {
+fn create_direct_socket_cancel_test() {
     let (reactor, notifier) = runtime();
     let slot = reactor.get_file_slot();
 
@@ -135,6 +134,8 @@ fn create_fixed_socket_cancel_test() {
 
     reactor.wait();
     reactor.wait();
+
+    reactor.release_file_slot(slot);
 
     assert!(reactor.is_done());
 }
@@ -363,7 +364,7 @@ fn accept_multi_error_test(sock: RawFd) {
     assert!(fd.is_err());
 }
 
-fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
+fn accept_direct_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
@@ -384,12 +385,11 @@ fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlot
     assert!(addr.as_ref().unwrap().ip().is_loopback());
 
     assert!(fut.is_terminated());
-    assert!(reactor.is_done());
 
     (slot, addr.unwrap())
 }
 
-fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
+fn accept_direct_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
@@ -406,7 +406,7 @@ fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
     assert!(addr.is_err());
 }
 
-fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
+fn accept_direct_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
@@ -419,7 +419,6 @@ fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
     std::mem::drop(accept);
 
     reactor.wait();
-    assert!(reactor.is_done());
 }
 
 fn shutdown_test(sock: RawFd, how: Shutdown) -> Result<()> {
@@ -470,13 +469,13 @@ fn create_listener_ipv6() -> (RawFd, u16) {
     create_listener("::1")
 }
 
-fn create_fixed_listener_ipv4() -> (ScopedReactor, FileSlotKey, u16) {
+fn create_direct_listener_ipv4() -> (ScopedReactor, FileSlotKey, u16) {
     let (reactor, _) = runtime();
     let (fd, port) = create_listener_ipv4();
     (reactor.clone(), reactor.register_file(fd), port)
 }
 
-fn create_fixed_listener_ipv6() -> (ScopedReactor, FileSlotKey, u16) {
+fn create_direct_listener_ipv6() -> (ScopedReactor, FileSlotKey, u16) {
     let (reactor, _) = runtime();
     let (fd, port) = create_listener_ipv6();
     (reactor.clone(), reactor.register_file(fd), port)
@@ -491,11 +490,11 @@ fn socket() {
         create_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
         create_socket_test(libc::AF_INET6, libc::SOCK_DGRAM);
 
-        create_fixed_socket_test(libc::AF_INET, libc::SOCK_STREAM);
-        create_fixed_socket_test(libc::AF_INET, libc::SOCK_DGRAM);
+        create_direct_socket_test(libc::AF_INET, libc::SOCK_STREAM);
+        create_direct_socket_test(libc::AF_INET, libc::SOCK_DGRAM);
 
-        create_fixed_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
-        create_fixed_socket_test(libc::AF_INET6, libc::SOCK_DGRAM);
+        create_direct_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
+        create_direct_socket_test(libc::AF_INET6, libc::SOCK_DGRAM);
     }
 }
 
@@ -541,22 +540,22 @@ fn accept() {
     }
 
     for _ in 0..4 {
-        let (reactor, slot, port) = create_fixed_listener_ipv4();
+        let (reactor, slot, port) = create_direct_listener_ipv4();
         for _ in 0..10 {
             connect_test_ipv4(port);
         }
         for _ in 0..10 {
-            accept_fixed_test(reactor.clone(), slot);
+            accept_direct_test(reactor.clone(), slot);
         }
     }
 
     for _ in 0..4 {
-        let (reactor, slot, port) = create_fixed_listener_ipv6();
+        let (reactor, slot, port) = create_direct_listener_ipv6();
         for _ in 0..10 {
             connect_test_ipv6(port);
         }
         for _ in 0..10 {
-            accept_fixed_test(reactor.clone(), slot);
+            accept_direct_test(reactor.clone(), slot);
         }
     }
 }
@@ -601,7 +600,7 @@ fn shutdown() {
 #[test]
 fn error() {
     create_socket_error_test();
-    create_fixed_socket_error_test();
+    create_direct_socket_error_test();
 
     connect_error_test_ipv4();
     connect_error_test_ipv6();
@@ -609,10 +608,10 @@ fn error() {
     accept_error_test(create_socket_test(libc::AF_INET, libc::SOCK_STREAM));
     accept_error_test(create_socket_test(libc::AF_INET6, libc::SOCK_STREAM));
 
-    let (reactor, slot) = create_fixed_socket_test(libc::AF_INET, libc::SOCK_STREAM);
-    accept_fixed_error_test(reactor, slot);
-    let (reactor, slot) = create_fixed_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
-    accept_fixed_error_test(reactor, slot);
+    let (reactor, slot) = create_direct_socket_test(libc::AF_INET, libc::SOCK_STREAM);
+    accept_direct_error_test(reactor, slot);
+    let (reactor, slot) = create_direct_socket_test(libc::AF_INET6, libc::SOCK_STREAM);
+    accept_direct_error_test(reactor, slot);
 
     accept_multi_error_test(create_socket_test(libc::AF_INET, libc::SOCK_STREAM));
     accept_multi_error_test(create_socket_test(libc::AF_INET6, libc::SOCK_STREAM));
@@ -633,7 +632,7 @@ fn error() {
 #[test_repeat(10)]
 fn cancel() {
     create_socket_cancel_test();
-    create_fixed_socket_cancel_test();
+    create_direct_socket_cancel_test();
 
     connect_cancel_test_ipv4();
     connect_cancel_test_ipv6();
@@ -641,11 +640,11 @@ fn cancel() {
     accept_cancel_test(create_listener_ipv4().0);
     accept_cancel_test(create_listener_ipv6().0);
 
-    let (reactor, slot, _) = create_fixed_listener_ipv4();
-    accept_fixed_cancel_test(reactor, slot);
+    let (reactor, slot, _) = create_direct_listener_ipv4();
+    accept_direct_cancel_test(reactor, slot);
 
-    let (reactor, slot, _) = create_fixed_listener_ipv6();
-    accept_fixed_cancel_test(reactor, slot);
+    let (reactor, slot, _) = create_direct_listener_ipv6();
+    accept_direct_cancel_test(reactor, slot);
 }
 
 #[test]

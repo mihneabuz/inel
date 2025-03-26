@@ -61,6 +61,10 @@ impl ScopedReactor {
             .unwrap()
             .unwrap()
     }
+
+    pub fn release_file_slot(&self, slot: FileSlotKey) {
+        self.with(|reactor| reactor.unregister_file(slot)).unwrap();
+    }
 }
 
 impl inel_interface::Reactor for ScopedReactor {

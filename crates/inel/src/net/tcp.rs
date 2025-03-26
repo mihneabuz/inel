@@ -293,6 +293,12 @@ impl DirectTcpListener {
     }
 }
 
+impl Drop for DirectTcpListener {
+    fn drop(&mut self) {
+        crate::util::unregister_slot(self.slot);
+    }
+}
+
 pub struct DirectTcpStream {
     slot: FileSlotKey,
 }

@@ -63,6 +63,10 @@ impl SlotRegister {
     pub fn remove(&mut self, key: SlotKey) {
         self.vacant.push(key.0);
     }
+
+    pub fn is_full(&self) -> bool {
+        self.len as usize == self.vacant.len() + 1
+    }
 }
 
 impl SlotKey {

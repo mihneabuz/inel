@@ -168,6 +168,7 @@ mod fixed {
         assert_eq!(buf.as_slice(), data.as_bytes());
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -202,6 +203,7 @@ mod fixed {
         assert_eq!(buf.as_slice(), data.as_bytes());
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -232,6 +234,7 @@ mod fixed {
         assert_eq!(data, expect);
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -260,5 +263,7 @@ mod fixed {
             let res = writer.write_all(data.as_slice()).await;
             assert!(res.is_err());
         });
+
+        assert!(inel::is_done());
     }
 }

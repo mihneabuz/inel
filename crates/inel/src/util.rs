@@ -9,6 +9,10 @@ use inel_reactor::{
 
 use crate::GlobalReactor;
 
+pub fn unregister_slot(slot: FileSlotKey) {
+    GlobalReactor.with(|reactor| reactor.unregister_file(slot));
+}
+
 pub fn spawn_drop(fd: impl AsRawFd) {
     let fd = fd.as_raw_fd();
     if fd > 0 {
@@ -22,7 +26,9 @@ pub fn spawn_drop_direct(slot: FileSlotKey) {
     crate::spawn(async move {
         let _ = op::Close::new(slot)
             .run_on(GlobalReactor)
-            .then(|_| async { GlobalReactor.with(|reactor| reactor.unregister_file(slot)) })
+            .then(|_| async {
+                unregister_slot(slot);
+            })
             .await;
     });
 }

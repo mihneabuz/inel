@@ -455,6 +455,9 @@ mod fixed {
         assert_eq!(read, 1024);
         assert_eq!(&buf[..read], &MESSAGE.as_bytes()[..read]);
 
+        std::mem::drop(buf);
+        reactor.release_file_slot(slot);
+
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
     }
@@ -484,6 +487,9 @@ mod fixed {
         let buf = view.unview();
         assert_eq!(&buf[0..64], &[0; 64]);
         assert_eq!(&buf[512..], &[0; 512]);
+
+        std::mem::drop(buf);
+        reactor.release_file_slot(slot);
 
         assert!(fut.is_terminated());
         assert!(reactor.is_done());
@@ -560,6 +566,10 @@ mod fixed {
         assert!(fut2.is_terminated());
         assert!(fut3.is_terminated());
 
+        std::mem::drop(buf1);
+        std::mem::drop(buf2);
+        std::mem::drop(buf3);
+
         assert!(reactor.is_done());
     }
 
@@ -581,6 +591,10 @@ mod fixed {
         let (buf, res) = assert_ready!(poll!(fut, notifier));
         assert_eq!(&buf[..], &[0; 128]);
         res.expect_err("read didn't fail");
+
+        std::mem::drop(buf);
+
+        assert!(reactor.is_done());
     }
 
     #[test]

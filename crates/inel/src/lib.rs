@@ -58,6 +58,11 @@ pub fn run() {
     EXECUTOR.with_borrow(|exe| exe.run(GlobalReactor));
 }
 
+#[inline]
+pub fn is_done() -> bool {
+    REACTOR.with_borrow(|react| react.is_done())
+}
+
 #[cfg(feature = "sys")]
 pub mod sys {
     pub use inel_reactor::{buffer::*, op, Submission};

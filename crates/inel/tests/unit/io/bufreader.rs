@@ -167,6 +167,7 @@ mod fixed {
         assert_eq!(new.as_slice(), &old[0..256]);
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -200,6 +201,7 @@ mod fixed {
         assert_eq!(new.as_slice(), &old[0..256]);
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -235,6 +237,7 @@ mod fixed {
         });
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 
     #[test]
@@ -262,5 +265,6 @@ mod fixed {
         });
 
         std::fs::remove_file(&name).unwrap();
+        assert!(inel::is_done());
     }
 }
