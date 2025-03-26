@@ -116,13 +116,22 @@ impl OpenOptions {
             .with(|reactor| reactor.register_file(None))
             .unwrap()?;
 
-        op::OpenAt::new(path, flags)
+        let open = op::OpenAt::new(path, flags)
             .mode(mode)
             .fixed(slot)
             .run_on(GlobalReactor)
-            .await?;
+            .await;
 
-        Ok(DirectFile::from_raw_slot(slot))
+        match open {
+            Ok(()) => Ok(DirectFile::from_raw_slot(slot)),
+            Err(err) => {
+                GlobalReactor
+                    .with(|reactor| reactor.unregister_file(slot))
+                    .unwrap();
+
+                Err(err)
+            }
+        }
     }
 }
 
