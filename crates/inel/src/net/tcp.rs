@@ -72,13 +72,26 @@ impl TcpListener {
         .await
     }
 
+    pub async fn bind_direct<A>(addr: A) -> Result<DirectTcpListener>
+    where
+        A: ToSocketAddrs,
+    {
+        let inner = Self::bind(addr).await?;
+
+        let slot = GlobalReactor
+            .with(|reactor| reactor.register_file(Some(inner.sock)))
+            .unwrap()?;
+
+        Ok(DirectTcpListener { inner, slot })
+    }
+
     pub fn local_addr(&self) -> Result<SocketAddr> {
         util::getsockname(self.sock)
     }
 
     pub async fn accept(&self) -> Result<(TcpStream, SocketAddr)> {
         let (sock, peer) = op::Accept::new(self.sock).run_on(GlobalReactor).await?;
-        Ok((TcpStream { sock }, peer))
+        Ok((unsafe { TcpStream::from_raw_fd(sock) }, peer))
     }
 
     pub fn incoming(self) -> Incoming {
@@ -132,7 +145,7 @@ impl Stream for Incoming {
         Pin::into_inner(self)
             .stream
             .poll_next_unpin(cx)
-            .map(|next| next.map(|res| res.map(|sock| TcpStream { sock })))
+            .map(|next| next.map(|res| res.map(|sock| unsafe { TcpStream::from_raw_fd(sock) })))
     }
 }
 
@@ -179,11 +192,7 @@ impl TcpStream {
     where
         A: ToSocketAddrs,
     {
-        for_each_addr(addr, |addr| async move {
-            let slot = GlobalReactor
-                .with(|reactor| reactor.register_file(None))
-                .unwrap()?;
-
+        async fn connect_slot(addr: SocketAddr, slot: FileSlotKey) -> Result<()> {
             op::Socket::stream_from_addr(&addr)
                 .fixed(slot)
                 .run_on(GlobalReactor)
@@ -191,7 +200,24 @@ impl TcpStream {
 
             op::Connect::new(slot, addr).run_on(GlobalReactor).await?;
 
-            Ok(DirectTcpStream { slot })
+            Ok(())
+        }
+
+        for_each_addr(addr, |addr| async move {
+            let slot = GlobalReactor
+                .with(|reactor| reactor.register_file(None))
+                .unwrap()?;
+
+            match connect_slot(addr, slot).await {
+                Ok(()) => Ok(DirectTcpStream::from_raw_slot(slot)),
+                Err(err) => {
+                    GlobalReactor
+                        .with(|reactor| reactor.unregister_file(slot))
+                        .unwrap();
+
+                    Err(err)
+                }
+            }
         })
         .await
     }
@@ -237,6 +263,36 @@ impl Drop for TcpStream {
     }
 }
 
+pub struct DirectTcpListener {
+    inner: TcpListener,
+    slot: FileSlotKey,
+}
+
+impl Debug for DirectTcpListener {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DirectTcpListener").finish()
+    }
+}
+
+impl DirectTcpListener {
+    pub async fn accept(&self) -> Result<(DirectTcpStream, SocketAddr)> {
+        let slot = GlobalReactor
+            .with(|reactor| reactor.register_file(None))
+            .unwrap()?;
+
+        let peer = op::Accept::new(self.slot)
+            .fixed(slot)
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok((DirectTcpStream::from_raw_slot(slot), peer))
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+}
+
 pub struct DirectTcpStream {
     slot: FileSlotKey,
 }
@@ -260,6 +316,10 @@ impl WriteSource for DirectTcpStream {
 }
 
 impl DirectTcpStream {
+    fn from_raw_slot(slot: FileSlotKey) -> Self {
+        Self { slot }
+    }
+
     pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
         op::Shutdown::new(self.slot, how)
             .run_on(GlobalReactor)
