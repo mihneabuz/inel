@@ -284,7 +284,13 @@ fn no_options() {
 fn errors() {
     setup_tracing();
 
+    let mut name = temp_file();
+    name.push("nope");
+
     inel::block_on(async move {
+        let err = inel::fs::File::open_direct(name).await;
+        assert!(err.is_err());
+
         let file = unsafe { inel::fs::File::from_raw_fd(6543) };
         assert!(file.sync_all().await.is_err());
         assert!(file.metadata().await.is_err());
@@ -292,7 +298,7 @@ fn errors() {
     });
 }
 
-mod fixed {
+mod direct {
     use super::*;
 
     #[test]
@@ -405,5 +411,23 @@ mod fixed {
         });
 
         std::fs::remove_file(&name).unwrap();
+    }
+
+    #[test]
+    fn errors() {
+        setup_tracing();
+
+        let mut name = temp_file();
+        name.push("nope");
+
+        inel::block_on(async move {
+            let err = inel::fs::File::open_direct(name).await;
+            assert!(err.is_err());
+
+            let file = unsafe { inel::fs::File::from_raw_fd(6543) };
+            assert!(file.sync_all().await.is_err());
+            assert!(file.metadata().await.is_err());
+            std::mem::forget(file);
+        });
     }
 }
