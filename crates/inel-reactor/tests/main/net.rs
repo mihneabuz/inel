@@ -328,10 +328,65 @@ fn accept_multi_test(sock: RawFd, count: usize) {
     assert!(reactor.is_done());
 }
 
+fn accept_multi_direct_test(sock: RawFd, count: usize) {
+    let (reactor, notifier) = runtime();
+
+    let mut con = op::AcceptMultiFixed::new(sock).run_on(reactor.clone());
+    let mut stream = pin!(&mut con);
+
+    for _ in 0..count {
+        let mut next = pin!(stream.next());
+
+        let slot = match poll!(next, notifier) {
+            Poll::Ready(fd) => fd,
+            Poll::Pending => {
+                reactor.wait();
+                assert_eq!(notifier.try_recv(), Some(()));
+
+                assert_ready!(poll!(next, notifier))
+            }
+        };
+
+        assert!(slot.is_some_and(|slot| slot.is_ok_and(|slot| slot.index() > 0)))
+    }
+
+    assert!(!stream.is_terminated());
+
+    std::mem::drop(con);
+
+    reactor.wait();
+    reactor.wait();
+
+    assert!(reactor.is_done());
+}
+
 fn accept_multi_once_test(sock: RawFd) {
     let (reactor, notifier) = runtime();
 
     let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let mut fut = pin!(&mut con);
+
+    assert!(poll!(fut, notifier).is_pending());
+    assert_eq!(reactor.active(), 1);
+
+    reactor.wait();
+
+    assert!(poll!(fut, notifier).is_ready());
+
+    assert!(!fut.is_terminated());
+    assert!(!reactor.is_done());
+
+    std::mem::drop(con);
+
+    reactor.wait();
+
+    assert!(reactor.is_done());
+}
+
+fn accept_multi_direct_once_test(sock: RawFd) {
+    let (reactor, notifier) = runtime();
+
+    let mut con = op::AcceptMultiFixed::new(sock).run_on(reactor.clone());
     let mut fut = pin!(&mut con);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -578,11 +633,19 @@ fn accept_multi() {
         accept_multi_test(sock, 10);
     }
 
-    for _ in 0..4 {
-        let (sock, port) = create_listener_ipv4();
+    let (sock, port) = create_listener_ipv4();
+    for _ in 0..32 {
         connect_test_ipv4(port);
-        accept_multi_once_test(sock);
     }
+    accept_multi_direct_test(sock, 32);
+
+    let (sock, port) = create_listener_ipv4();
+    connect_test_ipv4(port);
+    accept_multi_once_test(sock);
+
+    let (sock, port) = create_listener_ipv4();
+    connect_test_ipv4(port);
+    accept_multi_direct_once_test(sock);
 }
 
 #[test]

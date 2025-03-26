@@ -14,8 +14,6 @@ use crate::{
     AsSource, Cancellation, FileSlotKey, Source,
 };
 
-use super::util::expect_fd;
-
 pub struct Socket {
     domain: i32,
     typ: i32,
@@ -270,6 +268,38 @@ unsafe impl Op for AcceptMulti {
 
 impl MultiOp for AcceptMulti {
     fn next(&self, ret: i32) -> Self::Output {
-        expect_fd(ret)
+        util::expect_fd(ret)
+    }
+}
+
+pub struct AcceptMultiFixed {
+    src: Source,
+}
+
+impl AcceptMultiFixed {
+    pub fn new(source: impl AsSource) -> Self {
+        Self {
+            src: source.as_source(),
+        }
+    }
+}
+
+unsafe impl Op for AcceptMultiFixed {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::AcceptMulti::new(self.src.as_raw())
+            .allocate_file_index(true)
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        self.next(ret)
+    }
+}
+
+impl MultiOp for AcceptMultiFixed {
+    fn next(&self, ret: i32) -> Self::Output {
+        util::expect_positive(ret).map(|slot| FileSlotKey::from_raw_slot(slot as u32))
     }
 }

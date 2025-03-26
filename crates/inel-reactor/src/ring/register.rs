@@ -80,6 +80,10 @@ impl FileSlotKey {
         self.0.index()
     }
 
+    pub(crate) fn from_raw_slot(slot: u32) -> Self {
+        Self::wrap(SlotKey(slot))
+    }
+
     pub(crate) fn as_destination_slot(&self) -> DestinationSlot {
         DestinationSlot::try_from_slot_target(self.index()).unwrap()
     }

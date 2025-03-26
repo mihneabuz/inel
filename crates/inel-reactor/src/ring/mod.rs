@@ -46,6 +46,10 @@ impl Ring {
             .register_files_sparse(1024)
             .expect("Failed to register files sparse");
 
+        ring.submitter()
+            .register_file_alloc_range(512, 512)
+            .expect("Failed to register files auto allocation range");
+
         Self {
             ring,
             active: 0,
@@ -61,12 +65,16 @@ impl Ring {
         self.active
     }
 
-    /// Returns true if all sqes have been completed and all cqes have been consumed.
+    /// Returns true if:
+    ///  - all sqes have been completed
+    ///  - all cqes have been consumed
+    ///  - all buffers have been unregistered
+    ///  - all files have been unregistered
     pub fn is_done(&self) -> bool {
-        self.buffers.is_full()
-            && self.files.is_full()
-            && self.active == 0
+        self.active == 0
             && self.completions.is_empty()
+            && self.buffers.is_full()
+            && self.files.is_full()
     }
 
     /// Submit an sqe with an associated [Waker] which will be called
