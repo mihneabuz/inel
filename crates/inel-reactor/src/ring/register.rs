@@ -1,12 +1,18 @@
+use std::marker::PhantomData;
+
 use io_uring::types::DestinationSlot;
 
 pub struct SlotRegister {
     vacant: Vec<u32>,
     len: u32,
+    size: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SlotKey(u32);
+pub(crate) struct SlotKey {
+    index: u32,
+    _marker: PhantomData<*const ()>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct BufferSlotKey(SlotKey);
@@ -40,28 +46,31 @@ impl WrapSlotKey for BufferSlotKey {
 }
 
 impl SlotRegister {
-    pub fn new() -> Self {
+    pub fn new(size: u32) -> Self {
         Self {
             vacant: Vec::new(),
             len: 1,
+            size,
         }
     }
 
-    pub fn get(&mut self) -> SlotKey {
-        let index = match self.vacant.pop() {
-            Some(spot) => spot,
-            None => {
-                let index = self.len;
-                self.len += 1;
-                index
-            }
+    pub fn get(&mut self) -> Option<SlotKey> {
+        if let Some(slot) = self.vacant.pop() {
+            return Some(SlotKey::new(slot));
         };
 
-        SlotKey(index)
+        if self.len == self.size {
+            return None;
+        }
+
+        let index = self.len;
+        self.len += 1;
+
+        Some(SlotKey::new(index))
     }
 
     pub fn remove(&mut self, key: SlotKey) {
-        self.vacant.push(key.0);
+        self.vacant.push(key.index());
     }
 
     pub fn is_full(&self) -> bool {
@@ -70,8 +79,15 @@ impl SlotRegister {
 }
 
 impl SlotKey {
+    pub fn new(index: u32) -> Self {
+        Self {
+            index,
+            _marker: PhantomData,
+        }
+    }
+
     pub fn index(&self) -> u32 {
-        self.0
+        self.index
     }
 }
 
@@ -81,7 +97,7 @@ impl FileSlotKey {
     }
 
     pub(crate) fn from_raw_slot(slot: u32) -> Self {
-        Self::wrap(SlotKey(slot))
+        Self::wrap(SlotKey::new(slot))
     }
 
     pub(crate) fn as_destination_slot(&self) -> DestinationSlot {

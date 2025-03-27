@@ -1,6 +1,7 @@
 mod completion;
 mod register;
 
+use std::io::Error;
 use std::task::Waker;
 use std::{io::Result, os::fd::RawFd};
 
@@ -17,6 +18,79 @@ pub use register::{BufferSlotKey, FileSlotKey};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
+pub struct RingOptions {
+    submissions: u32,
+    fixed_buffers: u32,
+    auto_direct_files: u32,
+    manual_direct_files: u32,
+}
+
+impl Default for RingOptions {
+    fn default() -> Self {
+        Self {
+            submissions: 2048,
+            fixed_buffers: 256,
+            auto_direct_files: 256,
+            manual_direct_files: 64,
+        }
+    }
+}
+
+impl RingOptions {
+    pub fn submissions(mut self, capacity: u32) -> Self {
+        self.submissions = capacity;
+        self
+    }
+
+    pub fn fixed_buffers(mut self, capacity: u32) -> Self {
+        self.fixed_buffers = capacity;
+        self
+    }
+
+    pub fn auto_direct_files(mut self, capacity: u32) -> Self {
+        self.auto_direct_files = capacity;
+        self
+    }
+
+    pub fn manual_direct_files(mut self, capacity: u32) -> Self {
+        self.manual_direct_files = capacity;
+        self
+    }
+
+    pub fn build(self) -> Ring {
+        let ring = IoUring::builder()
+            .build(self.submissions)
+            .expect("Failed to create io_uring");
+
+        if self.fixed_buffers > 0 {
+            ring.submitter()
+                .register_buffers_sparse(self.fixed_buffers)
+                .expect("Failed to register buffers sparse");
+        }
+
+        if self.auto_direct_files + self.manual_direct_files > 0 {
+            ring.submitter()
+                .register_files_sparse(self.auto_direct_files + self.manual_direct_files)
+                .expect("Failed to register files sparse");
+        }
+
+        if self.auto_direct_files > 0 {
+            ring.submitter()
+                .register_file_alloc_range(self.manual_direct_files, self.auto_direct_files)
+                .expect("Failed to register files auto allocation range");
+        }
+
+        Ring {
+            ring,
+            active: 0,
+            canceled: 0,
+            completions: CompletionSet::with_capacity(self.submissions as usize),
+            buffers: SlotRegister::new(self.fixed_buffers),
+            files: SlotRegister::new(self.manual_direct_files),
+        }
+    }
+}
+
 /// Reactor implemented over a [IoUring].
 ///
 /// Used by [Submission](crate::Submission) to submit sqes and get notified
@@ -32,32 +106,15 @@ pub struct Ring {
     files: SlotRegister,
 }
 
+impl Default for Ring {
+    fn default() -> Self {
+        Ring::options().build()
+    }
+}
+
 impl Ring {
-    pub fn with_capacity(capacity: u32) -> Self {
-        let ring = IoUring::builder()
-            .build(capacity)
-            .expect("Failed to create io_uring");
-
-        ring.submitter()
-            .register_buffers_sparse(1024)
-            .expect("Failed to register buffers sparse");
-
-        ring.submitter()
-            .register_files_sparse(1024)
-            .expect("Failed to register files sparse");
-
-        ring.submitter()
-            .register_file_alloc_range(512, 512)
-            .expect("Failed to register files auto allocation range");
-
-        Self {
-            ring,
-            active: 0,
-            canceled: 0,
-            completions: CompletionSet::with_capacity(capacity as usize),
-            buffers: SlotRegister::new(),
-            files: SlotRegister::new(),
-        }
+    pub fn options() -> RingOptions {
+        RingOptions::default()
     }
 
     /// Returns number of active ops.
@@ -178,7 +235,10 @@ impl Ring {
     where
         B: StableBuffer,
     {
-        let key = self.buffers.get();
+        let key = self
+            .buffers
+            .get()
+            .ok_or(Error::other("No fixed buffer slots available"))?;
 
         let iovec = libc::iovec {
             iov_base: buffer.stable_mut_ptr() as _,
@@ -201,7 +261,10 @@ impl Ring {
 
     /// Attempt to get an io_uring file index
     pub fn register_file(&mut self, fd: Option<RawFd>) -> Result<FileSlotKey> {
-        let key = self.files.get();
+        let key = self
+            .files
+            .get()
+            .ok_or(Error::other("No manual direct file slots available"))?;
 
         if let Some(fd) = fd {
             self.ring

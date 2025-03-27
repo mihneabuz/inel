@@ -38,7 +38,14 @@ impl Clone for ScopedReactor {
 impl ScopedReactor {
     fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(Ring::with_capacity(64))),
+            inner: Rc::new(RefCell::new(
+                Ring::options()
+                    .submissions(64)
+                    .fixed_buffers(64)
+                    .auto_direct_files(64)
+                    .manual_direct_files(64)
+                    .build(),
+            )),
         }
     }
 

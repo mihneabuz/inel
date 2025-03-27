@@ -1,11 +1,11 @@
 use core::{cell::RefCell, future::Future};
 
 use inel_executor::{Executor, JoinHandle};
-use inel_reactor::Ring;
+use inel_reactor::{Ring, RingOptions};
 
 thread_local! {
     static EXECUTOR: RefCell<Executor> = RefCell::new(Executor::new());
-    static REACTOR: RefCell<Ring> = RefCell::new(Ring::with_capacity(1024));
+    static REACTOR: RefCell<Ring> = RefCell::new(Ring::default());
 }
 
 struct GlobalReactor;
@@ -36,6 +36,10 @@ pub mod time;
 pub mod compat;
 
 mod util;
+
+pub fn init(options: RingOptions) {
+    REACTOR.set(options.build());
+}
 
 #[inline]
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>

@@ -10,6 +10,7 @@ mod helpers;
 use std::sync::mpsc;
 
 use futures::future::FusedFuture;
+use inel_reactor::RingOptions;
 
 #[test]
 fn sanity() {
@@ -64,6 +65,25 @@ fn sleep() {
 
     let diff = std::time::Instant::now() - start;
     assert!(diff.as_millis() >= 10);
+}
+
+#[test]
+fn init() {
+    inel::init(
+        RingOptions::default()
+            .submissions(128)
+            .fixed_buffers(0)
+            .auto_direct_files(512)
+            .manual_direct_files(0),
+    );
+
+    assert!(inel::is_done());
+
+    inel::block_on(async {
+        inel::time::instant().await;
+    });
+
+    assert!(inel::is_done());
 }
 
 #[test]
