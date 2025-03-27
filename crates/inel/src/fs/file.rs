@@ -5,14 +5,14 @@ use std::{
     path::Path,
 };
 
-use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, Op},
-    AsSource, FileSlotKey, Source,
+    AsSource, Source,
 };
 
 use crate::{
     io::{ReadSource, WriteSource},
+    source::{OwnedDirect, OwnedFd},
     GlobalReactor,
 };
 
@@ -112,26 +112,16 @@ impl OpenOptions {
 
     pub async fn open_direct<P: AsRef<Path>>(&self, path: P) -> Result<DirectFile> {
         let (flags, mode) = self.raw_opts();
-        let slot = GlobalReactor
-            .with(|reactor| reactor.register_file(None))
-            .unwrap()?;
+        // TODO: we should get the slot from the op below instead using auto alloc
+        let slot = OwnedDirect::get(None)?;
 
-        let open = op::OpenAt::new(path, flags)
+        op::OpenAt::new(path, flags)
             .mode(mode)
-            .fixed(slot)
+            .fixed(slot.as_slot())
             .run_on(GlobalReactor)
-            .await;
+            .await?;
 
-        match open {
-            Ok(()) => Ok(DirectFile::from_raw_slot(slot)),
-            Err(err) => {
-                GlobalReactor
-                    .with(|reactor| reactor.unregister_file(slot))
-                    .unwrap();
-
-                Err(err)
-            }
-        }
+        Ok(DirectFile::from_direct(slot))
     }
 }
 
@@ -169,9 +159,14 @@ impl Debug for Metadata {
     }
 }
 
-#[derive(Clone, Debug)]
 pub struct File {
-    fd: RawFd,
+    fd: OwnedFd,
+}
+
+impl Debug for File {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("File").finish()
+    }
 }
 
 impl File {
@@ -200,7 +195,7 @@ impl File {
     }
 
     pub async fn metadata(&self) -> Result<Metadata> {
-        let statx = op::Statx::from_fd(self.fd)
+        let statx = op::Statx::from_fd(self.fd.as_raw())
             .mask(libc::STATX_TYPE | libc::STATX_SIZE)
             .run_on(GlobalReactor)
             .await?;
@@ -209,11 +204,11 @@ impl File {
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(self.fd).run_on(GlobalReactor).await
+        op::Fsync::new(self.fd.as_raw()).run_on(GlobalReactor).await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(self.fd)
+        op::Fsync::new(self.fd.as_raw())
             .sync_meta()
             .run_on(GlobalReactor)
             .await
@@ -222,21 +217,21 @@ impl File {
 
 impl FromRawFd for File {
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
-        Self { fd }
+        Self {
+            fd: OwnedFd::from_raw(fd),
+        }
     }
 }
 
 impl IntoRawFd for File {
     fn into_raw_fd(self) -> RawFd {
-        let fd = self.as_raw_fd();
-        std::mem::forget(self);
-        fd
+        self.fd.into_raw()
     }
 }
 
 impl AsRawFd for File {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd
+        self.fd.as_raw()
     }
 }
 
@@ -252,33 +247,29 @@ impl WriteSource for File {
     }
 }
 
-impl Drop for File {
-    fn drop(&mut self) {
-        let fd = self.fd;
-        if fd > 0 {
-            crate::spawn(async move {
-                let _ = op::Close::new(fd).run_on(GlobalReactor).await;
-            });
-        }
-    }
+pub struct DirectFile {
+    direct: OwnedDirect,
 }
 
-#[derive(Clone, Debug)]
-pub struct DirectFile {
-    slot: FileSlotKey,
+impl Debug for DirectFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DirectFile").finish()
+    }
 }
 
 impl DirectFile {
-    fn from_raw_slot(slot: FileSlotKey) -> Self {
-        Self { slot }
+    fn from_direct(direct: OwnedDirect) -> Self {
+        Self { direct }
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(self.slot).run_on(GlobalReactor).await
+        op::Fsync::new(self.direct.as_slot())
+            .run_on(GlobalReactor)
+            .await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(self.slot)
+        op::Fsync::new(self.direct.as_slot())
             .sync_meta()
             .run_on(GlobalReactor)
             .await
@@ -287,18 +278,12 @@ impl DirectFile {
 
 impl ReadSource for DirectFile {
     fn read_source(&self) -> Source {
-        self.slot.as_source()
+        self.direct.as_slot().as_source()
     }
 }
 
 impl WriteSource for DirectFile {
     fn write_source(&self) -> Source {
-        self.slot.as_source()
-    }
-}
-
-impl Drop for DirectFile {
-    fn drop(&mut self) {
-        crate::util::spawn_drop_direct(self.slot);
+        self.direct.as_slot().as_source()
     }
 }

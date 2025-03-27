@@ -9,14 +9,14 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, AcceptMulti, Op},
-    util, AsSource, FileSlotKey, Source, Submission,
+    util, AsSource, Source, Submission,
 };
 
 use crate::{
     io::{ReadSource, WriteSource},
+    source::{OwnedDirect, OwnedFd},
     GlobalReactor,
 };
 
@@ -45,7 +45,7 @@ where
 }
 
 pub struct TcpListener {
-    sock: RawFd,
+    sock: OwnedFd,
 }
 
 impl Debug for TcpListener {
@@ -64,8 +64,10 @@ impl TcpListener {
                 .run_on(GlobalReactor)
                 .await?;
 
-            util::bind(sock, addr)?;
-            util::listen(sock, DEFAULT_LISTEN_BACKLOG)?;
+            let sock = OwnedFd::from_raw(sock);
+
+            util::bind(sock.as_raw(), addr)?;
+            util::listen(sock.as_raw(), DEFAULT_LISTEN_BACKLOG)?;
 
             Ok(Self { sock })
         })
@@ -77,20 +79,19 @@ impl TcpListener {
         A: ToSocketAddrs,
     {
         let inner = Self::bind(addr).await?;
-
-        let slot = GlobalReactor
-            .with(|reactor| reactor.register_file(Some(inner.sock)))
-            .unwrap()?;
-
-        Ok(DirectTcpListener { inner, slot })
+        let direct = OwnedDirect::get(Some(inner.sock.as_raw()))?;
+        Ok(DirectTcpListener { inner, direct })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        util::getsockname(self.sock)
+        util::getsockname(self.sock.as_raw())
     }
 
     pub async fn accept(&self) -> Result<(TcpStream, SocketAddr)> {
-        let (sock, peer) = op::Accept::new(self.sock).run_on(GlobalReactor).await?;
+        let (sock, peer) = op::Accept::new(self.sock.as_raw())
+            .run_on(GlobalReactor)
+            .await?;
+
         Ok((unsafe { TcpStream::from_raw_fd(sock) }, peer))
     }
 
@@ -101,27 +102,21 @@ impl TcpListener {
 
 impl AsRawFd for TcpListener {
     fn as_raw_fd(&self) -> RawFd {
-        self.sock
+        self.sock.as_raw()
     }
 }
 
 impl IntoRawFd for TcpListener {
     fn into_raw_fd(self) -> RawFd {
-        let fd = self.as_raw_fd();
-        std::mem::forget(self);
-        fd
+        self.sock.into_raw()
     }
 }
 
 impl FromRawFd for TcpListener {
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
-        Self { sock: fd }
-    }
-}
-
-impl Drop for TcpListener {
-    fn drop(&mut self) {
-        crate::util::spawn_drop(self.as_raw_fd());
+        Self {
+            sock: OwnedFd::from_raw(fd),
+        }
     }
 }
 
@@ -150,7 +145,7 @@ impl Stream for Incoming {
 }
 
 pub struct TcpStream {
-    sock: RawFd,
+    sock: OwnedFd,
 }
 
 impl Debug for TcpStream {
@@ -181,7 +176,11 @@ impl TcpStream {
                 .run_on(GlobalReactor)
                 .await?;
 
-            op::Connect::new(sock, addr).run_on(GlobalReactor).await?;
+            let sock = OwnedFd::from_raw(sock);
+
+            op::Connect::new(sock.as_raw(), addr)
+                .run_on(GlobalReactor)
+                .await?;
 
             Ok(Self { sock })
         })
@@ -192,46 +191,34 @@ impl TcpStream {
     where
         A: ToSocketAddrs,
     {
-        async fn connect_slot(addr: SocketAddr, slot: FileSlotKey) -> Result<()> {
+        for_each_addr(addr, |addr| async move {
+            // TODO: we should get the slot from the op below instead using auto alloc
+            let slot = OwnedDirect::get(None)?;
+
             op::Socket::stream_from_addr(&addr)
-                .fixed(slot)
+                .fixed(slot.as_slot())
                 .run_on(GlobalReactor)
                 .await?;
 
-            op::Connect::new(slot, addr).run_on(GlobalReactor).await?;
+            op::Connect::new(slot.as_slot(), addr)
+                .run_on(GlobalReactor)
+                .await?;
 
-            Ok(())
-        }
-
-        for_each_addr(addr, |addr| async move {
-            let slot = GlobalReactor
-                .with(|reactor| reactor.register_file(None))
-                .unwrap()?;
-
-            match connect_slot(addr, slot).await {
-                Ok(()) => Ok(DirectTcpStream::from_raw_slot(slot)),
-                Err(err) => {
-                    GlobalReactor
-                        .with(|reactor| reactor.unregister_file(slot))
-                        .unwrap();
-
-                    Err(err)
-                }
-            }
+            Ok(DirectTcpStream::from_direct(slot))
         })
         .await
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        util::getsockname(self.sock)
+        util::getsockname(self.sock.as_raw())
     }
 
     pub fn peer_addr(&self) -> Result<SocketAddr> {
-        util::getpeername(self.sock)
+        util::getpeername(self.sock.as_raw())
     }
 
     pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-        op::Shutdown::new(self.sock, how)
+        op::Shutdown::new(self.sock.as_raw(), how)
             .run_on(GlobalReactor)
             .await
     }
@@ -239,33 +226,27 @@ impl TcpStream {
 
 impl AsRawFd for TcpStream {
     fn as_raw_fd(&self) -> RawFd {
-        self.sock
+        self.sock.as_raw()
     }
 }
 
 impl IntoRawFd for TcpStream {
     fn into_raw_fd(self) -> RawFd {
-        let fd = self.as_raw_fd();
-        std::mem::forget(self);
-        fd
+        self.sock.into_raw()
     }
 }
 
 impl FromRawFd for TcpStream {
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
-        Self { sock: fd }
-    }
-}
-
-impl Drop for TcpStream {
-    fn drop(&mut self) {
-        crate::util::spawn_drop(self.as_raw_fd());
+        Self {
+            sock: OwnedFd::from_raw(fd),
+        }
     }
 }
 
 pub struct DirectTcpListener {
     inner: TcpListener,
-    slot: FileSlotKey,
+    direct: OwnedDirect,
 }
 
 impl Debug for DirectTcpListener {
@@ -276,16 +257,15 @@ impl Debug for DirectTcpListener {
 
 impl DirectTcpListener {
     pub async fn accept(&self) -> Result<(DirectTcpStream, SocketAddr)> {
-        let slot = GlobalReactor
-            .with(|reactor| reactor.register_file(None))
-            .unwrap()?;
+        // TODO: we should get the slot from the op below instead using auto alloc
+        let slot = OwnedDirect::get(None)?;
 
-        let peer = op::Accept::new(self.slot)
-            .fixed(slot)
+        let peer = op::Accept::new(self.direct.as_slot())
+            .fixed(slot.as_slot())
             .run_on(GlobalReactor)
             .await?;
 
-        Ok((DirectTcpStream::from_raw_slot(slot), peer))
+        Ok((DirectTcpStream::from_direct(slot), peer))
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -293,14 +273,8 @@ impl DirectTcpListener {
     }
 }
 
-impl Drop for DirectTcpListener {
-    fn drop(&mut self) {
-        crate::util::unregister_slot(self.slot);
-    }
-}
-
 pub struct DirectTcpStream {
-    slot: FileSlotKey,
+    direct: OwnedDirect,
 }
 
 impl Debug for DirectTcpStream {
@@ -311,30 +285,24 @@ impl Debug for DirectTcpStream {
 
 impl ReadSource for DirectTcpStream {
     fn read_source(&self) -> Source {
-        self.slot.as_source()
+        self.direct.as_slot().as_source()
     }
 }
 
 impl WriteSource for DirectTcpStream {
     fn write_source(&self) -> Source {
-        self.slot.as_source()
+        self.direct.as_slot().as_source()
     }
 }
 
 impl DirectTcpStream {
-    fn from_raw_slot(slot: FileSlotKey) -> Self {
-        Self { slot }
+    fn from_direct(direct: OwnedDirect) -> Self {
+        Self { direct }
     }
 
     pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-        op::Shutdown::new(self.slot, how)
+        op::Shutdown::new(self.direct.as_slot(), how)
             .run_on(GlobalReactor)
             .await
-    }
-}
-
-impl Drop for DirectTcpStream {
-    fn drop(&mut self) {
-        crate::util::spawn_drop_direct(self.slot);
     }
 }

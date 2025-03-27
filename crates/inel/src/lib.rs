@@ -35,7 +35,7 @@ pub mod time;
 #[cfg(feature = "compat")]
 pub mod compat;
 
-mod util;
+mod source;
 
 pub fn init(options: RingOptions) {
     REACTOR.set(options.build());
