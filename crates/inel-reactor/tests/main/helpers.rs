@@ -1,11 +1,15 @@
 use futures::task::{self, ArcWake};
 use inel_interface::Reactor;
-use inel_reactor::{FileSlotKey, Ring};
+use inel_reactor::{
+    op::{self, Op},
+    FileSlotKey, Ring,
+};
 use std::{
     cell::RefCell,
     fs::{self, File},
     os::fd::{AsRawFd, RawFd},
     path::{Path, PathBuf},
+    pin::pin,
     rc::Rc,
     str::FromStr,
     sync::{
@@ -13,6 +17,17 @@ use std::{
         Arc, Once,
     },
 };
+
+macro_rules! assert_ready {
+    ($poll:expr) => {{
+        let std::task::Poll::Ready(res) = $poll else {
+            panic!("poll not ready");
+        };
+        res
+    }};
+}
+
+pub(crate) use assert_ready;
 
 static TRACING: Once = Once::new();
 pub fn setup_tracing() {
@@ -57,20 +72,31 @@ impl ScopedReactor {
         self.inner.borrow().is_done()
     }
 
-    pub fn register_file(&self, fd: RawFd) -> FileSlotKey {
-        self.with(|reactor| reactor.register_file(Some(fd)))
-            .unwrap()
-            .unwrap()
-    }
-
     pub fn get_file_slot(&self) -> FileSlotKey {
-        self.with(|reactor| reactor.register_file(None))
+        self.with(|reactor| reactor.get_file_slot())
             .unwrap()
             .unwrap()
     }
 
     pub fn release_file_slot(&self, slot: FileSlotKey) {
-        self.with(|reactor| reactor.unregister_file(slot)).unwrap();
+        self.with(|reactor| reactor.release_file_slot(slot))
+            .unwrap();
+    }
+
+    pub fn register_file(&self, fd: RawFd) -> FileSlotKey {
+        let notifier = WakeNotifier::new();
+        let register = op::RegisterFile::new(fd).run_on(self.clone());
+        let mut fut = pin!(register);
+
+        assert!(poll!(fut, notifier).is_pending());
+        assert_eq!(self.active(), 1);
+
+        self.wait();
+
+        let res = assert_ready!(poll!(fut, notifier));
+        assert!(res.is_ok());
+
+        res.unwrap()
     }
 }
 
@@ -273,14 +299,3 @@ labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitatio
 nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit
 esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt
 in culpa qui officia deserunt mollit anim id est laborum.";
-
-macro_rules! assert_ready {
-    ($poll:expr) => {{
-        let Poll::Ready(res) = $poll else {
-            panic!("poll not ready");
-        };
-        res
-    }};
-}
-
-pub(crate) use assert_ready;

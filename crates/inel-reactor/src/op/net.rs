@@ -6,7 +6,7 @@ use std::{
     ptr::addr_of_mut,
 };
 
-use io_uring::{opcode, squeue::Entry};
+use io_uring::{opcode, squeue::Entry, types::DestinationSlot};
 
 use crate::{
     op::{util, MultiOp, Op},
@@ -46,6 +46,10 @@ impl Socket {
 
     pub fn fixed(self, slot: FileSlotKey) -> SocketFixed {
         SocketFixed::from_raw(self, slot)
+    }
+
+    pub fn direct(self) -> SocketAuto {
+        SocketAuto::from_raw(self)
     }
 
     fn entry_raw(&self) -> opcode::Socket {
@@ -99,6 +103,35 @@ unsafe impl Op for SocketFixed {
     }
 }
 
+pub struct SocketAuto {
+    inner: Socket,
+}
+
+impl SocketAuto {
+    fn from_raw(op: Socket) -> Self {
+        Self { inner: op }
+    }
+}
+
+unsafe impl Op for SocketAuto {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .entry_raw()
+            .file_index(Some(DestinationSlot::auto_target()))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        util::expect_direct(ret)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
+    }
+}
+
 pub struct Connect {
     src: Source,
     addr: SocketAddrCRepr,
@@ -143,6 +176,10 @@ impl Accept {
 
     pub fn fixed(self, slot: FileSlotKey) -> AcceptFixed {
         AcceptFixed::from_raw(self, slot)
+    }
+
+    pub fn direct(self) -> AcceptAuto {
+        AcceptAuto::from_raw(self)
     }
 
     fn entry_raw(&mut self) -> opcode::Accept {
@@ -207,6 +244,38 @@ unsafe impl Op for AcceptFixed {
     }
 }
 
+pub struct AcceptAuto {
+    inner: Accept,
+}
+
+impl AcceptAuto {
+    fn from_raw(op: Accept) -> Self {
+        Self { inner: op }
+    }
+}
+
+unsafe impl Op for AcceptAuto {
+    type Output = Result<(FileSlotKey, SocketAddr)>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .entry_raw()
+            .file_index(Some(DestinationSlot::auto_target()))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        util::expect_direct(ret).map(|slot| {
+            let res = unsafe { self.inner.addr.assume_init() };
+            (slot, from_raw_addr(&res.0, res.1))
+        })
+    }
+
+    fn cancel(self) -> Cancellation {
+        self.inner.cancel()
+    }
+}
+
 pub struct Shutdown {
     src: Source,
     how: std::net::Shutdown,
@@ -252,6 +321,10 @@ impl AcceptMulti {
             src: source.as_source(),
         }
     }
+
+    pub fn direct(self) -> AcceptMultiAuto {
+        AcceptMultiAuto { src: self.src }
+    }
 }
 
 unsafe impl Op for AcceptMulti {
@@ -272,19 +345,11 @@ impl MultiOp for AcceptMulti {
     }
 }
 
-pub struct AcceptMultiFixed {
+pub struct AcceptMultiAuto {
     src: Source,
 }
 
-impl AcceptMultiFixed {
-    pub fn new(source: impl AsSource) -> Self {
-        Self {
-            src: source.as_source(),
-        }
-    }
-}
-
-unsafe impl Op for AcceptMultiFixed {
+unsafe impl Op for AcceptMultiAuto {
     type Output = Result<FileSlotKey>;
 
     fn entry(&mut self) -> Entry {
@@ -298,8 +363,8 @@ unsafe impl Op for AcceptMultiFixed {
     }
 }
 
-impl MultiOp for AcceptMultiFixed {
+impl MultiOp for AcceptMultiAuto {
     fn next(&self, ret: i32) -> Self::Output {
-        util::expect_positive(ret).map(|slot| FileSlotKey::from_raw_slot(slot as u32))
+        util::expect_direct(ret)
     }
 }

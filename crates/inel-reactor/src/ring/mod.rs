@@ -2,8 +2,8 @@ mod completion;
 mod register;
 
 use std::io::Error;
+use std::io::Result;
 use std::task::Waker;
-use std::{io::Result, os::fd::RawFd};
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
 use tracing::debug;
@@ -31,7 +31,7 @@ impl Default for RingOptions {
             submissions: 2048,
             fixed_buffers: 256,
             auto_direct_files: 256,
-            manual_direct_files: 64,
+            manual_direct_files: 16,
         }
     }
 }
@@ -78,6 +78,12 @@ impl RingOptions {
             ring.submitter()
                 .register_file_alloc_range(self.manual_direct_files, self.auto_direct_files)
                 .expect("Failed to register files auto allocation range");
+
+            if self.manual_direct_files > 0 {
+                ring.submitter()
+                    .register_files_update(0, &vec![0; self.manual_direct_files as usize])
+                    .expect("Failed to reserve manual direct files");
+            }
         }
 
         Ring {
@@ -260,23 +266,17 @@ impl Ring {
     }
 
     /// Attempt to get an io_uring file index
-    pub fn register_file(&mut self, fd: Option<RawFd>) -> Result<FileSlotKey> {
+    pub fn get_file_slot(&mut self) -> Result<FileSlotKey> {
         let key = self
             .files
             .get()
             .ok_or(Error::other("No manual direct file slots available"))?;
 
-        if let Some(fd) = fd {
-            self.ring
-                .submitter()
-                .register_files_update(key.index(), &[fd])?;
-        }
-
         Ok(FileSlotKey::wrap(key))
     }
 
     /// Unregister a buffer
-    pub fn unregister_file(&mut self, key: FileSlotKey) {
+    pub fn release_file_slot(&mut self, key: FileSlotKey) {
         self.files.remove(key.unwrap());
     }
 }

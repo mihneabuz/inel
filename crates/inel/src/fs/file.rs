@@ -112,16 +112,16 @@ impl OpenOptions {
 
     pub async fn open_direct<P: AsRef<Path>>(&self, path: P) -> Result<DirectFile> {
         let (flags, mode) = self.raw_opts();
-        // TODO: we should get the slot from the op below instead using auto alloc
-        let slot = OwnedDirect::get(None)?;
 
-        op::OpenAt::new(path, flags)
+        let slot = op::OpenAt::new(path, flags)
             .mode(mode)
-            .fixed(slot.as_slot())
+            .direct()
             .run_on(GlobalReactor)
             .await?;
 
-        Ok(DirectFile::from_direct(slot))
+        let direct = OwnedDirect::auto(slot);
+
+        Ok(DirectFile::from_direct(direct))
     }
 }
 

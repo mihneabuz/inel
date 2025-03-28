@@ -1,4 +1,4 @@
-use std::{os::fd::RawFd, pin::pin, task::Poll};
+use std::{os::fd::RawFd, pin::pin};
 
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
@@ -133,19 +133,13 @@ fn multi() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert_eq!(reactor.active(), 0);
 
-    let Poll::Ready((buf1, res1)) = poll!(fut1, notifier) else {
-        panic!("poll 1 not ready");
-    };
+    let (buf1, res1) = assert_ready!(poll!(fut1, notifier));
     let write1 = res1.expect("write 1 failed");
 
-    let Poll::Ready((buf2, res2)) = poll!(fut2, notifier) else {
-        panic!("poll 2 not ready");
-    };
+    let (buf2, res2) = assert_ready!(poll!(fut2, notifier));
     let write2 = res2.expect("write 2 failed");
 
-    let Poll::Ready((buf3, res3)) = poll!(fut3, notifier) else {
-        panic!("poll 3 not ready");
-    };
+    let (buf3, res3) = assert_ready!(poll!(fut3, notifier));
     let write3 = res3.expect("write 3 failed");
 
     assert_eq!(write1, MESSAGE.as_bytes().len());
@@ -445,7 +439,7 @@ fn sync() {
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert!(matches!(poll!(fut, notifier), Poll::Ready((_, Ok(_)))));
+    assert!(matches!(assert_ready!(poll!(fut, notifier)), (_, Ok(_))));
 
     let mut sync = op::Fsync::new(file.fd()).run_on(reactor.clone());
     let mut fut = pin!(&mut sync);
@@ -455,7 +449,7 @@ fn sync() {
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert!(matches!(poll!(fut, notifier), Poll::Ready(Ok(()))));
+    assert!(matches!(assert_ready!(poll!(fut, notifier)), Ok(())));
 
     let mut sync_all = op::Fsync::new(file.fd())
         .sync_meta()
@@ -467,7 +461,7 @@ fn sync() {
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
-    assert!(matches!(poll!(fut, notifier), Poll::Ready(Ok(()))));
+    assert!(matches!(assert_ready!(poll!(fut, notifier)), Ok(())));
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
@@ -586,19 +580,13 @@ mod fixed {
         assert_eq!(notifier.try_recv(), Some(()));
         assert_eq!(reactor.active(), 0);
 
-        let Poll::Ready((buf1, res1)) = poll!(fut1, notifier) else {
-            panic!("poll 1 not ready");
-        };
+        let (buf1, res1) = assert_ready!(poll!(fut1, notifier));
         let write1 = res1.expect("write 1 failed");
 
-        let Poll::Ready((buf2, res2)) = poll!(fut2, notifier) else {
-            panic!("poll 2 not ready");
-        };
+        let (buf2, res2) = assert_ready!(poll!(fut2, notifier));
         let write2 = res2.expect("write 2 failed");
 
-        let Poll::Ready((buf3, res3)) = poll!(fut3, notifier) else {
-            panic!("poll 3 not ready");
-        };
+        let (buf3, res3) = assert_ready!(poll!(fut3, notifier));
         let write3 = res3.expect("write 3 failed");
 
         assert_eq!(write1, MESSAGE.as_bytes().len());

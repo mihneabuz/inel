@@ -1,10 +1,9 @@
 use std::{
     pin::pin,
-    task::Poll,
     time::{Duration, Instant},
 };
 
-use crate::helpers::{poll, runtime};
+use crate::helpers::{assert_ready, poll, runtime};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_reactor::op::{self, Op};
@@ -24,7 +23,7 @@ fn single() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(fut, notifier), Poll::Ready(()));
+    assert_ready!(poll!(fut, notifier));
     assert!(fut.is_terminated());
 
     assert!(reactor.is_done());
@@ -50,7 +49,7 @@ fn multi() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(fut1, notifier), Poll::Ready(()));
+    assert_ready!(poll!(fut1, notifier));
     assert!(fut1.is_terminated());
     assert_eq!(reactor.active(), 1);
 
@@ -59,7 +58,7 @@ fn multi() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(fut2, notifier), Poll::Ready(()));
+    assert_ready!(poll!(fut2, notifier));
     assert!(fut2.is_terminated());
     assert_eq!(reactor.active(), 0);
 
@@ -86,7 +85,7 @@ fn cancel() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(fut2, notifier), Poll::Ready(()));
+    assert_ready!(poll!(fut2, notifier));
     assert!(fut2.is_terminated());
 
     assert!(reactor.is_done());
