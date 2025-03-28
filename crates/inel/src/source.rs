@@ -1,6 +1,5 @@
 use std::os::fd::RawFd;
 
-use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, Op},
     FileSlotKey,
@@ -8,19 +7,21 @@ use inel_reactor::{
 
 use crate::GlobalReactor;
 
-pub struct OwnedFd(RawFd);
+pub struct OwnedFd {
+    fd: RawFd,
+}
 
 impl OwnedFd {
     pub fn from_raw(fd: RawFd) -> Self {
-        Self(fd)
+        Self { fd }
     }
 
     pub fn as_raw(&self) -> RawFd {
-        self.0
+        self.fd
     }
 
     pub fn into_raw(self) -> RawFd {
-        let fd = self.0;
+        let fd = self.fd;
         std::mem::forget(self);
         fd
     }
@@ -28,32 +29,19 @@ impl OwnedFd {
 
 impl Drop for OwnedFd {
     fn drop(&mut self) {
-        let fd = self.0;
-        if fd > 0 {
-            crate::spawn(op::Close::new(fd).run_on(GlobalReactor));
+        if self.fd > 0 {
+            crate::spawn(op::Close::new(self.fd).run_on(GlobalReactor));
         }
     }
 }
 
 pub struct OwnedDirect {
     slot: FileSlotKey,
-    auto: bool,
 }
 
 impl OwnedDirect {
-    // pub fn get() -> Result<Self> {
-    //     let raw = GlobalReactor
-    //         .with(|reactor| reactor.get_file_slot())
-    //         .unwrap()?;
-    //
-    //     Ok(Self {
-    //         slot: raw,
-    //         auto: false,
-    //     })
-    // }
-
     pub fn auto(slot: FileSlotKey) -> Self {
-        Self { slot, auto: true }
+        Self { slot }
     }
 
     pub fn as_slot(&self) -> FileSlotKey {
@@ -63,13 +51,6 @@ impl OwnedDirect {
 
 impl Drop for OwnedDirect {
     fn drop(&mut self) {
-        let slot = self.as_slot();
-        let auto = self.auto;
-        crate::spawn(async move {
-            let _ = op::Close::new(slot).run_on(GlobalReactor).await;
-            if !auto {
-                GlobalReactor.with(|reactor| reactor.release_file_slot(slot));
-            }
-        });
+        crate::spawn(op::Close::new(self.as_slot()).run_on(GlobalReactor));
     }
 }
