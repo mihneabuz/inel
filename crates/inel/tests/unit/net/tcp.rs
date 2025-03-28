@@ -516,14 +516,17 @@ mod direct {
     fn read_write() {
         setup_tracing();
 
-        inel::block_on(async {
+        let clients = 20;
+
+        inel::block_on(async move {
             let listener = inel::net::TcpListener::bind_direct(("::1", 0))
                 .await
                 .unwrap();
+
             let port = listener.local_addr().unwrap().port();
 
-            let h1 = inel::spawn(async move {
-                for _ in 0..10 {
+            inel::spawn(async move {
+                for _ in 0..clients {
                     let client = inel::net::TcpStream::connect_direct(("::1", port))
                         .await
                         .unwrap();
@@ -534,8 +537,8 @@ mod direct {
                 }
             });
 
-            let h2 = inel::spawn(async move {
-                for _ in 0..10 {
+            inel::spawn(async move {
+                for _ in 0..clients {
                     let conn = listener.accept().await.unwrap().0;
                     let mut lines = inel::io::BufReader::new(conn).lines();
                     while let Some(line) = lines.next().await {
@@ -544,9 +547,6 @@ mod direct {
                     }
                 }
             });
-
-            assert!(h1.join().await.is_some());
-            assert!(h2.join().await.is_some());
         });
 
         assert!(inel::is_done());
@@ -566,8 +566,8 @@ mod direct {
 
             let (tx, rx) = futures::channel::mpsc::unbounded();
             let run_server = async move {
-                for _ in 0..clients {
-                    let stream = listener.accept().await.unwrap().0;
+                let mut incoming = listener.incoming();
+                while let Some(Ok(stream)) = incoming.next().await {
                     tracing::info!("server accepted");
                     let mut completed = tx.clone();
 

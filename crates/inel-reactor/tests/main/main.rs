@@ -7,13 +7,10 @@ mod read;
 mod timeout;
 mod write;
 
-use std::{
-    pin::{pin, Pin},
-    task::Poll,
-};
+use std::pin::{pin, Pin};
 
 use futures::{future::FusedFuture, StreamExt};
-use helpers::{poll, runtime};
+use helpers::{assert_ready, poll, runtime};
 use inel_interface::Reactor;
 use inel_reactor::op::{self, Op};
 
@@ -30,7 +27,7 @@ fn sanity() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+    assert_ready!(poll!(nop, notifier));
     assert!(nop.is_terminated());
 
     assert!(reactor.is_done());
@@ -56,7 +53,7 @@ fn nops() {
     reactor.wait();
 
     for nop in futs.iter_mut() {
-        assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+        assert_ready!(poll!(nop, notifier));
         assert!(nop.is_terminated());
     }
 
@@ -78,7 +75,7 @@ fn polling() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+    assert_ready!(poll!(nop, notifier));
     assert!(nop.is_terminated());
 
     assert!(reactor.is_done());
@@ -98,7 +95,7 @@ fn stream() {
     reactor.wait();
     assert_eq!(notifier.try_recv(), Some(()));
 
-    assert_eq!(poll!(stream, notifier), Poll::Ready(vec![()]));
+    assert_eq!(assert_ready!(poll!(stream, notifier)), vec![()]);
     assert!(nop.is_terminated());
 
     assert!(reactor.is_done());
@@ -115,7 +112,7 @@ fn panic() {
 
     reactor.wait();
 
-    assert_eq!(poll!(nop, notifier), Poll::Ready(()));
+    assert_ready!(poll!(nop, notifier));
     assert!(nop.is_terminated());
 
     let _ = poll!(nop, notifier);

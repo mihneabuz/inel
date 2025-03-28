@@ -1,3 +1,4 @@
+mod direct;
 mod fs;
 mod net;
 mod read;
@@ -13,6 +14,7 @@ use io_uring::{opcode, squeue::Entry};
 
 use crate::{Cancellation, Ring, Submission};
 
+pub use direct::*;
 pub use fs::*;
 pub use net::*;
 pub use read::*;
@@ -91,6 +93,8 @@ impl MultiOp for Nop {
 pub(crate) mod util {
     use super::*;
 
+    use crate::FileSlotKey;
+
     pub(crate) fn expect_zero(ret: i32) -> Result<()> {
         match ret {
             0 => Ok(()),
@@ -102,6 +106,14 @@ pub(crate) mod util {
     pub(crate) fn expect_fd(ret: i32) -> Result<RawFd> {
         match ret {
             1.. => Ok(ret),
+            ..0 => Err(Error::from_raw_os_error(-ret)),
+            0 => unreachable!(),
+        }
+    }
+
+    pub(crate) fn expect_direct(ret: i32) -> Result<FileSlotKey> {
+        match ret {
+            1.. => Ok(FileSlotKey::from_raw_slot(ret as u32)),
             ..0 => Err(Error::from_raw_os_error(-ret)),
             0 => unreachable!(),
         }

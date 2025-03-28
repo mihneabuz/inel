@@ -8,16 +8,16 @@ pub struct SlotRegister {
     size: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SlotKey {
     index: u32,
     _marker: PhantomData<*const ()>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BufferSlotKey(SlotKey);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FileSlotKey(SlotKey);
 
 pub(crate) trait WrapSlotKey {

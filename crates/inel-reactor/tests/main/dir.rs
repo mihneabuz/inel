@@ -1,4 +1,4 @@
-use std::{pin::pin, task::Poll};
+use std::pin::pin;
 
 use futures::future::FusedFuture;
 use inel_interface::Reactor;

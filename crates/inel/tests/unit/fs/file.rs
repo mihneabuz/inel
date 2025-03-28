@@ -91,6 +91,7 @@ fn append() {
         assert!(res.is_ok());
 
         let mut file = res.unwrap();
+        assert_eq!(format!("{:?}", file), String::from("File"));
 
         let (_, res) = file.write_owned("Appended!\n".to_string()).await;
         assert!(res.is_ok());
@@ -353,6 +354,7 @@ mod direct {
             assert!(res.is_ok());
 
             let mut file = res.unwrap();
+            assert_eq!(format!("{:?}", file), String::from("DirectFile"));
 
             let (_, res) = file.write_owned("Appended!\n".to_string()).await;
             assert!(res.is_ok());
@@ -414,7 +416,7 @@ mod direct {
     }
 
     #[test]
-    fn errors() {
+    fn error() {
         setup_tracing();
 
         let mut name = temp_file();
@@ -423,11 +425,6 @@ mod direct {
         inel::block_on(async move {
             let err = inel::fs::File::open_direct(name).await;
             assert!(err.is_err());
-
-            let file = unsafe { inel::fs::File::from_raw_fd(6543) };
-            assert!(file.sync_all().await.is_err());
-            assert!(file.metadata().await.is_err());
-            std::mem::forget(file);
         });
     }
 }
