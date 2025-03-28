@@ -10,7 +10,7 @@ use std::{
 
 use futures::{Stream, StreamExt};
 use inel_reactor::{
-    op::{self, AcceptMulti, Op},
+    op::{self, AcceptMulti, AcceptMultiAuto, Op},
     util, AsSource, Source, Submission,
 };
 
@@ -79,7 +79,13 @@ impl TcpListener {
         A: ToSocketAddrs,
     {
         let inner = Self::bind(addr).await?;
-        let direct = OwnedDirect::get(Some(inner.sock.as_raw()))?;
+
+        let slot = op::RegisterFile::new(inner.sock.as_raw())
+            .run_on(GlobalReactor)
+            .await?;
+
+        let direct = OwnedDirect::auto(slot);
+
         Ok(DirectTcpListener { inner, direct })
     }
 
@@ -144,6 +150,37 @@ impl Stream for Incoming {
     }
 }
 
+pub struct DirectIncoming {
+    #[allow(dead_code)]
+    listener: DirectTcpListener,
+    stream: Submission<AcceptMultiAuto, GlobalReactor>,
+}
+
+impl DirectIncoming {
+    pub fn new(listener: DirectTcpListener) -> Self {
+        let stream = AcceptMulti::new(listener.direct.as_slot())
+            .direct()
+            .run_on(GlobalReactor);
+
+        Self { listener, stream }
+    }
+}
+
+impl Stream for DirectIncoming {
+    type Item = Result<DirectTcpStream>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::into_inner(self)
+            .stream
+            .poll_next_unpin(cx)
+            .map(|next| {
+                next.map(|res| {
+                    res.map(|slot| DirectTcpStream::from_direct(OwnedDirect::auto(slot)))
+                })
+            })
+    }
+}
+
 pub struct TcpStream {
     sock: OwnedFd,
 }
@@ -192,13 +229,12 @@ impl TcpStream {
         A: ToSocketAddrs,
     {
         for_each_addr(addr, |addr| async move {
-            // TODO: we should get the slot from the op below instead using auto alloc
-            let slot = OwnedDirect::get(None)?;
-
-            op::Socket::stream_from_addr(&addr)
-                .fixed(slot.as_slot())
+            let slot = op::Socket::stream_from_addr(&addr)
+                .direct()
                 .run_on(GlobalReactor)
                 .await?;
+
+            let slot = OwnedDirect::auto(slot);
 
             op::Connect::new(slot.as_slot(), addr)
                 .run_on(GlobalReactor)
@@ -257,19 +293,22 @@ impl Debug for DirectTcpListener {
 
 impl DirectTcpListener {
     pub async fn accept(&self) -> Result<(DirectTcpStream, SocketAddr)> {
-        // TODO: we should get the slot from the op below instead using auto alloc
-        let slot = OwnedDirect::get(None)?;
-
-        let peer = op::Accept::new(self.direct.as_slot())
-            .fixed(slot.as_slot())
+        let (slot, peer) = op::Accept::new(self.direct.as_slot())
+            .direct()
             .run_on(GlobalReactor)
             .await?;
 
-        Ok((DirectTcpStream::from_direct(slot), peer))
+        let direct = OwnedDirect::auto(slot);
+
+        Ok((DirectTcpStream::from_direct(direct), peer))
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.inner.local_addr()
+    }
+
+    pub fn incoming(self) -> DirectIncoming {
+        DirectIncoming::new(self)
     }
 }
 

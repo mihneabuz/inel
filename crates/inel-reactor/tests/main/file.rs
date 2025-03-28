@@ -1,4 +1,4 @@
-use std::{os::fd::IntoRawFd, pin::pin, task::Poll};
+use std::{os::fd::IntoRawFd, pin::pin};
 
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
@@ -21,9 +21,7 @@ fn create() {
         .mode(0)
         .resolve(0)
         .run_on(reactor.clone());
-    let slot = reactor.get_file_slot();
     let mut creat3 = op::OpenAt2::new(&filename3, (libc::O_WRONLY | libc::O_CREAT) as u64)
-        .fixed(slot)
         .run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
@@ -51,8 +49,6 @@ fn create() {
     let res = assert_ready!(poll!(fut3, notifier));
     assert!(res.is_ok());
 
-    reactor.release_file_slot(slot);
-
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
     assert!(fut3.is_terminated());
@@ -78,10 +74,7 @@ fn relative() {
     let mut open1 = op::OpenAt::new(file1.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 =
         op::OpenAt2::new(file2.relative_path(), libc::O_RDONLY as u64).run_on(reactor.clone());
-    let slot = reactor.get_file_slot();
-    let mut open3 = op::OpenAt::new(file3.relative_path(), libc::O_RDONLY)
-        .fixed(slot)
-        .run_on(reactor.clone());
+    let mut open3 = op::OpenAt::new(file3.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
@@ -109,8 +102,6 @@ fn relative() {
     let res = assert_ready!(poll!(fut3, notifier));
     assert!(res.is_ok());
 
-    reactor.release_file_slot(slot);
-
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
     assert!(fut3.is_terminated());
@@ -129,10 +120,7 @@ fn error() {
 
     let mut open1 = op::OpenAt::new(path1, libc::O_RDONLY).run_on(reactor.clone());
     let mut open2 = op::OpenAt2::new(path2, libc::O_RDONLY as u64).run_on(reactor.clone());
-    let slot = reactor.get_file_slot();
-    let mut open3 = op::OpenAt2::new(path3, libc::O_RDONLY as u64)
-        .fixed(slot)
-        .run_on(reactor.clone());
+    let mut open3 = op::OpenAt2::new(path3, libc::O_RDONLY as u64).run_on(reactor.clone());
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
     let mut fut3 = pin!(&mut open3);
@@ -158,8 +146,6 @@ fn error() {
 
     let res = assert_ready!(poll!(fut3, notifier));
     assert!(res.is_err());
-
-    reactor.release_file_slot(slot);
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
@@ -189,14 +175,8 @@ fn cancel() {
 
     let mut creat1 = op::OpenAt::new(&path1, libc::O_CREAT).run_on(reactor.clone());
     let mut creat2 = op::OpenAt2::new(&path2, libc::O_CREAT as u64).run_on(reactor.clone());
-    let slot3 = reactor.get_file_slot();
-    let mut creat3 = op::OpenAt::new(&path3, libc::O_CREAT)
-        .fixed(slot3)
-        .run_on(reactor.clone());
-    let slot4 = reactor.get_file_slot();
-    let mut creat4 = op::OpenAt2::new(&path3, libc::O_CREAT as u64)
-        .fixed(slot4)
-        .run_on(reactor.clone());
+    let mut creat3 = op::OpenAt::new(&path3, libc::O_CREAT).run_on(reactor.clone());
+    let mut creat4 = op::OpenAt2::new(&path3, libc::O_CREAT as u64).run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
     let mut fut3 = pin!(&mut creat3);
@@ -220,9 +200,6 @@ fn cancel() {
     drop(creat3);
     drop(creat4);
 
-    reactor.release_file_slot(slot3);
-    reactor.release_file_slot(slot4);
-
     let mut i = 0;
     while !reactor.is_done() {
         reactor.wait();
@@ -237,11 +214,11 @@ fn close() {
     let file1 = TempFile::with_content(&MESSAGE);
     let file2 = TempFile::with_content(&MESSAGE);
 
-    let fd = std::fs::File::open(file1.name()).unwrap().into_raw_fd();
-    let slot = reactor.register_file(std::fs::File::open(file2.name()).unwrap().into_raw_fd());
+    let fd1 = std::fs::File::open(file1.name()).unwrap().into_raw_fd();
+    let fd2 = std::fs::File::open(file2.name()).unwrap().into_raw_fd();
 
-    let mut close1 = op::Close::new(fd).run_on(reactor.clone());
-    let mut close2 = op::Close::new(slot).run_on(reactor.clone());
+    let mut close1 = op::Close::new(fd1).run_on(reactor.clone());
+    let mut close2 = op::Close::new(fd2).run_on(reactor.clone());
     let mut error = op::Close::new(1337).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut close1);
@@ -263,8 +240,6 @@ fn close() {
     assert!(assert_ready!(poll!(fut1, notifier)).is_ok());
     assert!(assert_ready!(poll!(fut2, notifier)).is_ok());
     assert!(assert_ready!(poll!(bad, notifier)).is_err());
-
-    reactor.release_file_slot(slot);
 
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
@@ -364,5 +339,101 @@ fn stats_cancel() {
         reactor.wait();
         i += 1;
         assert!(i < 3);
+    }
+}
+
+mod direct {
+    use super::*;
+
+    #[test]
+    fn auto() {
+        let (reactor, notifier) = runtime();
+        let filename1 = TempFile::new_name();
+        let filename2 = TempFile::new_name();
+
+        let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
+            .direct()
+            .run_on(reactor.clone());
+        let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
+            .direct()
+            .run_on(reactor.clone());
+
+        let mut fut1 = pin!(&mut creat1);
+        let mut fut2 = pin!(&mut creat2);
+
+        assert!(poll!(fut1, notifier).is_pending());
+        assert!(poll!(fut2, notifier).is_pending());
+        assert_eq!(reactor.active(), 2);
+
+        reactor.wait();
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let fd1 = assert_ready!(poll!(fut1, notifier));
+        assert!(fd1.is_ok_and(|fd| fd.index() > 0));
+
+        let fd2 = assert_ready!(poll!(fut2, notifier));
+        assert!(fd2.is_ok_and(|fd| fd.index() > 0));
+
+        assert!(fut1.is_terminated());
+        assert!(fut2.is_terminated());
+        assert!(reactor.is_done());
+
+        assert!(std::fs::exists(&filename1).is_ok_and(|exists| exists));
+        assert!(std::fs::remove_file(&filename1).is_ok());
+
+        assert!(std::fs::exists(&filename2).is_ok_and(|exists| exists));
+        assert!(std::fs::remove_file(&filename2).is_ok());
+    }
+
+    #[test]
+    fn manual() {
+        let (reactor, notifier) = runtime();
+        let slot1 = reactor.get_file_slot();
+        let slot2 = reactor.get_file_slot();
+
+        let filename1 = TempFile::new_name();
+        let filename2 = TempFile::new_name();
+
+        let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
+            .fixed(slot1)
+            .run_on(reactor.clone());
+        let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
+            .fixed(slot2)
+            .run_on(reactor.clone());
+
+        let mut fut1 = pin!(&mut creat1);
+        let mut fut2 = pin!(&mut creat2);
+
+        assert!(poll!(fut1, notifier).is_pending());
+        assert!(poll!(fut2, notifier).is_pending());
+        assert_eq!(reactor.active(), 2);
+
+        reactor.wait();
+        reactor.wait();
+
+        assert_eq!(notifier.try_recv(), Some(()));
+        assert_eq!(notifier.try_recv(), Some(()));
+
+        let fd1 = assert_ready!(poll!(fut1, notifier));
+        assert!(fd1.is_ok());
+
+        let fd2 = assert_ready!(poll!(fut2, notifier));
+        assert!(fd2.is_ok());
+
+        assert!(fut1.is_terminated());
+        assert!(fut2.is_terminated());
+
+        reactor.release_file_slot(slot1);
+        reactor.release_file_slot(slot2);
+        assert!(reactor.is_done());
+
+        assert!(std::fs::exists(&filename1).is_ok_and(|exists| exists));
+        assert!(std::fs::remove_file(&filename1).is_ok());
+
+        assert!(std::fs::exists(&filename2).is_ok_and(|exists| exists));
+        assert!(std::fs::remove_file(&filename2).is_ok());
     }
 }

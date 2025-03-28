@@ -9,7 +9,7 @@ use std::{
 use io_uring::{
     opcode,
     squeue::Entry,
-    types::{Fd, FsyncFlags, OpenHow},
+    types::{DestinationSlot, Fd, FsyncFlags, OpenHow},
 };
 
 use crate::{
@@ -66,6 +66,10 @@ impl<S: AsRef<CStr>> OpenAt<S> {
         OpenAtFixed::from_raw(self, slot)
     }
 
+    pub fn direct(self) -> OpenAtAuto<S> {
+        OpenAtAuto::from_raw(self)
+    }
+
     fn raw_entry(&self) -> opcode::OpenAt {
         opcode::OpenAt::new(Fd(self.dir), self.path.as_ref().as_ptr())
             .flags(self.flags)
@@ -108,6 +112,31 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
 
     fn result(self, ret: i32) -> Self::Output {
         util::expect_zero(ret)
+    }
+}
+
+pub struct OpenAtAuto<S> {
+    inner: OpenAt<S>,
+}
+
+impl<S: AsRef<CStr>> OpenAtAuto<S> {
+    pub fn from_raw(inner: OpenAt<S>) -> Self {
+        Self { inner }
+    }
+}
+
+unsafe impl<S: AsRef<CStr>> Op for OpenAtAuto<S> {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .raw_entry()
+            .file_index(Some(DestinationSlot::auto_target()))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        util::expect_direct(ret)
     }
 }
 
@@ -161,6 +190,10 @@ impl<S: AsRef<CStr>> OpenAt2<S> {
         OpenAt2Fixed::from_raw(self, slot)
     }
 
+    pub fn direct(self) -> OpenAt2Auto<S> {
+        OpenAt2Auto::from_raw(self)
+    }
+
     fn raw_entry(&self) -> opcode::OpenAt2 {
         opcode::OpenAt2::new(Fd(self.dir), self.path.as_ref().as_ptr(), &self.how)
     }
@@ -201,6 +234,31 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
 
     fn result(self, ret: i32) -> Self::Output {
         util::expect_zero(ret)
+    }
+}
+
+pub struct OpenAt2Auto<S> {
+    inner: OpenAt2<S>,
+}
+
+impl<S: AsRef<CStr>> OpenAt2Auto<S> {
+    pub fn from_raw(inner: OpenAt2<S>) -> Self {
+        Self { inner }
+    }
+}
+
+unsafe impl<S: AsRef<CStr>> Op for OpenAt2Auto<S> {
+    type Output = Result<FileSlotKey>;
+
+    fn entry(&mut self) -> Entry {
+        self.inner
+            .raw_entry()
+            .file_index(Some(DestinationSlot::auto_target()))
+            .build()
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        util::expect_direct(ret)
     }
 }
 
