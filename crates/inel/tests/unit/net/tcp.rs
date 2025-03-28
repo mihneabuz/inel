@@ -242,6 +242,8 @@ fn read_write() {
                 let data = "Hello World!\n".repeat(4096).as_bytes().to_vec();
                 assert!(writer.write_all(&data).await.is_ok());
                 assert!(writer.flush().await.is_ok());
+                let client = writer.into_inner();
+                assert!(client.shutdown(std::net::Shutdown::Both).await.is_ok());
             }
         });
 
@@ -534,6 +536,8 @@ mod direct {
                     let data = "Hello World!\n".repeat(4096).as_bytes().to_vec();
                     assert!(writer.write_all(&data).await.is_ok());
                     assert!(writer.flush().await.is_ok());
+                    let client = writer.into_inner();
+                    assert!(client.shutdown(std::net::Shutdown::Both).await.is_ok());
                 }
             });
 
