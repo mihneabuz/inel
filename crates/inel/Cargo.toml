@@ -16,6 +16,7 @@ inel-reactor = { path = "../inel-reactor" }
 inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
+pin-project-lite = { workspace = true }
 
 hyper = { version = "1.6", optional = true }
 
