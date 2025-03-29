@@ -6,7 +6,7 @@ use std::{
 };
 
 use inel_reactor::{
-    op::{self, Op},
+    op::{self, OpExt},
     AsSource, Source,
 };
 

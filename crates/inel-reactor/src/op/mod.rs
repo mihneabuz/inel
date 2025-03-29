@@ -10,7 +10,10 @@ use std::{
     os::fd::RawFd,
 };
 
-use io_uring::{opcode, squeue::Entry};
+use io_uring::{
+    opcode,
+    squeue::{Entry, Flags},
+};
 
 use crate::{Cancellation, Ring, Submission};
 
@@ -53,6 +56,29 @@ pub unsafe trait Op: Sized {
     fn entry_cancel(key: u64) -> Option<Entry> {
         Some(opcode::AsyncCancel::new(key).build())
     }
+}
+
+/// Implements safe multishot operations over a [Ring] by wrapping an [io_uring::opcode]
+pub trait MultiOp: Op {
+    /// Produces a result without consuming self
+    fn next(&self, ret: i32) -> Self::Output;
+}
+
+pub trait OpExt {
+    fn chain(self) -> Chain<Self>
+    where
+        Self: Op + Sized;
+
+    fn run_on<R>(self, reactor: R) -> Submission<Self, R>
+    where
+        R: inel_interface::Reactor<Handle = Ring>,
+        Self: Op + Sized;
+}
+
+impl<O: Op> OpExt for O {
+    fn chain(self) -> Chain<Self> {
+        Chain::new(self)
+    }
 
     /// Wraps self into a [crate::Submission]
     fn run_on<R>(self, reactor: R) -> Submission<Self, R>
@@ -62,12 +88,6 @@ pub unsafe trait Op: Sized {
     {
         Submission::new(reactor, self)
     }
-}
-
-/// Implements safe multishot operations over a [Ring] by wrapping an [io_uring::opcode]
-pub trait MultiOp: Op {
-    /// Produces a result without consuming self
-    fn next(&self, ret: i32) -> Self::Output;
 }
 
 pub struct Nop;
@@ -80,13 +100,46 @@ unsafe impl Op for Nop {
     }
 
     fn result(self, ret: i32) -> Self::Output {
-        assert_eq!(ret, 0);
+        self.next(ret)
     }
 }
 
 impl MultiOp for Nop {
     fn next(&self, ret: i32) -> Self::Output {
-        assert_eq!(ret, 0);
+        assert!(ret == 0 || ret == -libc::ECANCELED)
+    }
+}
+
+pub struct Chain<O> {
+    inner: O,
+}
+
+impl<O> Chain<O> {
+    pub fn new(op: O) -> Self {
+        Self { inner: op }
+    }
+}
+
+unsafe impl<O> Op for Chain<O>
+where
+    O: Op,
+{
+    type Output = O::Output;
+
+    fn entry(&mut self) -> Entry {
+        O::entry(&mut self.inner).flags(Flags::IO_LINK)
+    }
+
+    fn result(self, ret: i32) -> Self::Output {
+        O::result(self.inner, ret)
+    }
+
+    fn cancel(self) -> Cancellation {
+        O::cancel(self.inner)
+    }
+
+    fn entry_cancel(key: u64) -> Option<Entry> {
+        O::entry_cancel(key)
     }
 }
 

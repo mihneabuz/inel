@@ -1,4 +1,5 @@
 mod buffer;
+mod chain;
 mod dir;
 mod file;
 pub mod helpers;
@@ -12,7 +13,7 @@ use std::pin::{pin, Pin};
 use futures::{future::FusedFuture, StreamExt};
 use helpers::{assert_ready, poll, runtime};
 use inel_interface::Reactor;
-use inel_reactor::op::{self, Op};
+use inel_reactor::op::{self, OpExt};
 
 #[test]
 fn sanity() {
