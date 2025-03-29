@@ -1,7 +1,7 @@
 use futures::task::{self, ArcWake};
 use inel_interface::Reactor;
 use inel_reactor::{
-    op::{self, Op},
+    op::{self, OpExt},
     FileSlotKey, Ring,
 };
 use std::{
@@ -51,17 +51,23 @@ impl Clone for ScopedReactor {
 }
 
 impl ScopedReactor {
+    const RESOURCES: u32 = 64;
+
     fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(
                 Ring::options()
-                    .submissions(64)
-                    .fixed_buffers(64)
-                    .auto_direct_files(64)
-                    .manual_direct_files(64)
+                    .submissions(Self::RESOURCES)
+                    .fixed_buffers(Self::RESOURCES)
+                    .auto_direct_files(Self::RESOURCES)
+                    .manual_direct_files(Self::RESOURCES)
                     .build(),
             )),
         }
+    }
+
+    pub fn resources(&self) -> u32 {
+        Self::RESOURCES
     }
 
     pub fn active(&self) -> u32 {
@@ -72,10 +78,12 @@ impl ScopedReactor {
         self.inner.borrow().is_done()
     }
 
+    pub fn try_get_file_slot(&self) -> Option<FileSlotKey> {
+        self.with(|reactor| reactor.get_file_slot()).unwrap().ok()
+    }
+
     pub fn get_file_slot(&self) -> FileSlotKey {
-        self.with(|reactor| reactor.get_file_slot())
-            .unwrap()
-            .unwrap()
+        self.try_get_file_slot().unwrap()
     }
 
     pub fn release_file_slot(&self, slot: FileSlotKey) {

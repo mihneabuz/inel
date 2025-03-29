@@ -8,7 +8,7 @@ use std::{
 use futures::{future::FusedFuture, FutureExt};
 use inel_reactor::{
     buffer::{FixedBuffer, StableBuffer},
-    op::{self, Op},
+    op::{self, OpExt},
     Submission,
 };
 

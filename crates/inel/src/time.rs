@@ -7,7 +7,7 @@ use std::{
 
 use futures::{future::FusedFuture, FutureExt};
 use inel_reactor::{
-    op::{self, Op},
+    op::{self, OpExt},
     Submission,
 };
 

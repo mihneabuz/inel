@@ -237,4 +237,20 @@ mod fixed {
         let view = View::new(buf, 10..=20);
         assert_eq!(view.as_slice(), &[b'A'; 11]);
     }
+
+    #[test]
+    fn error() {
+        let (reactor, _) = runtime();
+        let b = Box::new([b'_'; 256]);
+
+        let bufs = (0..reactor.resources())
+            .map(|_| Fixed::register(b.clone(), reactor.clone()).unwrap())
+            .collect::<Vec<_>>();
+
+        assert!(Fixed::register(b.clone(), reactor.clone()).is_err());
+
+        std::mem::drop(bufs);
+
+        assert!(Fixed::register(b.clone(), reactor.clone()).is_ok());
+    }
 }

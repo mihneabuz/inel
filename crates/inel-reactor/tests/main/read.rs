@@ -5,7 +5,7 @@ use inel_interface::Reactor;
 use inel_macro::test_repeat;
 use inel_reactor::{
     buffer::{StableBuffer, View},
-    op::{self, Op},
+    op::{self, OpExt},
 };
 
 use crate::helpers::{assert_ready, poll, runtime, TempFile, MESSAGE};

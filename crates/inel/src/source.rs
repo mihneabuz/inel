@@ -1,7 +1,7 @@
 use std::os::fd::RawFd;
 
 use inel_reactor::{
-    op::{self, Op},
+    op::{self, OpExt},
     FileSlotKey,
 };
 

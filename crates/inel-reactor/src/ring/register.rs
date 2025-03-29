@@ -49,7 +49,7 @@ impl SlotRegister {
     pub fn new(size: u32) -> Self {
         Self {
             vacant: Vec::new(),
-            len: 1,
+            len: 0,
             size,
         }
     }
@@ -74,7 +74,7 @@ impl SlotRegister {
     }
 
     pub fn is_full(&self) -> bool {
-        self.len as usize == self.vacant.len() + 1
+        self.len as usize == self.vacant.len()
     }
 }
 

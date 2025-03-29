@@ -14,7 +14,7 @@ use std::{
 use inel_interface::Reactor;
 use inel_reactor::{
     buffer::StableBuffer,
-    op::{self, Op},
+    op::{self, OpExt},
     util::{bind, getpeername, getsockname, listen},
     FileSlotKey,
 };

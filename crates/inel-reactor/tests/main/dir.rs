@@ -3,7 +3,7 @@ use std::pin::pin;
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
-use inel_reactor::op::{self, Op};
+use inel_reactor::op::{self, OpExt};
 
 use crate::helpers::{assert_ready, poll, runtime, TempFile};
 
