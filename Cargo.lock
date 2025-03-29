@@ -359,6 +359,7 @@ dependencies = [
  "inel-macro",
  "inel-reactor",
  "libc",
+ "pin-project-lite",
  "rand",
  "tower",
  "tracing",

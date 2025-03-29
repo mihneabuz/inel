@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use inel_reactor::op::{self, Op};
+use inel_reactor::op::{self, OpExt};
 
 use crate::GlobalReactor;
 

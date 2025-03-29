@@ -3,7 +3,7 @@ use std::{os::fd::IntoRawFd, pin::pin};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
-use inel_reactor::op::{self, Op};
+use inel_reactor::op::{self, OpExt};
 
 use crate::helpers::{assert_ready, poll, runtime, TempFile, MESSAGE};
 
@@ -435,5 +435,23 @@ mod direct {
 
         assert!(std::fs::exists(&filename2).is_ok_and(|exists| exists));
         assert!(std::fs::remove_file(&filename2).is_ok());
+    }
+
+    #[test]
+    fn error() {
+        let (reactor, _) = runtime();
+
+        let slots = (0..reactor.resources())
+            .filter_map(|_| reactor.try_get_file_slot())
+            .collect::<Vec<_>>();
+
+        assert_eq!(slots.len(), 64);
+        assert!(reactor.try_get_file_slot().is_none());
+
+        slots
+            .into_iter()
+            .for_each(|slot| reactor.release_file_slot(slot));
+
+        assert!(reactor.try_get_file_slot().is_some());
     }
 }

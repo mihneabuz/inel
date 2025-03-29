@@ -6,7 +6,7 @@ use std::{
 use crate::helpers::{assert_ready, poll, runtime};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
-use inel_reactor::op::{self, Op};
+use inel_reactor::op::{self, OpExt};
 
 #[test]
 fn single() {
