@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     future::Future,
     pin::Pin,
     rc::Rc,
@@ -11,17 +11,21 @@ use flume::{Receiver, Sender};
 type BoxFuture = Pin<Box<dyn Future<Output = ()>>>;
 
 pub struct Task {
+    scheduled: Cell<bool>,
     future: RefCell<BoxFuture>,
     queue: Sender<Rc<Task>>,
 }
 
 impl Task {
     pub fn poll(&self, cx: &mut Context) -> Poll<()> {
+        self.scheduled.set(false);
         self.future.borrow_mut().as_mut().poll(cx)
     }
 
     pub fn schedule(self: &Rc<Self>) {
-        self.queue.send(Rc::clone(self)).unwrap()
+        if !self.scheduled.replace(true) {
+            self.queue.send(Rc::clone(self)).unwrap()
+        }
     }
 }
 
@@ -40,12 +44,13 @@ impl TaskQueue {
     where
         F: Future<Output = ()> + 'static,
     {
-        let task = Task {
+        let task = Rc::new(Task {
+            scheduled: Cell::new(false),
             future: RefCell::new(Box::pin(future)),
             queue: self.sender.clone(),
-        };
+        });
 
-        self.sender.send(Rc::new(task)).unwrap();
+        task.schedule();
     }
 
     pub fn drain(&self) -> impl Iterator<Item = Rc<Task>> + '_ {
