@@ -8,6 +8,7 @@ thread_local! {
     static REACTOR: RefCell<Ring> = RefCell::new(Ring::default());
 }
 
+#[derive(Clone)]
 struct GlobalReactor;
 impl inel_interface::Reactor for GlobalReactor {
     type Handle = Ring;

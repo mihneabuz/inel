@@ -1,3 +1,4 @@
+mod buffers;
 mod direct;
 mod fs;
 mod net;
@@ -17,6 +18,7 @@ use io_uring::{
 
 use crate::{Cancellation, Ring, Submission};
 
+pub use buffers::*;
 pub use direct::*;
 pub use fs::*;
 pub use net::*;
