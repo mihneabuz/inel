@@ -6,6 +6,7 @@ use std::io::Result;
 use std::task::Waker;
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
+use register::BufferGroupKey;
 use tracing::debug;
 
 use crate::{buffer::StableBuffer, Cancellation};
@@ -21,6 +22,7 @@ const CANCEL_KEY: u64 = 1_333_337;
 pub struct RingOptions {
     submissions: u32,
     fixed_buffers: u32,
+    buffer_groups: u32,
     auto_direct_files: u32,
     manual_direct_files: u32,
 }
@@ -57,6 +59,7 @@ impl Default for RingOptions {
         Self {
             submissions: 2048,
             fixed_buffers: 256,
+            buffer_groups: 256,
             auto_direct_files: 256,
             manual_direct_files: 16,
         }
@@ -118,7 +121,8 @@ impl RingOptions {
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(self.submissions as usize),
-            buffers: SlotRegister::new(self.fixed_buffers),
+            fixed_buffers: SlotRegister::new(self.fixed_buffers),
+            buffer_groups: SlotRegister::new(self.buffer_groups),
             files: SlotRegister::new(self.manual_direct_files),
         }
     }
@@ -135,8 +139,9 @@ pub struct Ring {
     active: u32,
     canceled: u32,
     completions: CompletionSet,
-    buffers: SlotRegister,
     files: SlotRegister,
+    fixed_buffers: SlotRegister,
+    buffer_groups: SlotRegister,
 }
 
 impl Default for Ring {
@@ -163,7 +168,7 @@ impl Ring {
     pub fn is_done(&self) -> bool {
         self.active == 0
             && self.completions.is_empty()
-            && self.buffers.is_full()
+            && self.fixed_buffers.is_full()
             && self.files.is_full()
     }
 
@@ -268,7 +273,7 @@ impl Ring {
         B: StableBuffer,
     {
         let key = self
-            .buffers
+            .fixed_buffers
             .get()
             .ok_or(Error::other("No fixed buffer slots available"))?;
 
@@ -288,7 +293,7 @@ impl Ring {
 
     /// Unregister a buffer
     pub fn unregister_buffer(&mut self, key: BufferSlotKey) {
-        self.buffers.remove(key.unwrap());
+        self.fixed_buffers.remove(key.unwrap());
     }
 
     /// Attempt to get an io_uring file index
@@ -304,5 +309,18 @@ impl Ring {
     /// Unregister a buffer
     pub fn release_file_slot(&mut self, key: FileSlotKey) {
         self.files.remove(key.unwrap());
+    }
+
+    pub fn get_buffer_group(&mut self) -> Result<BufferGroupKey> {
+        let key = self
+            .buffer_groups
+            .get()
+            .ok_or(Error::other("No manual buffer group slots available"))?;
+
+        Ok(BufferGroupKey::wrap(key))
+    }
+
+    pub fn release_buffer_group(&mut self, key: BufferGroupKey) {
+        self.buffer_groups.remove(key.unwrap());
     }
 }
