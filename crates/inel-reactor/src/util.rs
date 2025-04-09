@@ -76,9 +76,7 @@ pub(crate) fn from_raw_addr(addr: &SocketAddrCRepr, len: u32) -> SocketAddr {
     }
 }
 
-pub fn bind(sock: RawFd, addr: SocketAddr) -> Result<()> {
-    let (addr, len) = into_raw_addr(addr);
-    let ret = unsafe { libc::bind(sock, addr.as_ptr() as *const _, len) };
+fn check_ret(ret: i32) -> Result<()> {
     if ret < 0 {
         Err(Error::last_os_error())
     } else {
@@ -86,35 +84,48 @@ pub fn bind(sock: RawFd, addr: SocketAddr) -> Result<()> {
     }
 }
 
+pub fn bind(sock: RawFd, addr: SocketAddr) -> Result<()> {
+    let (addr, len) = into_raw_addr(addr);
+    check_ret(unsafe { libc::bind(sock, addr.as_ptr() as *const _, len) })
+}
+
 pub fn listen(sock: RawFd, capacity: u32) -> Result<()> {
-    let ret = unsafe { libc::listen(sock, capacity as i32) };
-    if ret < 0 {
-        Err(Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    check_ret(unsafe { libc::listen(sock, capacity as i32) })
 }
 
 pub fn getsockname(sock: RawFd) -> Result<SocketAddr> {
     let mut addr: MaybeUninit<SocketAddrCRepr> = MaybeUninit::uninit();
     let mut len = std::mem::size_of::<SocketAddrCRepr>() as u32;
 
-    let ret = unsafe { libc::getsockname(sock, addr.as_mut_ptr() as *mut _, &mut len) };
-    if ret < 0 {
-        Err(Error::last_os_error())
-    } else {
-        Ok(from_raw_addr(&unsafe { addr.assume_init() }, len))
-    }
+    check_ret(unsafe { libc::getsockname(sock, addr.as_mut_ptr() as *mut _, &mut len) })
+        .map(|_| from_raw_addr(&unsafe { addr.assume_init() }, len))
 }
 
 pub fn getpeername(sock: RawFd) -> Result<SocketAddr> {
     let mut addr: MaybeUninit<SocketAddrCRepr> = MaybeUninit::uninit();
     let mut len = std::mem::size_of::<SocketAddrCRepr>() as u32;
 
-    let ret = unsafe { libc::getpeername(sock, addr.as_mut_ptr() as *mut _, &mut len) };
-    if ret < 0 {
-        Err(Error::last_os_error())
-    } else {
-        Ok(from_raw_addr(&unsafe { addr.assume_init() }, len))
+    check_ret(unsafe { libc::getpeername(sock, addr.as_mut_ptr() as *mut _, &mut len) })
+        .map(|_| from_raw_addr(&unsafe { addr.assume_init() }, len))
+}
+
+pub fn set_limits() -> Result<()> {
+    let mut limit = libc::rlimit64 {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+
+    check_ret(unsafe { libc::getrlimit64(libc::RLIMIT_MEMLOCK, &mut limit) })?;
+    if limit.rlim_max > limit.rlim_cur {
+        limit.rlim_cur = limit.rlim_max;
+        check_ret(unsafe { libc::setrlimit64(libc::RLIMIT_MEMLOCK, &limit) })?;
     }
+
+    check_ret(unsafe { libc::getrlimit64(libc::RLIMIT_NOFILE, &mut limit) })?;
+    if limit.rlim_max > limit.rlim_cur {
+        limit.rlim_cur = limit.rlim_max;
+        check_ret(unsafe { libc::setrlimit64(libc::RLIMIT_NOFILE, &limit) })?;
+    }
+
+    Ok(())
 }

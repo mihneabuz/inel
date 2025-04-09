@@ -2,7 +2,7 @@ use futures::task::{self, ArcWake};
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    FileSlotKey, Ring,
+    util, FileSlotKey, Ring,
 };
 use std::{
     cell::RefCell,
@@ -54,6 +54,8 @@ impl ScopedReactor {
     const RESOURCES: u32 = 64;
 
     fn new() -> Self {
+        util::set_limits().unwrap();
+
         Self {
             inner: Rc::new(RefCell::new(
                 Ring::options()

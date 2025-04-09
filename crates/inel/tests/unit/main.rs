@@ -10,10 +10,13 @@ mod helpers;
 use std::sync::mpsc;
 
 use futures::future::FusedFuture;
+use helpers::setup_tracing;
 use inel_reactor::RingOptions;
 
 #[test]
 fn sanity() {
+    setup_tracing();
+
     let (send, recv) = mpsc::channel::<i32>();
 
     inel::block_on(async move {
@@ -25,6 +28,8 @@ fn sanity() {
 
 #[test]
 fn spawn() {
+    setup_tracing();
+
     let (send, recv) = mpsc::channel::<i32>();
 
     for i in 0..10 {
@@ -41,6 +46,8 @@ fn spawn() {
 
 #[test]
 fn combo() {
+    setup_tracing();
+
     let (send, recv) = mpsc::channel();
 
     inel::block_on(async move {
@@ -57,6 +64,8 @@ fn combo() {
 
 #[test]
 fn sleep() {
+    setup_tracing();
+
     let start = std::time::Instant::now();
 
     inel::block_on(async move {
@@ -69,6 +78,8 @@ fn sleep() {
 
 #[test]
 fn init() {
+    setup_tracing();
+
     inel::init(
         RingOptions::default()
             .submissions(128)
@@ -93,6 +104,8 @@ fn main() {
 
     static CALLED: AtomicBool = AtomicBool::new(false);
 
+    setup_tracing();
+
     #[inel::main]
     async fn main() {
         inel::spawn(async {
@@ -107,6 +120,8 @@ fn main() {
 
 #[test]
 fn select() {
+    setup_tracing();
+
     inel::block_on(async {
         let mut sleep = inel::time::sleep(std::time::Duration::from_millis(10));
 
