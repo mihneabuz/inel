@@ -2,42 +2,40 @@ use std::{collections::VecDeque, mem, task::Waker};
 
 use slab::Slab;
 
-use crate::Cancellation;
+use crate::{ring::RingResult, Cancellation};
 
 #[derive(Debug)]
 enum Results {
     Vacant,
-    Single(i32),
-    Multiple(VecDeque<i32>, bool),
+    Single(RingResult),
+    Multiple((VecDeque<RingResult>, bool)),
 }
 
 impl Results {
-    fn push(&mut self, ret: i32, has_more: bool) {
+    fn push(&mut self, result: RingResult) {
         match self {
             Results::Vacant => {
-                *self = if has_more {
-                    Results::Multiple(VecDeque::from([ret]), has_more)
+                *self = if result.has_more() {
+                    Results::Multiple((VecDeque::from([result]), true))
                 } else {
-                    Results::Single(ret)
+                    Results::Single(result)
                 };
             }
 
-            Results::Multiple(queue, more) => {
-                queue.push_back(ret);
-                *more = has_more;
+            Results::Multiple((queue, has_more)) => {
+                *has_more = result.has_more();
+                queue.push_back(result);
             }
 
             Results::Single(_) => unreachable!("Already got result"),
         }
     }
 
-    fn pop(&mut self) -> Option<(i32, bool)> {
+    fn pop(&mut self) -> Option<RingResult> {
         match self {
             Results::Vacant => None,
-            Results::Single(ret) => Some((*ret, false)),
-            Results::Multiple(queue, has_more) => queue
-                .pop_front()
-                .map(|ret| (ret, *has_more || !queue.is_empty())),
+            Results::Single(result) => Some(*result),
+            Results::Multiple((queue, _)) => queue.pop_front(),
         }
     }
 
@@ -45,7 +43,7 @@ impl Results {
         match self {
             Results::Vacant => true,
             Results::Single(_) => false,
-            Results::Multiple(_, has_more) => *has_more,
+            Results::Multiple((queue, has_more)) => !queue.is_empty() || *has_more,
         }
     }
 }
@@ -92,11 +90,11 @@ impl Completion {
         }
     }
 
-    pub fn try_notify(&mut self, ret: i32, has_more: bool) {
+    pub fn try_notify(&mut self, result: RingResult) {
         match self {
             Completion::Active((waker, results)) => {
                 waker.wake_by_ref();
-                results.push(ret, has_more);
+                results.push(result);
             }
 
             Completion::Cancelled(_) => {
@@ -109,12 +107,12 @@ impl Completion {
         }
     }
 
-    pub fn take_result(&mut self) -> Option<(i32, bool)> {
+    pub fn take_result(&mut self) -> Option<RingResult> {
         match self {
             Completion::Active((_, results)) => {
                 let res = results.pop();
 
-                if res.is_some_and(|(_, has_more)| !has_more) {
+                if res.is_some_and(|res| !res.has_more()) {
                     *self = Completion::Finished;
                 }
 
@@ -162,12 +160,12 @@ impl CompletionSet {
         self.with_completion(key, move |comp| comp.try_cancel(cancel))
     }
 
-    pub fn notify(&mut self, key: Key, ret: i32, has_more: bool) {
+    pub fn notify(&mut self, key: Key, result: RingResult) {
         tracing::debug!(?key, "Notify");
-        self.with_completion(key, move |comp| comp.try_notify(ret, has_more));
+        self.with_completion(key, move |comp| comp.try_notify(result));
     }
 
-    pub fn result(&mut self, key: Key) -> Option<(i32, bool)> {
+    pub fn result(&mut self, key: Key) -> Option<RingResult> {
         tracing::debug!(?key, "Result");
         self.with_completion(key, move |comp| comp.take_result())
     }

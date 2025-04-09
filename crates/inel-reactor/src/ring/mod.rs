@@ -25,6 +25,33 @@ pub struct RingOptions {
     manual_direct_files: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct RingResult {
+    ret: i32,
+    flags: u32,
+}
+
+impl RingResult {
+    pub fn from_completion(entry: &cqueue::Entry) -> Self {
+        Self {
+            ret: entry.result(),
+            flags: entry.flags(),
+        }
+    }
+
+    pub fn ret(&self) -> i32 {
+        self.ret
+    }
+
+    pub fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    pub fn has_more(&self) -> bool {
+        cqueue::more(self.flags)
+    }
+}
+
 impl Default for RingOptions {
     fn default() -> Self {
         Self {
@@ -163,7 +190,7 @@ impl Ring {
     }
 
     /// Attempt to get the result of an entry.
-    pub fn check_result(&mut self, key: Key) -> Option<(i32, bool)> {
+    pub fn check_result(&mut self, key: Key) -> Option<RingResult> {
         self.completions.result(key)
     }
 
@@ -225,14 +252,13 @@ impl Ring {
                 continue;
             }
 
-            let has_more = cqueue::more(entry.flags());
-
-            self.completions
-                .notify(Key::from_u64(entry.user_data()), entry.result(), has_more);
-
-            if !has_more {
+            let result = RingResult::from_completion(&entry);
+            if !result.has_more() {
                 self.active -= 1;
             }
+
+            self.completions
+                .notify(Key::from_u64(entry.user_data()), result);
         }
     }
 

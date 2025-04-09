@@ -1,4 +1,6 @@
-use crate::helpers::{assert_ready, notifier, poll, reactor, runtime, ScopedReactor};
+use crate::helpers::{
+    assert_ready, notifier, poll, reactor, runtime, setup_tracing, ScopedReactor,
+};
 use futures::{future::FusedFuture, StreamExt};
 use inel_macro::test_repeat;
 use libc::{AF_INET, SOCK_STREAM};
@@ -656,8 +658,8 @@ fn create_fixed_listener_ipv6(reactor: ScopedReactor) -> (FileSlotKey, u16) {
 }
 
 #[test]
-#[test_repeat(5)]
 fn socket() {
+    setup_tracing();
     let reactor = reactor();
 
     create_socket_test(reactor.clone(), libc::AF_INET, libc::SOCK_STREAM);
@@ -670,8 +672,8 @@ fn socket() {
 }
 
 #[test]
-#[test_repeat(5)]
 fn connect() {
+    setup_tracing();
     let reactor = reactor();
 
     let (_, port) = create_listener_ipv4(reactor.clone());
@@ -690,8 +692,8 @@ fn connect() {
 }
 
 #[test]
-#[test_repeat(5)]
 fn accept() {
+    setup_tracing();
     let reactor = reactor();
 
     let (sock, port) = create_listener_ipv4(reactor.clone());
@@ -714,8 +716,8 @@ fn accept() {
 }
 
 #[test]
-#[test_repeat(5)]
 fn accept_multi() {
+    setup_tracing();
     let reactor = reactor();
 
     let (sock, port) = create_listener_ipv4(reactor.clone());
@@ -738,8 +740,8 @@ fn accept_multi() {
 }
 
 #[test]
-#[test_repeat(5)]
 fn shutdown() {
+    setup_tracing();
     let reactor = reactor();
 
     for how in [Shutdown::Read, Shutdown::Write, Shutdown::Both] {
@@ -755,8 +757,8 @@ fn shutdown() {
 }
 
 #[test]
-#[test_repeat(5)]
 fn errors() {
+    setup_tracing();
     let reactor = reactor();
 
     create_socket_error_test(reactor.clone());
@@ -800,6 +802,7 @@ fn errors() {
 #[test]
 #[test_repeat(10)]
 fn cancel() {
+    setup_tracing();
     let reactor = reactor();
 
     create_socket_cancel_test(reactor.clone());
@@ -815,6 +818,7 @@ fn cancel() {
 
 #[test]
 fn read_write() {
+    setup_tracing();
     let (reactor, notifier) = runtime();
 
     let (listener, port) = create_listener_ipv4(reactor.clone());
@@ -849,8 +853,8 @@ mod direct {
     use super::*;
 
     #[test]
-    #[test_repeat(5)]
     fn socket() {
+        setup_tracing();
         let reactor = reactor();
 
         let s1 = create_fixed_socket_test(reactor.clone(), libc::AF_INET, libc::SOCK_STREAM);
@@ -874,8 +878,8 @@ mod direct {
     }
 
     #[test]
-    #[test_repeat(5)]
     fn connect() {
+        setup_tracing();
         let reactor = reactor();
         let mut slots = vec![];
 
@@ -899,8 +903,8 @@ mod direct {
     }
 
     #[test]
-    #[test_repeat(5)]
     fn accept() {
+        setup_tracing();
         let reactor = reactor();
         let mut slots = vec![];
 
@@ -931,8 +935,8 @@ mod direct {
     }
 
     #[test]
-    #[test_repeat(5)]
     fn accept_multi() {
+        setup_tracing();
         let reactor = reactor();
         let mut slots = vec![];
 
@@ -963,8 +967,8 @@ mod direct {
     }
 
     #[test]
-    #[test_repeat(5)]
     fn errors() {
+        setup_tracing();
         let reactor = reactor();
 
         create_fixed_socket_error_test(reactor.clone());
@@ -988,6 +992,7 @@ mod direct {
     #[test]
     #[test_repeat(10)]
     fn cancel() {
+        setup_tracing();
         let reactor = reactor();
 
         for _ in 0..10 {
@@ -1007,6 +1012,7 @@ mod direct {
 
     #[test]
     fn read_write() {
+        setup_tracing();
         let (reactor, notifier) = runtime();
 
         let (listener, port) = create_fixed_listener_ipv4(reactor.clone());

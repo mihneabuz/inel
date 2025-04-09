@@ -1,3 +1,4 @@
+mod buffers;
 mod direct;
 mod fs;
 mod net;
@@ -15,8 +16,9 @@ use io_uring::{
     squeue::{Entry, Flags},
 };
 
-use crate::{Cancellation, Ring, Submission};
+use crate::{ring::RingResult, Cancellation, Ring, Submission};
 
+pub use buffers::*;
 pub use direct::*;
 pub use fs::*;
 pub use net::*;
@@ -44,7 +46,7 @@ pub unsafe trait Op: Sized {
     fn entry(&mut self) -> Entry;
 
     /// Produce the final result by consuming self and cqe result
-    fn result(self, ret: i32) -> Self::Output;
+    fn result(self, res: RingResult) -> Self::Output;
 
     /// Comsume self and return a [Cancellation] that contains any
     /// buffers currently referenced by the sqe returned by [Op::entry]
@@ -61,7 +63,7 @@ pub unsafe trait Op: Sized {
 /// Implements safe multishot operations over a [Ring] by wrapping an [io_uring::opcode]
 pub trait MultiOp: Op {
     /// Produces a result without consuming self
-    fn next(&self, ret: i32) -> Self::Output;
+    fn next(&self, res: RingResult) -> Self::Output;
 }
 
 pub trait OpExt {
@@ -99,14 +101,14 @@ unsafe impl Op for Nop {
         opcode::Nop::new().build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        self.next(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        self.next(res)
     }
 }
 
 impl MultiOp for Nop {
-    fn next(&self, ret: i32) -> Self::Output {
-        assert!(ret == 0 || ret == -libc::ECANCELED)
+    fn next(&self, res: RingResult) -> Self::Output {
+        assert!(res.ret() == 0 || res.ret() == -libc::ECANCELED)
     }
 }
 
@@ -130,8 +132,8 @@ where
         O::entry(&mut self.inner).flags(Flags::IO_LINK)
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        O::result(self.inner, ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        O::result(self.inner, res)
     }
 
     fn cancel(self) -> Cancellation {
@@ -148,7 +150,8 @@ pub(crate) mod util {
 
     use crate::FileSlotKey;
 
-    pub(crate) fn expect_zero(ret: i32) -> Result<()> {
+    pub(crate) fn expect_zero(res: &RingResult) -> Result<()> {
+        let ret = res.ret();
         match ret {
             0 => Ok(()),
             ..0 => Err(Error::from_raw_os_error(-ret)),
@@ -156,7 +159,8 @@ pub(crate) mod util {
         }
     }
 
-    pub(crate) fn expect_fd(ret: i32) -> Result<RawFd> {
+    pub(crate) fn expect_fd(res: &RingResult) -> Result<RawFd> {
+        let ret = res.ret();
         match ret {
             1.. => Ok(ret),
             ..0 => Err(Error::from_raw_os_error(-ret)),
@@ -164,7 +168,8 @@ pub(crate) mod util {
         }
     }
 
-    pub(crate) fn expect_direct(ret: i32) -> Result<FileSlotKey> {
+    pub(crate) fn expect_direct(res: &RingResult) -> Result<FileSlotKey> {
+        let ret = res.ret();
         match ret {
             1.. => Ok(FileSlotKey::from_raw_slot(ret as u32)),
             ..0 => Err(Error::from_raw_os_error(-ret)),
@@ -172,7 +177,8 @@ pub(crate) mod util {
         }
     }
 
-    pub(crate) fn expect_positive(ret: i32) -> Result<usize> {
+    pub(crate) fn expect_positive(res: &RingResult) -> Result<usize> {
+        let ret = res.ret();
         if ret < 0 {
             Err(Error::from_raw_os_error(-ret))
         } else {

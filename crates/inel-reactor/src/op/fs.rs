@@ -14,6 +14,7 @@ use io_uring::{
 
 use crate::{
     op::{util, Op},
+    ring::RingResult,
     AsSource, Cancellation, FileSlotKey, Source,
 };
 
@@ -84,8 +85,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
         self.raw_entry().build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_fd(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_fd(&res)
     }
 }
 
@@ -110,8 +111,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 }
 
@@ -135,8 +136,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtAuto<S> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_direct(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_direct(&res)
     }
 }
 
@@ -206,8 +207,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
         self.raw_entry().build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_fd(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_fd(&res)
     }
 }
 
@@ -232,8 +233,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 }
 
@@ -257,8 +258,8 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt2Auto<S> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_direct(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_direct(&res)
     }
 }
 
@@ -281,8 +282,8 @@ unsafe impl Op for Close {
         opcode::Close::new(self.src.as_raw()).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
@@ -322,8 +323,8 @@ unsafe impl Op for Fsync {
         opcode::Fsync::new(self.src.as_raw()).flags(flag).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 }
 
@@ -395,8 +396,8 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret).map(|_| unsafe { self.stats.assume_init() })
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res).map(|_| unsafe { self.stats.assume_init() })
     }
 
     fn cancel(self) -> Cancellation {
@@ -453,7 +454,8 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        println!("{res:?}");
+        util::expect_zero(&res)
     }
 }

@@ -10,6 +10,7 @@ use io_uring::{opcode, squeue::Entry, types::DestinationSlot};
 
 use crate::{
     op::{util, MultiOp, Op},
+    ring::RingResult,
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
     AsSource, Cancellation, FileSlotKey, Source,
 };
@@ -64,8 +65,8 @@ unsafe impl Op for Socket {
         self.entry_raw().build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_fd(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_fd(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
@@ -94,8 +95,8 @@ unsafe impl Op for SocketFixed {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
@@ -123,8 +124,8 @@ unsafe impl Op for SocketAuto {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_direct(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_direct(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
@@ -156,8 +157,8 @@ unsafe impl Op for Connect {
         opcode::Connect::new(self.src.as_raw(), self.addr.as_ptr(), self.len).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 }
 
@@ -199,8 +200,8 @@ unsafe impl Op for Accept {
         self.entry_raw().build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_fd(ret).map(|fd| {
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_fd(&res).map(|fd| {
             let res = unsafe { self.addr.assume_init() };
             (fd, from_raw_addr(&res.0, res.1))
         })
@@ -232,8 +233,8 @@ unsafe impl Op for AcceptFixed {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret).map(|_| {
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res).map(|_| {
             let res = unsafe { self.inner.addr.assume_init() };
             from_raw_addr(&res.0, res.1)
         })
@@ -264,8 +265,8 @@ unsafe impl Op for AcceptAuto {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_direct(ret).map(|slot| {
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_direct(&res).map(|slot| {
             let res = unsafe { self.inner.addr.assume_init() };
             (slot, from_raw_addr(&res.0, res.1))
         })
@@ -302,8 +303,8 @@ unsafe impl Op for Shutdown {
         opcode::Shutdown::new(self.src.as_raw(), how).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        util::expect_zero(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
@@ -334,14 +335,14 @@ unsafe impl Op for AcceptMulti {
         opcode::AcceptMulti::new(self.src.as_raw()).build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        self.next(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        self.next(res)
     }
 }
 
 impl MultiOp for AcceptMulti {
-    fn next(&self, ret: i32) -> Self::Output {
-        util::expect_fd(ret)
+    fn next(&self, res: RingResult) -> Self::Output {
+        util::expect_fd(&res)
     }
 }
 
@@ -358,13 +359,13 @@ unsafe impl Op for AcceptMultiAuto {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        self.next(ret)
+    fn result(self, res: RingResult) -> Self::Output {
+        self.next(res)
     }
 }
 
 impl MultiOp for AcceptMultiAuto {
-    fn next(&self, ret: i32) -> Self::Output {
-        util::expect_direct(ret)
+    fn next(&self, res: RingResult) -> Self::Output {
+        util::expect_direct(&res)
     }
 }

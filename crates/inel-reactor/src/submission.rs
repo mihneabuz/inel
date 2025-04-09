@@ -87,17 +87,15 @@ where
 
             SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
-                Some((ret, has_more)) => {
+                Some(result) => {
                     let op = this.op.take().unwrap();
+                    let next = if result.has_more() {
+                        SubmissionState::Submitted(key)
+                    } else {
+                        SubmissionState::Completed
+                    };
 
-                    (
-                        Poll::Ready(op.result(ret)),
-                        if has_more {
-                            SubmissionState::Submitted(key)
-                        } else {
-                            SubmissionState::Completed
-                        },
-                    )
+                    (Poll::Ready(op.result(result)), next)
                 }
             },
 
@@ -142,17 +140,15 @@ where
 
             SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
-                Some((ret, has_more)) => {
+                Some(result) => {
                     let op = this.op.as_ref();
+                    let next = if result.has_more() {
+                        SubmissionState::Submitted(key)
+                    } else {
+                        SubmissionState::Completed
+                    };
 
-                    (
-                        Poll::Ready(op.map(|op| op.next(ret))),
-                        if has_more {
-                            SubmissionState::Submitted(key)
-                        } else {
-                            SubmissionState::Completed
-                        },
-                    )
+                    (Poll::Ready(op.map(|op| op.next(result))), next)
                 }
             },
 

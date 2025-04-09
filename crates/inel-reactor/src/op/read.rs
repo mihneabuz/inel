@@ -5,6 +5,7 @@ use io_uring::{opcode, squeue::Entry};
 use crate::{
     buffer::{FixedBuffer, StableBuffer},
     op::{util, Op},
+    ring::RingResult,
     AsSource, Cancellation, Source,
 };
 
@@ -48,8 +49,8 @@ where
         .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        (self.buf, util::expect_positive(ret))
+    fn result(self, res: RingResult) -> Self::Output {
+        (self.buf, util::expect_positive(&res))
     }
 
     fn cancel(self) -> Cancellation {
@@ -98,8 +99,8 @@ where
         .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        (self.buf, util::expect_positive(ret))
+    fn result(self, res: RingResult) -> Self::Output {
+        (self.buf, util::expect_positive(&res))
     }
 
     fn cancel(self) -> Cancellation {
@@ -166,8 +167,8 @@ where
         .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        (self.bufs, util::expect_positive(ret))
+    fn result(self, res: RingResult) -> Self::Output {
+        (self.bufs, util::expect_positive(&res))
     }
 
     fn cancel(mut self) -> Cancellation {
@@ -225,8 +226,8 @@ where
         .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        (self.bufs, util::expect_positive(ret))
+    fn result(self, res: RingResult) -> Self::Output {
+        (self.bufs, util::expect_positive(&res))
     }
 
     fn cancel(self) -> Cancellation {

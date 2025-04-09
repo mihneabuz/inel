@@ -5,9 +5,7 @@ use std::{
 
 use io_uring::{opcode, squeue::Entry};
 
-use crate::FileSlotKey;
-
-use super::Op;
+use crate::{op::Op, ring::RingResult, FileSlotKey};
 
 pub struct RegisterFile {
     fd: RawFd,
@@ -28,10 +26,10 @@ unsafe impl Op for RegisterFile {
             .build()
     }
 
-    fn result(self, ret: i32) -> Self::Output {
-        match ret {
+    fn result(self, res: RingResult) -> Self::Output {
+        match res.ret() {
             1 => Ok(FileSlotKey::from_raw_slot(self.fd as u32)),
-            ..0 => Err(Error::from_raw_os_error(-ret)),
+            ..0 => Err(Error::from_raw_os_error(res.ret())),
             0 => unreachable!(),
             _ => unreachable!(),
         }
