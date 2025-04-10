@@ -6,7 +6,6 @@ use std::io::Result;
 use std::task::Waker;
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
-use register::BufferGroupKey;
 use tracing::debug;
 
 use crate::{buffer::StableBuffer, Cancellation};
@@ -15,7 +14,7 @@ use completion::CompletionSet;
 use register::{SlotRegister, WrapSlotKey};
 
 pub use completion::Key;
-pub use register::{BufferSlotKey, FileSlotKey};
+pub use register::{BufferGroupKey, BufferSlotKey, FileSlotKey};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -51,6 +50,10 @@ impl RingResult {
 
     pub fn has_more(&self) -> bool {
         cqueue::more(self.flags)
+    }
+
+    pub fn buffer_id(&self) -> Option<u16> {
+        cqueue::buffer_select(self.flags)
     }
 }
 
@@ -170,6 +173,7 @@ impl Ring {
             && self.completions.is_empty()
             && self.fixed_buffers.is_full()
             && self.files.is_full()
+            && self.buffer_groups.is_full()
     }
 
     /// Submit an sqe with an associated [Waker] which will be called

@@ -2,6 +2,7 @@ mod buffer;
 mod chain;
 mod dir;
 mod file;
+mod group;
 pub mod helpers;
 mod net;
 mod read;

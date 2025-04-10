@@ -2,11 +2,12 @@ use futures::task::{self, ArcWake};
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    util, FileSlotKey, Ring,
+    util, BufferGroupKey, FileSlotKey, Ring,
 };
 use std::{
     cell::RefCell,
     fs::{self, File},
+    future::Future,
     os::fd::{AsRawFd, RawFd},
     path::{Path, PathBuf},
     pin::pin,
@@ -16,6 +17,7 @@ use std::{
         mpsc::{self, Receiver, Sender},
         Arc, Once,
     },
+    task::Poll,
 };
 
 macro_rules! assert_ready {
@@ -93,6 +95,17 @@ impl ScopedReactor {
             .unwrap();
     }
 
+    pub fn get_buffer_group(&self) -> BufferGroupKey {
+        self.with(|reactor| reactor.get_buffer_group())
+            .unwrap()
+            .unwrap()
+    }
+
+    pub fn release_buffer_group(&self, key: BufferGroupKey) {
+        self.with(|reactor| reactor.release_buffer_group(key))
+            .unwrap();
+    }
+
     pub fn register_file(&self, fd: RawFd) -> FileSlotKey {
         let notifier = WakeNotifier::new();
         let register = op::RegisterFile::new(fd).run_on(self.clone());
@@ -107,6 +120,22 @@ impl ScopedReactor {
         assert!(res.is_ok());
 
         res.unwrap()
+    }
+
+    pub fn block_on<F, T>(&self, fut: F) -> T
+    where
+        F: Future<Output = T>,
+    {
+        let notifier = notifier();
+        let mut fut = pin!(fut);
+        loop {
+            match poll!(fut, notifier) {
+                Poll::Ready(res) => return res,
+                Poll::Pending => {}
+            }
+
+            self.wait();
+        }
     }
 }
 
@@ -160,6 +189,7 @@ impl ArcWake for Waker {
 }
 
 pub fn reactor() -> ScopedReactor {
+    setup_tracing();
     ScopedReactor::new()
 }
 
@@ -168,7 +198,6 @@ pub fn notifier() -> WakeNotifier {
 }
 
 pub fn runtime() -> (ScopedReactor, WakeNotifier) {
-    setup_tracing();
     (reactor(), notifier())
 }
 

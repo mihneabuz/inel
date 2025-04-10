@@ -1,6 +1,6 @@
-mod buffers;
 mod direct;
 mod fs;
+mod group;
 mod net;
 mod read;
 mod time;
@@ -18,9 +18,9 @@ use io_uring::{
 
 use crate::{ring::RingResult, Cancellation, Ring, Submission};
 
-pub use buffers::*;
 pub use direct::*;
 pub use fs::*;
+pub use group::*;
 pub use net::*;
 pub use read::*;
 pub use time::*;
