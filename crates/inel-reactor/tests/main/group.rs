@@ -84,7 +84,7 @@ fn read() {
     assert_eq!(read2, 64);
     assert_eq!(read3, 64);
 
-    assert_eq!(id1 + id2 + id3, 21);
+    assert_eq!(id1 + id2 + id3, 1 + 7 + 13);
 
     let p1 = op::ProvideBuffer::new(group, buf1, 1).run_on(reactor.clone());
     let p2 = op::ProvideBuffer::new(group, buf2, 1).run_on(reactor.clone());
@@ -101,6 +101,37 @@ fn read() {
     std::mem::drop(buf1);
     std::mem::drop(buf2);
     std::mem::drop(buf3);
+
+    reactor.release_buffer_group(group);
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn cancel() {
+    let (reactor, notifier) = runtime();
+    let group = reactor.get_buffer_group();
+
+    let mut p1 = op::ProvideBuffer::new(group, Box::new([0; 64]), 1).run_on(reactor.clone());
+    let mut p2 = op::ProvideBuffer::new(group, Box::new([0; 64]), 2).run_on(reactor.clone());
+    let (mut fut1, mut fut2) = (pin!(&mut p1), pin!(&mut p2));
+
+    assert!(poll!(fut1, notifier).is_pending());
+    assert!(poll!(fut2, notifier).is_pending());
+    std::mem::drop(p1);
+    std::mem::drop(p2);
+
+    reactor.wait();
+
+    let file = TempFile::with_content(MESSAGE);
+
+    let read1 = op::ReadGroup::new(file.fd(), group.clone()).run_on(reactor.clone());
+    let read2 = op::ReadGroup::new(file.fd(), group.clone()).run_on(reactor.clone());
+    let read3 = op::ReadGroup::new(file.fd(), group.clone()).run_on(reactor.clone());
+
+    let (id1, _) = reactor.block_on(read1).unwrap();
+    let (id2, _) = reactor.block_on(read2).unwrap();
+    assert_eq!(id1 + id2, 1 + 2);
+    assert!(reactor.block_on(read3).is_err());
 
     reactor.release_buffer_group(group);
     assert!(reactor.is_done());

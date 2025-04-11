@@ -1,4 +1,4 @@
-use std::io::Result;
+use std::{io::Result, mem::ManuallyDrop};
 
 use io_uring::{
     opcode,
@@ -9,18 +9,22 @@ use crate::{
     buffer::StableBuffer,
     op::{util, Op},
     ring::{BufferGroupKey, RingResult},
-    AsSource, Cancellation, Source,
+    AsSource, Source,
 };
 
 pub struct ProvideBuffer<B> {
     group: BufferGroupKey,
-    buffer: B,
+    buffer: ManuallyDrop<B>,
     id: u16,
 }
 
 impl<B> ProvideBuffer<B> {
     pub fn new(group: BufferGroupKey, buffer: B, id: u16) -> Self {
-        Self { buffer, group, id }
+        Self {
+            buffer: ManuallyDrop::new(buffer),
+            group,
+            id,
+        }
     }
 }
 
@@ -42,11 +46,7 @@ where
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        util::expect_zero(&res).map(|_| (self.buffer, self.id))
-    }
-
-    fn cancel(self) -> Cancellation {
-        self.buffer.into()
+        util::expect_zero(&res).map(|_| (ManuallyDrop::into_inner(self.buffer), self.id))
     }
 }
 
