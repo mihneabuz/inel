@@ -36,7 +36,7 @@ impl DirBuilder {
         }
 
         op::MkDirAt::new(path)
-            .mode(libc::S_IRWXU)
+            .mode(0o777)
             .run_on(GlobalReactor)
             .await
     }
@@ -46,11 +46,11 @@ impl DirBuilder {
 
         for item in path.as_ref().iter() {
             buf.extend_from_slice(item.as_bytes());
-            buf.push(b'\0');
+            buf.push(0);
 
             let cpath = unsafe { CStr::from_ptr(buf.as_ptr() as *const _) };
             let res = op::MkDirAt::from_raw(libc::AT_FDCWD, cpath, 0)
-                .mode(libc::S_IRWXU)
+                .mode(0o777)
                 .run_on(GlobalReactor)
                 .await;
 

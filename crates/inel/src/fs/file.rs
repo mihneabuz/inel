@@ -70,8 +70,7 @@ impl OpenOptions {
     }
 
     fn raw_opts(&self) -> (libc::c_int, libc::mode_t) {
-        let mut flags: libc::c_int = 0;
-        let mode: libc::mode_t = 0o666;
+        let mut flags = 0;
 
         flags |= match (self.read, self.write) {
             (true, true) => libc::O_RDWR,
@@ -96,7 +95,7 @@ impl OpenOptions {
             flags |= libc::O_DIRECT;
         }
 
-        (flags, mode)
+        (flags, 0o666)
     }
 
     pub async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
