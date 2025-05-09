@@ -1,175 +1,8 @@
-use std::{collections::VecDeque, mem, task::Waker};
+use std::{collections::VecDeque, task::Waker};
 
 use slab::Slab;
 
 use crate::{ring::RingResult, Cancellation};
-
-#[derive(Debug)]
-enum Results {
-    Vacant,
-    Single(RingResult),
-    Multiple((VecDeque<RingResult>, bool)),
-}
-
-impl Results {
-    fn push(&mut self, result: RingResult) {
-        match self {
-            Results::Vacant => {
-                *self = if result.has_more() {
-                    Results::Multiple((VecDeque::from([result]), true))
-                } else {
-                    Results::Single(result)
-                };
-            }
-
-            Results::Multiple((queue, has_more)) => {
-                *has_more = result.has_more();
-                queue.push_back(result);
-            }
-
-            Results::Single(_) => unreachable!("Already got result"),
-        }
-    }
-
-    fn pop(&mut self) -> Option<RingResult> {
-        match self {
-            Results::Vacant => None,
-            Results::Single(result) => Some(*result),
-            Results::Multiple((queue, _)) => queue.pop_front(),
-        }
-    }
-
-    fn has_more(&self) -> bool {
-        match self {
-            Results::Vacant => true,
-            Results::Single(_) => false,
-            Results::Multiple((queue, has_more)) => !queue.is_empty() || *has_more,
-        }
-    }
-}
-
-enum Completion {
-    Active((Waker, Results)),
-    Cancelled(Cancellation),
-    Finished,
-}
-
-impl Completion {
-    pub fn new(waker: Waker) -> Self {
-        Completion::Active((waker, Results::Vacant))
-    }
-
-    pub fn is_finished(&self) -> bool {
-        matches!(self, Completion::Finished)
-    }
-
-    fn take_cancel(&mut self) -> Cancellation {
-        if let Completion::Cancelled(cancel) = mem::replace(self, Completion::Finished) {
-            cancel
-        } else {
-            panic!("Cannot take cancel");
-        }
-    }
-
-    pub fn try_cancel(&mut self, cancel: Cancellation) -> bool {
-        match self {
-            Completion::Active((_, results)) => {
-                if results.has_more() {
-                    *self = Completion::Cancelled(cancel);
-                    true
-                } else {
-                    *self = Completion::Finished;
-                    cancel.drop_raw();
-                    false
-                }
-            }
-
-            Completion::Cancelled(_) | Completion::Finished => {
-                unreachable!("Completion already cancelled");
-            }
-        }
-    }
-
-    pub fn try_notify(&mut self, result: RingResult) {
-        match self {
-            Completion::Active((waker, results)) => {
-                waker.wake_by_ref();
-                results.push(result);
-            }
-
-            Completion::Cancelled(_) => {
-                self.take_cancel().drop_raw();
-            }
-
-            Completion::Finished => {
-                unreachable!("Completion already finished");
-            }
-        }
-    }
-
-    pub fn take_result(&mut self) -> Option<RingResult> {
-        match self {
-            Completion::Active((_, results)) => {
-                let res = results.pop();
-
-                if res.is_some_and(|res| !res.has_more()) {
-                    *self = Completion::Finished;
-                }
-
-                res
-            }
-
-            _ => None,
-        }
-    }
-}
-
-pub struct CompletionSet {
-    slab: Slab<Completion>,
-}
-
-impl CompletionSet {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            slab: Slab::with_capacity(capacity),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slab.is_empty()
-    }
-
-    pub fn insert(&mut self, waker: Waker) -> Key {
-        Key(self.slab.insert(Completion::new(waker)))
-    }
-
-    fn with_completion<T, F>(&mut self, key: Key, fun: F) -> T
-    where
-        F: FnOnce(&mut Completion) -> T,
-    {
-        let completion = self.slab.get_mut(key.as_usize()).expect("unexpected key");
-        let value = fun(completion);
-        if completion.is_finished() {
-            self.slab.remove(key.as_usize());
-        }
-        value
-    }
-
-    pub fn cancel(&mut self, key: Key, cancel: Cancellation) -> bool {
-        tracing::debug!(?key, "Cancel");
-        self.with_completion(key, move |comp| comp.try_cancel(cancel))
-    }
-
-    pub fn notify(&mut self, key: Key, result: RingResult) {
-        tracing::debug!(?key, "Notify");
-        self.with_completion(key, move |comp| comp.try_notify(result));
-    }
-
-    pub fn result(&mut self, key: Key) -> Option<RingResult> {
-        tracing::debug!(?key, "Result");
-        self.with_completion(key, move |comp| comp.take_result())
-    }
-}
 
 /// Idenitifies an operation submitted to the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
@@ -186,5 +19,209 @@ impl Key {
 
     pub(crate) fn as_u64(&self) -> u64 {
         self.0 as u64
+    }
+}
+
+pub struct CompletionSet {
+    slab: Slab<Completion>,
+    queues: ResultQueues,
+}
+
+impl CompletionSet {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            slab: Slab::with_capacity(capacity),
+            queues: ResultQueues::with_capacity(4),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty() && self.queues.is_empty()
+    }
+
+    pub fn insert(&mut self, waker: Waker) -> Key {
+        Key(self.slab.insert(Completion::new(waker)))
+    }
+
+    fn with_completion<T, F>(&mut self, key: Key, fun: F) -> T
+    where
+        F: FnOnce(&mut Completion, &mut ResultQueues) -> T,
+    {
+        let completion = self.slab.get_mut(key.as_usize()).expect("unexpected key");
+        let value = fun(completion, &mut self.queues);
+        if completion.is_finished() {
+            self.slab.remove(key.as_usize());
+        }
+        value
+    }
+
+    pub fn cancel(&mut self, key: Key, cancel: Cancellation) -> bool {
+        tracing::debug!(?key, "Cancel");
+        self.with_completion(key, move |comp, queues| comp.try_cancel(queues, cancel))
+    }
+
+    pub fn notify(&mut self, key: Key, result: RingResult) {
+        tracing::debug!(?key, "Notify");
+        self.with_completion(key, move |comp, queues| comp.try_notify(queues, result));
+    }
+
+    pub fn result(&mut self, key: Key) -> Option<RingResult> {
+        tracing::debug!(?key, "Result");
+        self.with_completion(key, move |comp, queues| comp.take_result(queues))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct QueueHandle(u32);
+
+struct ResultQueues {
+    queues: Vec<VecDeque<RingResult>>,
+    unused: Vec<QueueHandle>,
+}
+
+impl ResultQueues {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            queues: vec![VecDeque::new(); capacity],
+            unused: (0..capacity as u32).map(QueueHandle).collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queues.len() == self.unused.len()
+    }
+
+    fn handle(&mut self) -> QueueHandle {
+        if let Some(handle) = self.unused.pop() {
+            handle
+        } else {
+            let index = self.queues.len();
+            self.queues.push(VecDeque::new());
+            QueueHandle(index as u32)
+        }
+    }
+
+    fn get(&mut self, handle: QueueHandle) -> &mut VecDeque<RingResult> {
+        &mut self.queues[handle.0 as usize]
+    }
+
+    fn release(&mut self, handle: QueueHandle) {
+        self.get(handle).clear();
+        self.unused.push(handle);
+    }
+}
+
+enum Completion {
+    Vacant {
+        waker: Waker,
+    },
+
+    Single {
+        result: RingResult,
+    },
+
+    Multiple {
+        waker: Waker,
+        handle: QueueHandle,
+        more: bool,
+    },
+
+    Cancelled {
+        cancel: Cancellation,
+    },
+
+    Finished,
+}
+
+impl Completion {
+    fn new(waker: Waker) -> Self {
+        Completion::Vacant { waker }
+    }
+
+    fn is_finished(&self) -> bool {
+        matches!(self, Completion::Finished)
+    }
+
+    fn try_cancel(&mut self, queues: &mut ResultQueues, cancel: Cancellation) -> bool {
+        let already_completed = match self {
+            Completion::Vacant { .. } => false,
+            Completion::Single { .. } => true,
+            Completion::Multiple { handle, more, .. } => {
+                queues.release(*handle);
+                !*more
+            }
+            _ => {
+                unreachable!("Completion already cancelled");
+            }
+        };
+
+        if already_completed {
+            *self = Completion::Finished;
+            cancel.drop_raw();
+            false
+        } else {
+            *self = Completion::Cancelled { cancel };
+            true
+        }
+    }
+
+    fn try_notify(&mut self, queues: &mut ResultQueues, result: RingResult) {
+        match std::mem::replace(self, Completion::Finished) {
+            Completion::Vacant { waker } => {
+                waker.wake_by_ref();
+
+                *self = if result.has_more() {
+                    let handle = queues.handle();
+                    queues.get(handle).push_back(result);
+                    Completion::Multiple {
+                        waker,
+                        handle,
+                        more: true,
+                    }
+                } else {
+                    Completion::Single { result }
+                };
+            }
+
+            Completion::Multiple { waker, handle, .. } => {
+                waker.wake_by_ref();
+
+                queues.get(handle).push_back(result);
+                *self = Completion::Multiple {
+                    waker,
+                    handle,
+                    more: result.has_more(),
+                }
+            }
+
+            Completion::Cancelled { cancel } => {
+                cancel.drop_raw();
+            }
+
+            _ => {
+                unreachable!("Completion already finished");
+            }
+        }
+    }
+
+    fn take_result(&mut self, queues: &mut ResultQueues) -> Option<RingResult> {
+        match self {
+            Completion::Single { result } => {
+                let result = *result;
+                *self = Completion::Finished;
+                Some(result)
+            }
+
+            Completion::Multiple { handle, more, .. } => {
+                let result = queues.get(*handle).pop_front();
+                if queues.get(*handle).is_empty() && !*more {
+                    queues.release(*handle);
+                    *self = Completion::Finished;
+                }
+                result
+            }
+
+            _ => None,
+        }
     }
 }
