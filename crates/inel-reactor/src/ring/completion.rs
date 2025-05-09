@@ -225,3 +225,121 @@ impl Completion {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{collections::VecDeque, iter::repeat, task::Waker};
+
+    use crate::{ring::RingResult, Cancellation};
+
+    use super::CompletionSet;
+
+    fn waker() -> Waker {
+        Waker::noop().clone()
+    }
+
+    fn cancel() -> Cancellation {
+        Cancellation::empty()
+    }
+
+    fn result() -> RingResult {
+        RingResult {
+            ret: unsafe { libc::rand() },
+            flags: 0,
+        }
+    }
+
+    fn result_multi() -> RingResult {
+        RingResult {
+            ret: unsafe { libc::rand() },
+            flags: 2,
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    enum C {
+        NotifySingle,
+        NotifyMulti,
+        Cancel,
+        Result,
+    }
+
+    #[derive(Clone, Debug)]
+    struct Case(Vec<C>);
+
+    impl Case {
+        fn fix(mut self) -> Self {
+            let diff = self.0.iter().fold(0usize, |diff, case| match case {
+                C::NotifySingle | C::NotifyMulti => diff + 1,
+                C::Result => diff.checked_sub(1).unwrap_or(0),
+                _ => diff,
+            });
+            self.0.extend(repeat(C::Result).take(diff));
+            self
+        }
+
+        fn clone_extend(&self, tail: &[C]) -> Self {
+            let mut new = self.clone();
+            new.0.extend_from_slice(tail);
+            new
+        }
+    }
+
+    #[test]
+    fn everything() {
+        let mut cases: Vec<Case> = vec![];
+        let mut curr: Vec<Case> = vec![Case(vec![])];
+        let mut next: Vec<Case> = vec![];
+
+        for _ in 0..14 {
+            for case in curr.drain(..) {
+                next.push(case.clone_extend(&[C::NotifyMulti]));
+                next.push(case.clone_extend(&[C::Result]));
+
+                cases.push(case.clone_extend(&[C::Cancel, C::NotifySingle]));
+                cases.push(case.clone_extend(&[C::NotifySingle, C::Cancel]));
+                cases.push(case.clone_extend(&[C::NotifySingle]).fix());
+            }
+
+            std::mem::swap(&mut curr, &mut next);
+        }
+
+        let mut set = CompletionSet::with_capacity(16);
+        for case in cases {
+            let key = set.insert(waker());
+            let mut queue = VecDeque::new();
+            let mut completed = false;
+
+            for c in case.0 {
+                match c {
+                    C::NotifySingle => {
+                        let single = result();
+                        set.notify(key, single);
+
+                        queue.push_back(single.ret());
+                        completed = true;
+                    }
+
+                    C::NotifyMulti => {
+                        let multi = result_multi();
+                        set.notify(key, multi);
+
+                        queue.push_back(multi.ret());
+                    }
+
+                    C::Cancel => {
+                        assert_eq!(set.cancel(key, cancel()), !completed);
+
+                        queue.clear();
+                    }
+
+                    C::Result => {
+                        assert_eq!(queue.pop_front(), set.result(key).map(|res| res.ret()));
+                    }
+                }
+            }
+
+            assert!(set.is_empty());
+        }
+    }
+}
