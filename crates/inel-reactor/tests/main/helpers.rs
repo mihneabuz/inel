@@ -1,9 +1,3 @@
-use futures::task::{self, ArcWake};
-use inel_interface::Reactor;
-use inel_reactor::{
-    op::{self, OpExt},
-    util, BufferGroupKey, FileSlotKey, Ring,
-};
 use std::{
     cell::RefCell,
     fs::{self, File},
@@ -18,6 +12,15 @@ use std::{
         Arc, Once,
     },
     task::Poll,
+};
+
+use futures::task::{self, ArcWake};
+use rand::Rng;
+
+use inel_interface::Reactor;
+use inel_reactor::{
+    op::{self, OpExt},
+    util, BufferGroupKey, FileSlotKey, Ring,
 };
 
 macro_rules! assert_ready {
@@ -218,7 +221,13 @@ pub struct TempFile {
 
 impl TempFile {
     pub fn new_name() -> String {
-        format!("/tmp/inel_reactor_test_{}", uuid::Uuid::new_v4())
+        let seed = rand::rng()
+            .sample_iter(rand::distr::Alphanumeric)
+            .take(32)
+            .map(|b| b as char)
+            .collect::<String>();
+
+        format!("/tmp/inel_reactor_test_{}", seed)
     }
 
     pub fn new_relative_name() -> String {

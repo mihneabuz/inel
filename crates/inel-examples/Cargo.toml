@@ -1,0 +1,26 @@
+[package]
+name = "inel-examples"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "hello"
+path = "src/hello.rs"
+
+[[bin]]
+name = "hyper"
+path = "src/hyper.rs"
+
+[[bin]]
+name = "axum"
+path = "src/axum.rs"
+
+[dependencies]
+inel = { path = "../inel", features = ["full"] }
+
+futures = { workspace = true }
+hyper = "1.6"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["client"] }
+axum = "0.8"
+tower = "0.5"

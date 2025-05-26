@@ -18,14 +18,19 @@ async fn pair() -> (inel::net::TcpListener, inel::net::TcpStream) {
 mod hyper {
     use super::*;
 
+    use std::{
+        pin::Pin,
+        rc::Rc,
+        task::{Context, Poll},
+    };
+
     use ::hyper::{
-        body::{Bytes, Incoming},
+        body::{Body, Bytes, Frame, Incoming},
         client, rt, server,
         service::service_fn,
-        Error, Request, Response,
+        Error, Request, Response, StatusCode,
     };
-    use http_body_util::{combinators::BoxBody, BodyExt, Full};
-    use std::{convert::Infallible, rc::Rc};
+    use futures::{Stream, StreamExt};
 
     #[test]
     fn simple() {
@@ -63,8 +68,7 @@ mod hyper {
 
             inel::spawn(async move {
                 let hyper = wrap2(stream);
-                let (mut sender, conn) =
-                    hyper::client::conn::http1::handshake(hyper).await.unwrap();
+                let (mut sender, conn) = client::conn::http1::handshake(hyper).await.unwrap();
 
                 inel::spawn(async move {
                     assert!(conn.await.is_ok());
@@ -72,21 +76,46 @@ mod hyper {
 
                 let req = Request::builder()
                     .uri("127.0.0.1")
-                    .body(Full::new(Bytes::from("Lorem Ipsum".repeat(100))).boxed())
+                    .body("hello world!".repeat(10000))
                     .unwrap();
 
                 let res = sender.send_request(req).await;
                 assert!(res.is_ok());
 
-                let mut body = res.unwrap().into_body();
-                while let Some(frame) = body.frame().await {
+                let body = res.unwrap().into_body();
+                let mut stream = FrameStream::new(body);
+                while let Some(frame) = stream.next().await {
                     assert!(frame.is_ok());
                 }
             });
         });
     }
 
-    async fn echo(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Infallible> {
-        Ok(Response::new(req.into_body().boxed()))
+    async fn echo(req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(req.into_body())
+            .unwrap())
+    }
+
+    pin_project_lite::pin_project! {
+        struct FrameStream {
+            #[pin]
+            body: Incoming
+        }
+    }
+
+    impl FrameStream {
+        pub fn new(body: Incoming) -> Self {
+            Self { body }
+        }
+    }
+
+    impl Stream for FrameStream {
+        type Item = Result<Frame<Bytes>, Error>;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            self.project().body.poll_frame(cx)
+        }
     }
 }

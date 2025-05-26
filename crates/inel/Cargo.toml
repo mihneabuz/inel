@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["full"]
 sys = []
 compat = []
 hyper = ["dep:hyper", "compat"]
+full = ["hyper"]
 
 [dependencies]
 inel-interface = { path = "../inel-interface" }
@@ -21,15 +22,7 @@ pin-project-lite = { workspace = true }
 hyper = { version = "1.6", optional = true }
 
 [dev-dependencies]
-# tests
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing = { workspace = true }
-uuid = { version = "1.10.0", features = ["v4"] }
-rand = "0.8"
-
-# server example
-hyper = "1.6"
-http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["client"] }
-axum = "0.8"
-tower = "0.5"
+tracing-subscriber = { workspace = true }
+rand = { workspace = true }
+hyper = { version = "1.6", features = ["client", "server", "http1"] }

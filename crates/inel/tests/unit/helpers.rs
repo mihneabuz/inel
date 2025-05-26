@@ -3,6 +3,8 @@ use std::{
     sync::Once,
 };
 
+use rand::Rng;
+
 use inel_reactor::util;
 
 static TRACING: Once = Once::new();
@@ -17,5 +19,11 @@ pub fn setup_tracing() {
 }
 
 pub fn temp_file() -> PathBuf {
-    Path::new("/tmp").join(format!("inel-test-{}", uuid::Uuid::new_v4()))
+    let seed = rand::rng()
+        .sample_iter(rand::distr::Alphanumeric)
+        .take(32)
+        .map(|b| b as char)
+        .collect::<String>();
+
+    Path::new("/tmp").join(format!("inel-test-{}", seed))
 }

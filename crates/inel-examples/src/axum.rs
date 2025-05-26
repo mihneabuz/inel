@@ -1,9 +1,9 @@
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use futures::StreamExt;
-use hyper::{server::conn::http1, StatusCode};
+use hyper::{StatusCode, server::conn::http1};
 use tower::Service;
 
 use inel::compat::hyper::HyperStream;

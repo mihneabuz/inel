@@ -1,12 +1,12 @@
 use std::convert::Infallible;
 
 use futures::StreamExt;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::{
+    Error, Request, Response, StatusCode,
     body::{Bytes, Incoming},
     server::conn::http1,
     service::service_fn,
-    Error, Request, Response, StatusCode,
 };
 
 use inel::compat::hyper::HyperStream;

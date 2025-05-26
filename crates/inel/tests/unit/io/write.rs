@@ -137,7 +137,7 @@ fn cancel() {
     std::fs::write(&name, [0u8; 128_000]).unwrap();
 
     for _ in 0..1000 {
-        let index = rand::random::<usize>() % 16;
+        let index = rand::random::<u64>() as usize % 16;
         let name_clone = name.clone();
 
         inel::block_on(async move {
@@ -164,7 +164,7 @@ fn cancel() {
     }
 
     for _ in 0..1000 {
-        let index = rand::random::<usize>() % 16;
+        let index = rand::random::<u64>() as usize % 16;
         let name_clone = name.clone();
 
         inel::block_on(async move {
