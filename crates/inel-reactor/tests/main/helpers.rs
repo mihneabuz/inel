@@ -20,7 +20,7 @@ use rand::Rng;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    util, BufferGroupKey, FileSlotKey, Ring,
+    BufferGroupKey, FileSlotKey, Ring,
 };
 
 macro_rules! assert_ready {
@@ -59,8 +59,6 @@ impl ScopedReactor {
     const RESOURCES: u32 = 64;
 
     fn new() -> Self {
-        util::set_limits().unwrap();
-
         Self {
             inner: Rc::new(RefCell::new(
                 Ring::options()

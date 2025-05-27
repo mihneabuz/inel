@@ -6,7 +6,7 @@ use std::io::Result;
 use std::task::Waker;
 
 use io_uring::{cqueue, squeue::Entry, IoUring};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{buffer::StableBuffer, Cancellation};
 
@@ -91,6 +91,10 @@ impl RingOptions {
     }
 
     pub fn build(self) -> Ring {
+        if let Err(err) = crate::util::set_limits() {
+            warn!(?err, "failed to set max rlimits");
+        };
+
         let ring = IoUring::builder()
             .build(self.submissions)
             .expect("Failed to create io_uring");
