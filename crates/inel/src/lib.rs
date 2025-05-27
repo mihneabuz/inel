@@ -1,7 +1,9 @@
 use core::{cell::RefCell, future::Future};
 
 use inel_executor::{Executor, JoinHandle};
-use inel_reactor::{Ring, RingOptions};
+use inel_reactor::Ring;
+
+pub use inel_reactor::RingOptions;
 
 thread_local! {
     static EXECUTOR: RefCell<Executor> = RefCell::new(Executor::new());
@@ -38,6 +40,10 @@ pub mod compat;
 mod source;
 
 pub fn init(options: RingOptions) {
+    if REACTOR.with_borrow(|react| !react.is_done()) {
+        panic!("Tried to init already running reactor");
+    }
+
     REACTOR.set(options.build());
 }
 
