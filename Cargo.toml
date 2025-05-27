@@ -7,7 +7,9 @@ members = [
   "crates/inel-executor",
   "crates/inel-reactor",
   "crates/inel-macro",
+
   "crates/inel-examples",
+  "crates/inel-benches",
 ]
 
 [workspace.dependencies]

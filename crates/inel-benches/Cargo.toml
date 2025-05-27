@@ -1,0 +1,15 @@
+[package]
+name = "inel-benches"
+version = "0.1.0"
+edition = "2024"
+
+[[bench]]
+name = "unit"
+harness = false
+
+[dependencies]
+inel = { path = "../inel" }
+
+[dev-dependencies]
+futures = { workspace = true }
+criterion = { version = "0.6", features = ["html_reports"] }

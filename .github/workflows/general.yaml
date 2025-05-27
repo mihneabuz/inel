@@ -51,6 +51,22 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache Action
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks
+        run: cargo bench --package inel-benches
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
