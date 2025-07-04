@@ -20,7 +20,7 @@ use crate::{
     GlobalReactor,
 };
 
-const DEFAULT_LISTEN_BACKLOG: u32 = 4096;
+const DEFAULT_LISTEN_BACKLOG: u32 = 256;
 
 async fn for_each_addr<A, F, H, T>(addr: A, f: F) -> Result<T>
 where
@@ -81,15 +81,20 @@ impl TcpListener {
     where
         A: ToSocketAddrs,
     {
-        let inner = Self::bind(addr).await?;
+        for_each_addr(addr, |addr| async move {
+            let direct = OwnedDirect::reserve().unwrap();
 
-        let slot = op::RegisterFile::new(inner.sock.as_raw())
-            .run_on(GlobalReactor)
-            .await?;
+            let socket = op::Socket::stream_from_addr(&addr)
+                .fixed(direct.as_slot())
+                .run_on(GlobalReactor);
+            let bind = op::Bind::new(&direct, addr).chain().run_on(GlobalReactor);
+            let listen = op::Listen::new(&direct, DEFAULT_LISTEN_BACKLOG).run_on(GlobalReactor);
 
-        let direct = OwnedDirect::auto(slot);
+            crate::util::chain3(socket, bind, listen).await?;
 
-        Ok(DirectTcpListener { inner, direct })
+            Ok(DirectTcpListener { direct })
+        })
+        .await
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -228,16 +233,16 @@ impl TcpStream {
         A: ToSocketAddrs,
     {
         for_each_addr(addr, |addr| async move {
-            let slot = op::Socket::stream_from_addr(&addr)
-                .direct()
-                .run_on(GlobalReactor)
-                .await?;
+            let direct = OwnedDirect::reserve().unwrap();
 
-            let slot = OwnedDirect::auto(slot);
+            let socket = op::Socket::stream_from_addr(&addr)
+                .fixed(direct.as_slot())
+                .run_on(GlobalReactor);
+            let connect = op::Connect::new(&direct, addr).run_on(GlobalReactor);
 
-            op::Connect::new(&slot, addr).run_on(GlobalReactor).await?;
+            crate::util::chain(socket, connect).await?;
 
-            Ok(DirectTcpStream::from_direct(slot))
+            Ok(DirectTcpStream::from_direct(direct))
         })
         .await
     }
@@ -278,7 +283,6 @@ impl FromRawFd for TcpStream {
 }
 
 pub struct DirectTcpListener {
-    inner: TcpListener,
     direct: OwnedDirect,
 }
 
@@ -298,10 +302,6 @@ impl DirectTcpListener {
         let direct = OwnedDirect::auto(slot);
 
         Ok((DirectTcpStream::from_direct(direct), peer))
-    }
-
-    pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.inner.local_addr()
     }
 
     pub fn incoming(self) -> DirectIncoming {

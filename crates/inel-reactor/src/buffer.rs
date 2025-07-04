@@ -1,5 +1,6 @@
 use std::{
     io::Result,
+    mem::ManuallyDrop,
     ops::{Bound, Deref, DerefMut, RangeBounds},
     slice,
 };
@@ -117,7 +118,7 @@ impl StableBufferMut for String {
 #[derive(Debug)]
 pub struct Fixed<R: Reactor<Handle = Ring>> {
     inner: Option<Box<[u8]>>,
-    key: BufferSlotKey,
+    key: ManuallyDrop<BufferSlotKey>,
     reactor: R,
 }
 
@@ -141,7 +142,7 @@ where
 
         Ok(Self {
             inner: Some(buffer),
-            key,
+            key: ManuallyDrop::new(key),
             reactor,
         })
     }
@@ -152,7 +153,8 @@ where
     R: Reactor<Handle = Ring>,
 {
     fn drop(&mut self) {
-        self.reactor.unregister_buffer(self.key);
+        let key = unsafe { ManuallyDrop::take(&mut self.key) };
+        self.reactor.unregister_buffer(key);
     }
 }
 

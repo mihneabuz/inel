@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 use std::{io::Result, task::Waker};
 
 use inel_interface::Reactor;
@@ -6,7 +7,7 @@ use io_uring::squeue::Entry;
 use crate::{
     buffer::StableBuffer,
     ring::{BufferSlotKey, RingResult},
-    Cancellation, Key, Ring,
+    Cancellation, FileSlotKey, Key, Ring,
 };
 
 pub trait RingReactor {
@@ -16,6 +17,9 @@ pub trait RingReactor {
 
     fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlotKey>;
     fn unregister_buffer(&mut self, key: BufferSlotKey);
+
+    fn get_file_slot(&mut self) -> Result<FileSlotKey>;
+    fn release_file_slot(&mut self, key: FileSlotKey);
 }
 
 impl<R> RingReactor for R
@@ -39,6 +43,14 @@ where
     }
 
     fn unregister_buffer(&mut self, key: BufferSlotKey) {
-        self.with(|react| react.unregister_buffer(key)).unwrap()
+        self.with(|react| react.unregister_buffer(key));
+    }
+
+    fn get_file_slot(&mut self) -> Result<FileSlotKey> {
+        self.with(|react| react.get_file_slot()).unwrap()
+    }
+
+    fn release_file_slot(&mut self, key: FileSlotKey) {
+        self.with(|react| react.release_file_slot(key));
     }
 }

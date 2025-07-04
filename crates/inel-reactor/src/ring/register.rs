@@ -2,10 +2,11 @@ use std::marker::PhantomData;
 
 use io_uring::types::DestinationSlot;
 
-pub struct SlotRegister {
+pub struct SlotRegister<T> {
     vacant: Vec<u32>,
     len: u32,
     size: u32,
+    _phantom: PhantomData<T>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,13 +15,13 @@ pub(crate) struct SlotKey {
     _marker: PhantomData<*const ()>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct BufferSlotKey(SlotKey);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BufferGroupKey(SlotKey);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct FileSlotKey(SlotKey);
 
 pub(crate) trait WrapSlotKey {
@@ -58,18 +59,23 @@ impl WrapSlotKey for BufferGroupKey {
     }
 }
 
-impl SlotRegister {
+impl<T: WrapSlotKey> SlotRegister<T> {
     pub fn new(size: u32) -> Self {
         Self {
             vacant: Vec::new(),
             len: 0,
             size,
+            _phantom: PhantomData,
         }
     }
 
-    pub fn get(&mut self) -> Option<SlotKey> {
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    pub fn get(&mut self) -> Option<T> {
         if let Some(slot) = self.vacant.pop() {
-            return Some(SlotKey::new(slot));
+            return Some(T::wrap(SlotKey::new(slot)));
         };
 
         if self.len == self.size {
@@ -79,11 +85,14 @@ impl SlotRegister {
         let index = self.len;
         self.len += 1;
 
-        Some(SlotKey::new(index))
+        Some(T::wrap(SlotKey::new(index)))
     }
 
-    pub fn remove(&mut self, key: SlotKey) {
-        self.vacant.push(key.index());
+    pub fn remove(&mut self, key: T) {
+        let key = key.unwrap();
+        if key.index() < self.size() {
+            self.vacant.push(key.index());
+        }
     }
 
     pub fn is_full(&self) -> bool {

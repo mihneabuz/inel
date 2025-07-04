@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 use crate::{buffer::StableBuffer, Cancellation};
 
 use completion::CompletionSet;
-use register::{SlotRegister, WrapSlotKey};
+use register::SlotRegister;
 
 pub use completion::Key;
 pub use register::{BufferGroupKey, BufferSlotKey, FileSlotKey};
@@ -146,9 +146,9 @@ pub struct Ring {
     active: u32,
     canceled: u32,
     completions: CompletionSet,
-    files: SlotRegister,
-    fixed_buffers: SlotRegister,
-    buffer_groups: SlotRegister,
+    files: SlotRegister<FileSlotKey>,
+    fixed_buffers: SlotRegister<BufferSlotKey>,
+    buffer_groups: SlotRegister<BufferGroupKey>,
 }
 
 impl Default for Ring {
@@ -296,39 +296,33 @@ impl Ring {
                 .register_buffers_update(key.index(), &[iovec], None)?;
         }
 
-        Ok(BufferSlotKey::wrap(key))
+        Ok(key)
     }
 
     /// Unregister a buffer
     pub fn unregister_buffer(&mut self, key: BufferSlotKey) {
-        self.fixed_buffers.remove(key.unwrap());
+        self.fixed_buffers.remove(key);
     }
 
     /// Attempt to get an io_uring file index
     pub fn get_file_slot(&mut self) -> Result<FileSlotKey> {
-        let key = self
-            .files
+        self.files
             .get()
-            .ok_or(Error::other("No manual direct file slots available"))?;
-
-        Ok(FileSlotKey::wrap(key))
+            .ok_or(Error::other("No manual direct file slots available"))
     }
 
     /// Unregister a buffer
     pub fn release_file_slot(&mut self, key: FileSlotKey) {
-        self.files.remove(key.unwrap());
+        self.files.remove(key);
     }
 
     pub fn get_buffer_group(&mut self) -> Result<BufferGroupKey> {
-        let key = self
-            .buffer_groups
+        self.buffer_groups
             .get()
-            .ok_or(Error::other("No manual buffer group slots available"))?;
-
-        Ok(BufferGroupKey::wrap(key))
+            .ok_or(Error::other("No manual buffer group slots available"))
     }
 
     pub fn release_buffer_group(&mut self, key: BufferGroupKey) {
-        self.buffer_groups.remove(key.unwrap());
+        self.buffer_groups.remove(key);
     }
 }

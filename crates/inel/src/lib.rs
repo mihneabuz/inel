@@ -33,6 +33,7 @@ pub mod fs;
 pub mod io;
 pub mod net;
 pub mod time;
+mod util;
 
 #[cfg(feature = "compat")]
 pub mod compat;

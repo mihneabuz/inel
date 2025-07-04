@@ -70,7 +70,7 @@ fn create_socket_cancel_test(reactor: ScopedReactor) {
 
 fn create_fixed_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> FileSlotKey {
     let slot = reactor.get_file_slot();
-    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).fixed(slot));
+    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).fixed(&slot));
     assert!(res.is_ok());
     slot
 }
@@ -79,7 +79,7 @@ fn create_fixed_socket_error_test(reactor: ScopedReactor) {
     let slot = reactor.get_file_slot();
     let res = complete_op(
         reactor.clone(),
-        op::Socket::new(i32::MAX, i32::MAX).proto(0).fixed(slot),
+        op::Socket::new(i32::MAX, i32::MAX).proto(0).fixed(&slot),
     );
     assert!(res.is_err());
     reactor.release_file_slot(slot);
@@ -89,7 +89,7 @@ fn create_fixed_socket_cancel_test(reactor: ScopedReactor) {
     let slot = reactor.get_file_slot();
     cancel_op(
         reactor.clone(),
-        op::Socket::new(AF_INET, SOCK_STREAM).fixed(slot),
+        op::Socket::new(AF_INET, SOCK_STREAM).fixed(&slot),
     );
     reactor.release_file_slot(slot);
 }
@@ -228,41 +228,41 @@ fn accept_cancel_test(reactor: ScopedReactor, sock: RawFd) {
     cancel_op(reactor, op::Accept::new(&sock));
 }
 
-fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
+fn accept_fixed_test(reactor: ScopedReactor, listener: &FileSlotKey) -> (FileSlotKey, SocketAddr) {
     let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor, op::Accept::new(&listener).fixed(slot));
+    let addr = complete_op(reactor, op::Accept::new(listener).fixed(&slot));
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().ip().is_loopback());
     (slot, addr.unwrap())
 }
 
-fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
+fn accept_fixed_error_test(reactor: ScopedReactor, listener: &FileSlotKey) {
     let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor.clone(), op::Accept::new(&listener).fixed(slot));
+    let addr = complete_op(reactor.clone(), op::Accept::new(listener).fixed(&slot));
     assert!(addr.is_err());
     reactor.release_file_slot(slot);
 }
 
-fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
+fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: &FileSlotKey) {
     let slot = reactor.get_file_slot();
-    cancel_op(reactor.clone(), op::Accept::new(&listener).fixed(slot));
+    cancel_op(reactor.clone(), op::Accept::new(listener).fixed(&slot));
     reactor.release_file_slot(slot);
 }
 
-fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
-    let addr = complete_op(reactor, op::Accept::new(&listener).direct());
+fn accept_auto_test(reactor: ScopedReactor, listener: &FileSlotKey) -> (FileSlotKey, SocketAddr) {
+    let addr = complete_op(reactor, op::Accept::new(listener).direct());
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().1.ip().is_loopback());
     addr.unwrap()
 }
 
-fn accept_auto_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let addr = complete_op(reactor, op::Accept::new(&listener).direct());
+fn accept_auto_error_test(reactor: ScopedReactor, listener: &FileSlotKey) {
+    let addr = complete_op(reactor, op::Accept::new(listener).direct());
     assert!(addr.is_err());
 }
 
-fn accept_auto_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    cancel_op(reactor, op::Accept::new(&listener).direct());
+fn accept_auto_cancel_test(reactor: ScopedReactor, listener: &FileSlotKey) {
+    cancel_op(reactor, op::Accept::new(listener).direct());
 }
 
 fn accept_multi_test(reactor: ScopedReactor, sock: RawFd, count: usize) {
@@ -544,8 +544,8 @@ fn read_write() {
     let conn1 = connect_test_ipv4(reactor.clone(), port);
     let (conn2, _) = accept_test(reactor.clone(), listener);
 
-    let write = op::Write::new(conn1, Box::new([b'A'; 4096])).run_on(reactor.clone());
-    let read = op::Read::new(conn2, Box::new([0; 8192])).run_on(reactor.clone());
+    let write = op::Write::new(&conn1, Box::new([b'A'; 4096])).run_on(reactor.clone());
+    let read = op::Read::new(&conn2, Box::new([0; 8192])).run_on(reactor.clone());
 
     let mut fut1 = pin!(write);
     let mut fut2 = pin!(read);
@@ -630,7 +630,7 @@ mod direct {
             slots.push(s);
         }
         for _ in 0..10 {
-            let (s, _) = accept_fixed_test(reactor.clone(), slot4);
+            let (s, _) = accept_fixed_test(reactor.clone(), &slot4);
             slots.push(s);
         }
 
@@ -640,7 +640,7 @@ mod direct {
             slots.push(s);
         }
         for _ in 0..10 {
-            accept_auto_test(reactor.clone(), slot6);
+            accept_auto_test(reactor.clone(), &slot6);
         }
 
         for slot in slots {
@@ -690,11 +690,11 @@ mod direct {
 
         accept_fixed_error_test(
             reactor.clone(),
-            create_fixed_socket_test(reactor.clone(), libc::AF_INET, libc::SOCK_STREAM),
+            &create_fixed_socket_test(reactor.clone(), libc::AF_INET, libc::SOCK_STREAM),
         );
         accept_auto_error_test(
             reactor.clone(),
-            create_auto_socket_test(reactor.clone(), libc::AF_INET6, libc::SOCK_STREAM),
+            &create_auto_socket_test(reactor.clone(), libc::AF_INET6, libc::SOCK_STREAM),
         );
 
         accept_multi_direct_error_test(
@@ -715,11 +715,11 @@ mod direct {
 
         accept_fixed_cancel_test(
             reactor.clone(),
-            create_fixed_listener_ipv4(reactor.clone()).0,
+            &create_fixed_listener_ipv4(reactor.clone()).0,
         );
         accept_auto_cancel_test(
             reactor.clone(),
-            create_fixed_listener_ipv6(reactor.clone()).0,
+            &create_fixed_listener_ipv6(reactor.clone()).0,
         );
     }
 
@@ -729,10 +729,10 @@ mod direct {
 
         let (listener, port) = create_fixed_listener_ipv4(reactor.clone());
         let conn1 = connect_fixed_test_ipv4(reactor.clone(), port);
-        let (conn2, _) = accept_auto_test(reactor.clone(), listener);
+        let (conn2, _) = accept_auto_test(reactor.clone(), &listener);
 
-        let write = op::Write::new(conn1, Box::new([b'A'; 4096])).run_on(reactor.clone());
-        let read = op::Read::new(conn2, Box::new([0; 8192])).run_on(reactor.clone());
+        let write = op::Write::new(&conn1, Box::new([b'A'; 4096])).run_on(reactor.clone());
+        let read = op::Read::new(&conn2, Box::new([0; 8192])).run_on(reactor.clone());
 
         let mut fut1 = pin!(write);
         let mut fut2 = pin!(read);
