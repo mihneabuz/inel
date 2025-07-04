@@ -3,6 +3,7 @@ use futures::{future::FusedFuture, StreamExt};
 use inel_macro::test_repeat;
 use libc::{AF_INET, SOCK_STREAM};
 use std::{
+    i32,
     io::Result,
     net::{Shutdown, SocketAddr},
     os::fd::RawFd,
@@ -14,8 +15,8 @@ use std::{
 use inel_interface::Reactor;
 use inel_reactor::{
     buffer::StableBuffer,
-    op::{self, OpExt},
-    util::{bind, getpeername, getsockname, listen},
+    op::{self, Op, OpExt},
+    util::{getpeername, getsockname},
     FileSlotKey,
 };
 
@@ -23,175 +24,95 @@ fn make_addr(ip: &str, port: u16) -> SocketAddr {
     SocketAddr::new(FromStr::from_str(ip).unwrap(), port)
 }
 
-fn create_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> RawFd {
+fn complete_op<T: Op>(reactor: ScopedReactor, op: T) -> T::Output {
     let notifier = notifier();
-
-    let op = op::Socket::new(domain, typ)
-        .proto(0)
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
+    let mut fut = pin!(op.run_on(reactor.clone()));
 
     assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
 
     reactor.wait();
 
     assert_eq!(notifier.try_recv(), Some(()));
+    assert_ready!(poll!(fut, notifier))
+}
 
-    let sock = assert_ready!(poll!(fut, notifier));
+fn cancel_op<T: Op>(reactor: ScopedReactor, op: T) {
+    let notifier = notifier();
+    let mut op = op.run_on(reactor.clone());
+    let mut fut = pin!(&mut op);
+
+    assert!(poll!(fut, notifier).is_pending());
+    std::mem::drop(op);
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), None);
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), None);
+
+    assert_eq!(reactor.active(), 0);
+}
+
+fn create_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> RawFd {
+    let sock = complete_op(reactor, op::Socket::new(domain, typ).proto(0));
     assert!(sock.is_ok());
-
-    assert!(fut.is_terminated());
-
     sock.unwrap()
 }
 
 fn create_socket_error_test(reactor: ScopedReactor) {
-    let notifier = notifier();
-
-    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
-        .proto(0)
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    reactor.wait();
-
-    let sock = assert_ready!(poll!(fut, notifier));
+    let sock = complete_op(reactor, op::Socket::new(i32::MAX, i32::MAX).proto(0));
     assert!(sock.is_err());
 }
 
 fn create_socket_cancel_test(reactor: ScopedReactor) {
-    let notifier = notifier();
-
-    let mut op = op::Socket::new(AF_INET, SOCK_STREAM)
-        .proto(0)
-        .run_on(reactor.clone());
-    let mut fut = pin!(&mut op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(op);
-
-    reactor.wait();
-    reactor.wait();
+    cancel_op(reactor, op::Socket::new(AF_INET, SOCK_STREAM).proto(0));
 }
 
 fn create_fixed_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> FileSlotKey {
-    let notifier = notifier();
     let slot = reactor.get_file_slot();
-
-    let op = op::Socket::new(domain, typ)
-        .proto(0)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
+    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).fixed(slot));
     assert!(res.is_ok());
-
-    assert!(fut.is_terminated());
-
     slot
 }
 
 fn create_fixed_socket_error_test(reactor: ScopedReactor) {
-    let notifier = notifier();
     let slot = reactor.get_file_slot();
-
-    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    reactor.wait();
-
-    let sock = assert_ready!(poll!(fut, notifier));
-    assert!(sock.is_err());
+    let res = complete_op(
+        reactor.clone(),
+        op::Socket::new(i32::MAX, i32::MAX).proto(0).fixed(slot),
+    );
+    assert!(res.is_err());
+    reactor.release_file_slot(slot);
 }
 
 fn create_fixed_socket_cancel_test(reactor: ScopedReactor) {
-    let notifier = notifier();
     let slot = reactor.get_file_slot();
-
-    let mut op = op::Socket::new(AF_INET, SOCK_STREAM)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(&mut op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(op);
-
-    reactor.wait();
-    reactor.wait();
-
+    cancel_op(
+        reactor.clone(),
+        op::Socket::new(AF_INET, SOCK_STREAM).fixed(slot),
+    );
     reactor.release_file_slot(slot);
 }
 
 fn create_auto_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> FileSlotKey {
-    let notifier = notifier();
-
-    let op = op::Socket::new(domain, typ)
-        .proto(0)
-        .direct()
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
+    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).direct());
     assert!(res.is_ok());
-    let slot = res.unwrap();
-
-    assert!(fut.is_terminated());
-
-    slot
+    res.unwrap()
 }
 
 fn create_auto_socket_error_test(reactor: ScopedReactor) {
-    let notifier = notifier();
-
-    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
-        .direct()
-        .run_on(reactor.clone());
-    let mut fut = pin!(op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    reactor.wait();
-
-    let sock = assert_ready!(poll!(fut, notifier));
-    assert!(sock.is_err());
+    let res = complete_op(
+        reactor,
+        op::Socket::new(i32::MAX, i32::MAX).proto(0).direct(),
+    );
+    assert!(res.is_err());
 }
 
 fn create_auto_socket_cancel_test(reactor: ScopedReactor) {
-    let notifier = notifier();
-
-    let mut op = op::Socket::new(AF_INET, SOCK_STREAM)
-        .direct()
-        .run_on(reactor.clone());
-    let mut fut = pin!(&mut op);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(op);
-
-    reactor.wait();
-    reactor.wait();
+    cancel_op(reactor, op::Socket::new(AF_INET, SOCK_STREAM).direct());
 }
 
 fn connect_test(reactor: ScopedReactor, addr: &str, port: u16) -> RawFd {
-    let notifier = notifier();
     let addr = make_addr(addr, port);
     let sock = create_socket_test(
         reactor.clone(),
@@ -203,25 +124,13 @@ fn connect_test(reactor: ScopedReactor, addr: &str, port: u16) -> RawFd {
         libc::SOCK_STREAM,
     );
 
-    let con = op::Connect::new(sock, addr).run_on(reactor.clone());
-    let mut fut = pin!(con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
+    let res = complete_op(reactor, op::Connect::new(sock, addr));
     assert!(res.is_ok());
-    assert!(fut.is_terminated());
 
     sock
 }
 
 fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> FileSlotKey {
-    let notifier = notifier();
     let addr = make_addr(addr, port);
     let slot = create_fixed_socket_test(
         reactor.clone(),
@@ -233,20 +142,8 @@ fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> FileSlot
         libc::SOCK_STREAM,
     );
 
-    let mut con = op::Connect::new(slot, addr).run_on(reactor.clone());
-    let mut fut = pin!(&mut con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
+    let res = complete_op(reactor, op::Connect::new(slot, addr));
     assert!(res.is_ok());
-
-    assert!(fut.is_terminated());
 
     slot
 }
@@ -268,7 +165,6 @@ fn connect_fixed_test_ipv6(reactor: ScopedReactor, port: u16) -> FileSlotKey {
 }
 
 fn connect_error_test(reactor: ScopedReactor, addr: &str) {
-    let notifier = notifier();
     let addr = make_addr(addr, u16::MAX);
     let sock = create_socket_test(
         reactor.clone(),
@@ -280,15 +176,8 @@ fn connect_error_test(reactor: ScopedReactor, addr: &str) {
         libc::SOCK_STREAM,
     );
 
-    let con = op::Connect::new(sock, addr).run_on(reactor.clone());
-    let mut fut = pin!(con);
-
-    assert!(poll!(fut, notifier).is_pending());
-
-    reactor.wait();
-
-    let sock = assert_ready!(poll!(fut, notifier));
-    assert!(sock.is_err());
+    let res = complete_op(reactor, op::Connect::new(sock, addr));
+    assert!(res.is_err());
 }
 
 fn connect_error_test_ipv4(reactor: ScopedReactor) {
@@ -300,7 +189,6 @@ fn connect_error_test_ipv6(reactor: ScopedReactor) {
 }
 
 fn connect_cancel_test(reactor: ScopedReactor, addr: &str) {
-    let notifier = notifier();
     let addr = make_addr(addr, u16::MAX);
     let sock = create_socket_test(
         reactor.clone(),
@@ -312,14 +200,7 @@ fn connect_cancel_test(reactor: ScopedReactor, addr: &str) {
         libc::SOCK_STREAM,
     );
 
-    let mut con = op::Connect::new(sock, addr).run_on(reactor.clone());
-    let mut fut = pin!(&mut con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(con);
-
-    reactor.wait();
-    reactor.wait();
+    cancel_op(reactor, op::Connect::new(sock, addr));
 }
 
 fn connect_cancel_test_ipv4(reactor: ScopedReactor) {
@@ -331,57 +212,61 @@ fn connect_cancel_test_ipv6(reactor: ScopedReactor) {
 }
 
 fn accept_test(reactor: ScopedReactor, sock: RawFd) -> (RawFd, SocketAddr) {
-    let notifier = notifier();
-
-    let con = op::Accept::new(sock).run_on(reactor.clone());
-    let mut fut = pin!(con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let addr = assert_ready!(poll!(fut, notifier));
+    let addr = complete_op(reactor, op::Accept::new(sock));
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().0 > 0);
     assert!(addr.as_ref().unwrap().1.ip().is_loopback());
-
-    assert!(fut.is_terminated());
-
     addr.unwrap()
 }
 
 fn accept_error_test(reactor: ScopedReactor, sock: RawFd) {
-    let notifier = notifier();
-
-    let accept = op::Accept::new(sock).run_on(reactor.clone());
-    let mut fut = pin!(accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-
-    reactor.wait();
-
-    let addr = assert_ready!(poll!(fut, notifier));
+    let addr = complete_op(reactor, op::Accept::new(sock));
     assert!(addr.is_err());
 }
 
 fn accept_cancel_test(reactor: ScopedReactor, sock: RawFd) {
-    let notifier = notifier();
+    cancel_op(reactor, op::Accept::new(sock));
+}
 
-    let mut accept = op::Accept::new(sock).run_on(reactor.clone());
-    let mut fut = pin!(&mut accept);
+fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
+    let slot = reactor.get_file_slot();
+    let addr = complete_op(reactor, op::Accept::new(listener).fixed(slot));
+    assert!(addr.is_ok());
+    assert!(addr.as_ref().unwrap().ip().is_loopback());
+    (slot, addr.unwrap())
+}
 
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(accept);
+fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
+    let slot = reactor.get_file_slot();
+    let addr = complete_op(reactor.clone(), op::Accept::new(listener).fixed(slot));
+    assert!(addr.is_err());
+    reactor.release_file_slot(slot);
+}
 
-    reactor.wait();
+fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
+    let slot = reactor.get_file_slot();
+    cancel_op(reactor.clone(), op::Accept::new(listener).fixed(slot));
+    reactor.release_file_slot(slot);
+}
+
+fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
+    let addr = complete_op(reactor, op::Accept::new(listener).direct());
+    assert!(addr.is_ok());
+    assert!(addr.as_ref().unwrap().1.ip().is_loopback());
+    addr.unwrap()
+}
+
+fn accept_auto_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
+    let addr = complete_op(reactor, op::Accept::new(listener).direct());
+    assert!(addr.is_err());
+}
+
+fn accept_auto_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
+    cancel_op(reactor, op::Accept::new(listener).direct());
 }
 
 fn accept_multi_test(reactor: ScopedReactor, sock: RawFd, count: usize) {
     let notifier = notifier();
-
     let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
     let mut stream = pin!(&mut con);
 
@@ -435,185 +320,31 @@ fn accept_multi_direct_test(reactor: ScopedReactor, slot: FileSlotKey, count: us
 }
 
 fn accept_multi_once_test(reactor: ScopedReactor, sock: RawFd) {
-    let notifier = notifier();
-
-    let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
-    let mut fut = pin!(&mut con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert!(poll!(fut, notifier).is_ready());
-    assert!(!fut.is_terminated());
-
-    std::mem::drop(con);
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(sock));
+    assert!(res.is_ok());
     reactor.wait();
 }
 
 fn accept_multi_direct_once_test(reactor: ScopedReactor, slot: FileSlotKey) {
-    let notifier = notifier();
-
-    let mut con = op::AcceptMulti::new(slot).direct().run_on(reactor.clone());
-    let mut fut = pin!(&mut con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert!(poll!(fut, notifier).is_ready());
-    assert!(!fut.is_terminated());
-
-    std::mem::drop(con);
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(slot));
+    assert!(res.is_ok());
     reactor.wait();
 }
 
 fn accept_multi_error_test(reactor: ScopedReactor, sock: RawFd) {
-    let notifier = notifier();
-
-    let accept = op::AcceptMulti::new(sock).run_on(reactor.clone());
-    let mut fut = pin!(accept);
-
-    assert!(poll!(fut, notifier).is_pending());
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(sock));
+    assert!(res.is_err());
     reactor.wait();
-
-    let fd = assert_ready!(poll!(fut, notifier));
-    assert!(fd.is_err());
 }
 
 fn accept_multi_direct_error_test(reactor: ScopedReactor, slot: FileSlotKey) {
-    let notifier = notifier();
-
-    let accept = op::AcceptMulti::new(slot).run_on(reactor.clone());
-    let mut fut = pin!(accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-    reactor.wait();
-
-    let fd = assert_ready!(poll!(fut, notifier));
-    assert!(fd.is_err());
-}
-
-fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
-    let notifier = notifier();
-    let slot = reactor.get_file_slot();
-
-    let con = op::Accept::new(listener)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let addr = assert_ready!(poll!(fut, notifier));
-    assert!(addr.is_ok());
-    assert!(addr.as_ref().unwrap().ip().is_loopback());
-
-    assert!(fut.is_terminated());
-
-    (slot, addr.unwrap())
-}
-
-fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
-    let notifier = notifier();
-
-    let con = op::Accept::new(listener).direct().run_on(reactor.clone());
-    let mut fut = pin!(con);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
-    assert!(res.is_ok());
-    assert!(res.as_ref().unwrap().1.ip().is_loopback());
-
-    assert!(fut.is_terminated());
-
-    res.unwrap()
-}
-
-fn accept_auto_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let notifier = notifier();
-    let accept = op::Accept::new(listener).direct().run_on(reactor.clone());
-    let mut fut = pin!(accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-
-    reactor.wait();
-
-    let addr = assert_ready!(poll!(fut, notifier));
-    assert!(addr.is_err());
-}
-
-fn accept_auto_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let notifier = notifier();
-    let mut accept = op::Accept::new(listener).direct().run_on(reactor.clone());
-    let mut fut = pin!(&mut accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(accept);
-
-    reactor.wait();
-}
-
-fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let notifier = notifier();
-    let slot = reactor.get_file_slot();
-
-    let accept = op::Accept::new(listener)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-
-    reactor.wait();
-
-    let addr = assert_ready!(poll!(fut, notifier));
-    assert!(addr.is_err());
-}
-
-fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let notifier = notifier();
-    let slot = reactor.get_file_slot();
-
-    let mut accept = op::Accept::new(listener)
-        .fixed(slot)
-        .run_on(reactor.clone());
-    let mut fut = pin!(&mut accept);
-
-    assert!(poll!(fut, notifier).is_pending());
-    std::mem::drop(accept);
-
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(slot));
+    assert!(res.is_err());
     reactor.wait();
 }
 
 fn shutdown_test(reactor: ScopedReactor, sock: RawFd, how: Shutdown) -> Result<()> {
-    let notifier = notifier();
-
-    let shut = op::Shutdown::new(sock, how).run_on(reactor.clone());
-    let mut fut = pin!(shut);
-
-    assert!(poll!(fut, notifier).is_pending());
-    assert_eq!(reactor.active(), 1);
-
-    reactor.wait();
-    assert_eq!(notifier.try_recv(), Some(()));
-
-    let res = assert_ready!(poll!(fut, notifier));
-    assert!(fut.is_terminated());
-    res
+    complete_op(reactor, op::Shutdown::new(sock, how))
 }
 
 fn create_listener(reactor: ScopedReactor, addr: &str) -> (RawFd, u16) {
@@ -628,8 +359,8 @@ fn create_listener(reactor: ScopedReactor, addr: &str) -> (RawFd, u16) {
         libc::SOCK_STREAM,
     );
 
-    bind(sock, addr).unwrap();
-    listen(sock, 32).unwrap();
+    assert!(complete_op(reactor.clone(), op::Bind::new(sock, addr)).is_ok());
+    assert!(complete_op(reactor.clone(), op::Listen::new(sock, 32)).is_ok());
 
     let addr = getsockname(sock);
     let port = addr.unwrap().port();
@@ -776,8 +507,6 @@ fn errors() {
         create_socket_test(reactor.clone(), libc::AF_INET6, libc::SOCK_STREAM),
     );
 
-    assert!(bind(i32::MAX, make_addr("127.0.0.1", u16::MAX)).is_err());
-    assert!(listen(i32::MAX, i32::MAX as u32).is_err());
     assert!(getsockname(i32::MAX).is_err());
     assert!(getpeername(i32::MAX).is_err());
 
