@@ -555,7 +555,7 @@ dependencies = [
  "futures",
  "inel-interface",
  "inel-macro",
- "io-uring 0.7.7",
+ "io-uring 0.7.8 (git+https://github.com/mihneabuz/io-uring.git)",
  "libc",
  "pin-project-lite",
  "rand",
@@ -566,8 +566,9 @@ dependencies = [
 
 [[package]]
 name = "io-uring"
-version = "0.7.7"
-source = "git+https://github.com/mihneabuz/io-uring.git#bcfe0475cb02341d67f2f94752655d87ffc1fa64"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b86e202f00093dcba4275d4636b93ef9dd75d025ae560d2521b45ea28ab49013"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -577,8 +578,7 @@ dependencies = [
 [[package]]
 name = "io-uring"
 version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b86e202f00093dcba4275d4636b93ef9dd75d025ae560d2521b45ea28ab49013"
+source = "git+https://github.com/mihneabuz/io-uring.git#6a110b16d66dc4ad6993c364f68ff71aafe17a71"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -1082,7 +1082,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1140bb80481756a8cbe10541f37433b459c5aa1e727b4c020fbfebdc25bf3ec4"
 dependencies = [
  "backtrace",
- "io-uring 0.7.8",
+ "io-uring 0.7.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "mio",
  "pin-project-lite",

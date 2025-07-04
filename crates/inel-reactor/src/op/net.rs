@@ -133,6 +133,69 @@ unsafe impl Op for SocketAuto {
     }
 }
 
+pub struct Bind {
+    src: Source,
+    addr: SocketAddrCRepr,
+    len: u32,
+}
+
+impl Bind {
+    pub fn new(source: impl AsSource, addr: SocketAddr) -> Self {
+        let (addr, len) = into_raw_addr(addr);
+        Self {
+            src: source.as_source(),
+            addr,
+            len,
+        }
+    }
+}
+
+unsafe impl Op for Bind {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::Bind::new(self.src.as_raw(), self.addr.as_ptr(), self.len).build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+
+    fn entry_cancel(_: u64) -> Option<Entry> {
+        None
+    }
+}
+
+pub struct Listen {
+    src: Source,
+    backlog: u32,
+}
+
+impl Listen {
+    pub fn new(source: impl AsSource, backlog: u32) -> Self {
+        Self {
+            src: source.as_source(),
+            backlog,
+        }
+    }
+}
+
+unsafe impl Op for Listen {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::Listen::new(self.src.as_raw(), self.backlog as i32).build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+
+    fn entry_cancel(_: u64) -> Option<Entry> {
+        None
+    }
+}
+
 pub struct Connect {
     src: Source,
     addr: SocketAddrCRepr,
