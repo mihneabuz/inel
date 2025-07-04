@@ -10,21 +10,44 @@ use crate::{BufferSlotKey, Cancellation, Ring, RingReactor};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
-    fn stable_mut_ptr(&mut self) -> *mut u8;
 
     fn size(&self) -> usize;
 
     fn as_slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.stable_ptr(), self.size()) }
     }
+}
+
+pub trait StableBufferMut: StableBuffer {
+    fn stable_mut_ptr(&mut self) -> *mut u8;
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.stable_mut_ptr(), self.size()) }
     }
 }
 
-pub trait FixedBuffer: StableBuffer {
+pub trait FixedBuffer {
     fn key(&self) -> &BufferSlotKey;
+}
+
+impl StableBuffer for &'static str {
+    fn stable_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
+}
+
+impl StableBuffer for &'static [u8] {
+    fn stable_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
 }
 
 impl<const N: usize> StableBuffer for Box<[u8; N]> {
@@ -32,12 +55,14 @@ impl<const N: usize> StableBuffer for Box<[u8; N]> {
         self.as_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.as_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.as_ref().len()
+    }
+}
+
+impl<const N: usize> StableBufferMut for Box<[u8; N]> {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
     }
 }
 
@@ -46,12 +71,14 @@ impl StableBuffer for Box<[u8]> {
         self.as_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.as_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.len()
+    }
+}
+
+impl StableBufferMut for Box<[u8]> {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
     }
 }
 
@@ -60,12 +87,14 @@ impl StableBuffer for Vec<u8> {
         self.as_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.as_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.len()
+    }
+}
+
+impl StableBufferMut for Vec<u8> {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
     }
 }
 
@@ -74,12 +103,14 @@ impl StableBuffer for String {
         self.as_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.as_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.len()
+    }
+}
+
+impl StableBufferMut for String {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
     }
 }
 
@@ -114,10 +145,6 @@ where
             reactor,
         })
     }
-
-    fn unregister(&mut self) {
-        self.reactor.unregister_buffer(self.key);
-    }
 }
 
 impl<R> Drop for Fixed<R>
@@ -125,7 +152,7 @@ where
     R: Reactor<Handle = Ring>,
 {
     fn drop(&mut self) {
-        self.unregister();
+        self.reactor.unregister_buffer(self.key);
     }
 }
 
@@ -166,12 +193,17 @@ where
         self.inner.as_ref().unwrap().stable_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.inner.as_mut().unwrap().stable_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.inner.as_ref().unwrap().size()
+    }
+}
+
+impl<R> StableBufferMut for Fixed<R>
+where
+    R: Reactor<Handle = Ring>,
+{
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.inner.as_mut().unwrap().stable_mut_ptr()
     }
 }
 
@@ -252,7 +284,7 @@ where
 
 impl<B, R> AsMut<[u8]> for View<B, R>
 where
-    B: StableBuffer,
+    B: StableBufferMut,
     R: RangeBounds<usize>,
 {
     fn as_mut(&mut self) -> &mut [u8] {
@@ -278,12 +310,18 @@ where
         self.inner().stable_ptr().wrapping_add(self.start())
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.inner_mut().stable_mut_ptr().wrapping_add(self.start())
-    }
-
     fn size(&self) -> usize {
         self.end().saturating_sub(self.start())
+    }
+}
+
+impl<B, R> StableBufferMut for View<B, R>
+where
+    B: StableBufferMut,
+    R: RangeBounds<usize>,
+{
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.inner_mut().stable_mut_ptr().wrapping_add(self.start())
     }
 }
 

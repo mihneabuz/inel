@@ -9,7 +9,7 @@ use crate::{
     AsSource, Cancellation, Source,
 };
 
-pub struct Write<Buf: StableBuffer> {
+pub struct Write<Buf> {
     buf: Buf,
     src: Source,
     offset: u64,
@@ -58,7 +58,7 @@ where
     }
 }
 
-pub struct WriteFixed<Buf: FixedBuffer> {
+pub struct WriteFixed<Buf> {
     buf: Buf,
     src: Source,
     offset: u64,
@@ -66,7 +66,7 @@ pub struct WriteFixed<Buf: FixedBuffer> {
 
 impl<Buf> WriteFixed<Buf>
 where
-    Buf: FixedBuffer,
+    Buf: FixedBuffer + StableBuffer,
 {
     pub fn new(source: impl AsSource, buf: Buf) -> Self {
         Self {
@@ -84,7 +84,7 @@ where
 
 unsafe impl<Buf> Op for WriteFixed<Buf>
 where
-    Buf: FixedBuffer,
+    Buf: FixedBuffer + StableBuffer,
 {
     type Output = (Buf, Result<usize>);
 
@@ -108,7 +108,7 @@ where
     }
 }
 
-pub struct WriteVectored<Buf: StableBuffer> {
+pub struct WriteVectored<Buf> {
     bufs: Vec<Buf>,
     iovecs: Vec<libc::iovec>,
     src: Source,
@@ -176,7 +176,7 @@ where
     }
 }
 
-pub struct WriteVectoredExact<const N: usize, Buf: StableBuffer> {
+pub struct WriteVectoredExact<const N: usize, Buf> {
     bufs: [Buf; N],
     iovecs: [libc::iovec; N],
     src: Source,

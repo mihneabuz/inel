@@ -38,7 +38,7 @@ async fn run() -> std::io::Result<()> {
                 .await;
 
             if let Err(e) = res {
-                print(format!("Error: {:?}", e)).await;
+                print(format!("Error: {e:?}")).await;
             }
         });
     }

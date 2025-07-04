@@ -286,7 +286,7 @@ impl Ring {
             .ok_or(Error::other("No fixed buffer slots available"))?;
 
         let iovec = libc::iovec {
-            iov_base: buffer.stable_mut_ptr() as _,
+            iov_base: buffer.stable_ptr() as _,
             iov_len: buffer.size(),
         };
 

@@ -26,7 +26,7 @@ fn make_addr(ip: &str, port: u16) -> SocketAddr {
 fn create_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> RawFd {
     let notifier = notifier();
 
-    let mut op = op::Socket::new(domain, typ)
+    let op = op::Socket::new(domain, typ)
         .proto(0)
         .run_on(reactor.clone());
     let mut fut = pin!(op);
@@ -49,7 +49,7 @@ fn create_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> RawFd {
 fn create_socket_error_test(reactor: ScopedReactor) {
     let notifier = notifier();
 
-    let mut op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
+    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
         .proto(0)
         .run_on(reactor.clone());
     let mut fut = pin!(op);
@@ -80,7 +80,7 @@ fn create_fixed_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> Fi
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
-    let mut op = op::Socket::new(domain, typ)
+    let op = op::Socket::new(domain, typ)
         .proto(0)
         .fixed(slot)
         .run_on(reactor.clone());
@@ -105,7 +105,7 @@ fn create_fixed_socket_error_test(reactor: ScopedReactor) {
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
-    let mut op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
+    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
         .fixed(slot)
         .run_on(reactor.clone());
     let mut fut = pin!(op);
@@ -138,7 +138,7 @@ fn create_fixed_socket_cancel_test(reactor: ScopedReactor) {
 fn create_auto_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> FileSlotKey {
     let notifier = notifier();
 
-    let mut op = op::Socket::new(domain, typ)
+    let op = op::Socket::new(domain, typ)
         .proto(0)
         .direct()
         .run_on(reactor.clone());
@@ -163,7 +163,7 @@ fn create_auto_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> Fil
 fn create_auto_socket_error_test(reactor: ScopedReactor) {
     let notifier = notifier();
 
-    let mut op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
+    let op = op::Socket::new(i32::MAX - 10, i32::MAX / 3)
         .direct()
         .run_on(reactor.clone());
     let mut fut = pin!(op);
@@ -203,7 +203,7 @@ fn connect_test(reactor: ScopedReactor, addr: &str, port: u16) -> RawFd {
         libc::SOCK_STREAM,
     );
 
-    let mut con = op::Connect::new(sock, addr).run_on(reactor.clone());
+    let con = op::Connect::new(sock, addr).run_on(reactor.clone());
     let mut fut = pin!(con);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -280,7 +280,7 @@ fn connect_error_test(reactor: ScopedReactor, addr: &str) {
         libc::SOCK_STREAM,
     );
 
-    let mut con = op::Connect::new(sock, addr).run_on(reactor.clone());
+    let con = op::Connect::new(sock, addr).run_on(reactor.clone());
     let mut fut = pin!(con);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -333,7 +333,7 @@ fn connect_cancel_test_ipv6(reactor: ScopedReactor) {
 fn accept_test(reactor: ScopedReactor, sock: RawFd) -> (RawFd, SocketAddr) {
     let notifier = notifier();
 
-    let mut con = op::Accept::new(sock).run_on(reactor.clone());
+    let con = op::Accept::new(sock).run_on(reactor.clone());
     let mut fut = pin!(con);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -356,7 +356,7 @@ fn accept_test(reactor: ScopedReactor, sock: RawFd) -> (RawFd, SocketAddr) {
 fn accept_error_test(reactor: ScopedReactor, sock: RawFd) {
     let notifier = notifier();
 
-    let mut accept = op::Accept::new(sock).run_on(reactor.clone());
+    let accept = op::Accept::new(sock).run_on(reactor.clone());
     let mut fut = pin!(accept);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -473,7 +473,7 @@ fn accept_multi_direct_once_test(reactor: ScopedReactor, slot: FileSlotKey) {
 fn accept_multi_error_test(reactor: ScopedReactor, sock: RawFd) {
     let notifier = notifier();
 
-    let mut accept = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let accept = op::AcceptMulti::new(sock).run_on(reactor.clone());
     let mut fut = pin!(accept);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -486,7 +486,7 @@ fn accept_multi_error_test(reactor: ScopedReactor, sock: RawFd) {
 fn accept_multi_direct_error_test(reactor: ScopedReactor, slot: FileSlotKey) {
     let notifier = notifier();
 
-    let mut accept = op::AcceptMulti::new(slot).run_on(reactor.clone());
+    let accept = op::AcceptMulti::new(slot).run_on(reactor.clone());
     let mut fut = pin!(accept);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -500,7 +500,7 @@ fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlot
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
-    let mut con = op::Accept::new(listener)
+    let con = op::Accept::new(listener)
         .fixed(slot)
         .run_on(reactor.clone());
     let mut fut = pin!(con);
@@ -524,7 +524,7 @@ fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlot
 fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
     let notifier = notifier();
 
-    let mut con = op::Accept::new(listener).direct().run_on(reactor.clone());
+    let con = op::Accept::new(listener).direct().run_on(reactor.clone());
     let mut fut = pin!(con);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -545,7 +545,7 @@ fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotK
 
 fn accept_auto_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let notifier = notifier();
-    let mut accept = op::Accept::new(listener).direct().run_on(reactor.clone());
+    let accept = op::Accept::new(listener).direct().run_on(reactor.clone());
     let mut fut = pin!(accept);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -571,7 +571,7 @@ fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let notifier = notifier();
     let slot = reactor.get_file_slot();
 
-    let mut accept = op::Accept::new(listener)
+    let accept = op::Accept::new(listener)
         .fixed(slot)
         .run_on(reactor.clone());
     let mut fut = pin!(accept);
@@ -602,7 +602,7 @@ fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
 fn shutdown_test(reactor: ScopedReactor, sock: RawFd, how: Shutdown) -> Result<()> {
     let notifier = notifier();
 
-    let mut shut = op::Shutdown::new(sock, how).run_on(reactor.clone());
+    let shut = op::Shutdown::new(sock, how).run_on(reactor.clone());
     let mut fut = pin!(shut);
 
     assert!(poll!(fut, notifier).is_pending());

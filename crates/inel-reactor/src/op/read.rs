@@ -3,13 +3,13 @@ use std::io::Result;
 use io_uring::{opcode, squeue::Entry};
 
 use crate::{
-    buffer::{FixedBuffer, StableBuffer},
+    buffer::{FixedBuffer, StableBufferMut},
     op::{util, Op},
     ring::RingResult,
     AsSource, Cancellation, Source,
 };
 
-pub struct Read<Buf: StableBuffer> {
+pub struct Read<Buf> {
     buf: Buf,
     src: Source,
     offset: u64,
@@ -17,7 +17,7 @@ pub struct Read<Buf: StableBuffer> {
 
 impl<Buf> Read<Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     pub fn new(source: impl AsSource, buf: Buf) -> Self {
         Self {
@@ -35,7 +35,7 @@ where
 
 unsafe impl<Buf> Op for Read<Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     type Output = (Buf, Result<usize>);
 
@@ -58,7 +58,7 @@ where
     }
 }
 
-pub struct ReadFixed<Buf: FixedBuffer> {
+pub struct ReadFixed<Buf> {
     buf: Buf,
     src: Source,
     offset: u64,
@@ -84,7 +84,7 @@ where
 
 unsafe impl<Buf> Op for ReadFixed<Buf>
 where
-    Buf: FixedBuffer,
+    Buf: FixedBuffer + StableBufferMut,
 {
     type Output = (Buf, Result<usize>);
 
@@ -108,7 +108,7 @@ where
     }
 }
 
-pub struct ReadVectored<Buf: StableBuffer> {
+pub struct ReadVectored<Buf> {
     bufs: Vec<Buf>,
     iovecs: Vec<libc::iovec>,
     src: Source,
@@ -117,7 +117,7 @@ pub struct ReadVectored<Buf: StableBuffer> {
 
 impl<Buf> ReadVectored<Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     pub fn new(source: impl AsSource, bufs: Vec<Buf>) -> Self {
         let iovecs = Vec::with_capacity(bufs.len());
@@ -145,7 +145,7 @@ where
 
 unsafe impl<Buf> Op for ReadVectored<Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     type Output = (Vec<Buf>, Result<usize>);
 
@@ -176,7 +176,7 @@ where
     }
 }
 
-pub struct ReadVectoredExact<const N: usize, Buf: StableBuffer> {
+pub struct ReadVectoredExact<const N: usize, Buf> {
     bufs: [Buf; N],
     iovecs: [libc::iovec; N],
     src: Source,
@@ -185,7 +185,7 @@ pub struct ReadVectoredExact<const N: usize, Buf: StableBuffer> {
 
 impl<const N: usize, Buf> ReadVectoredExact<N, Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     pub fn new(source: impl AsSource, bufs: [Buf; N]) -> Self {
         Self {
@@ -207,7 +207,7 @@ where
 
 unsafe impl<const N: usize, Buf> Op for ReadVectoredExact<N, Buf>
 where
-    Buf: StableBuffer,
+    Buf: StableBufferMut,
 {
     type Output = ([Buf; N], Result<usize>);
 

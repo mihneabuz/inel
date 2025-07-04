@@ -6,7 +6,7 @@ use std::{
 use crate::GlobalReactor;
 
 pub use inel_reactor::buffer::{FixedBuffer, StableBuffer, View};
-use inel_reactor::{BufferSlotKey, Cancellation};
+use inel_reactor::{buffer::StableBufferMut, BufferSlotKey, Cancellation};
 
 pub trait StableBufferExt: StableBuffer {
     fn view<R>(self, range: R) -> View<Self, R>
@@ -63,12 +63,14 @@ impl StableBuffer for Fixed {
         self.0.stable_ptr()
     }
 
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
-        self.0.stable_mut_ptr()
-    }
-
     fn size(&self) -> usize {
         self.0.size()
+    }
+}
+
+impl StableBufferMut for Fixed {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.0.stable_mut_ptr()
     }
 }
 

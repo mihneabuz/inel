@@ -93,3 +93,15 @@ impl From<String> for Cancellation {
         value.into_bytes().into()
     }
 }
+
+impl From<&'static [u8]> for Cancellation {
+    fn from(_: &'static [u8]) -> Self {
+        Self::empty()
+    }
+}
+
+impl From<&'static str> for Cancellation {
+    fn from(_: &'static str) -> Self {
+        Self::empty()
+    }
+}

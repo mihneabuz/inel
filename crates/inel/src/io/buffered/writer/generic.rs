@@ -1,13 +1,13 @@
 use std::{io::Write, ops::RangeTo};
 
-use inel_reactor::buffer::{StableBuffer, View};
+use inel_reactor::buffer::{StableBufferMut, View};
 
-pub(crate) struct WBuffer<B: StableBuffer> {
+pub(crate) struct WBuffer<B: StableBufferMut> {
     buf: B,
     pos: usize,
 }
 
-impl<B: StableBuffer> WBuffer<B> {
+impl<B: StableBufferMut> WBuffer<B> {
     pub(crate) fn new(buf: B, pos: usize) -> Self {
         Self { buf, pos }
     }
@@ -51,21 +51,21 @@ impl WBuffer<Box<[u8]>> {
 }
 
 #[derive(Default)]
-pub(crate) enum BufWriterState<B: StableBuffer, F> {
+pub(crate) enum BufWriterState<B: StableBufferMut, F> {
     #[default]
     Empty,
     Pending(F),
     Ready(WBuffer<B>),
 }
 
-pub(crate) struct BufWriterGeneric<S, B: StableBuffer, F> {
+pub(crate) struct BufWriterGeneric<S, B: StableBufferMut, F> {
     pub(crate) sink: S,
     pub(crate) state: BufWriterState<B, F>,
 }
 
 impl<S, B, F> BufWriterGeneric<S, B, F>
 where
-    B: StableBuffer,
+    B: StableBufferMut,
 {
     pub(crate) fn ready(&self) -> Option<&WBuffer<B>> {
         match &self.state {

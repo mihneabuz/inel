@@ -1,6 +1,18 @@
 use std::io::Write;
 
-use inel_reactor::buffer::StableBuffer;
+use inel_reactor::buffer::{StableBuffer, StableBufferMut};
+
+#[test]
+fn staticref() {
+    let s: &'static str = "Hello World!\n";
+    let b: &'static [u8] = "Hello World!\n".as_bytes();
+
+    assert_eq!(StableBuffer::size(&s), 13);
+    assert_eq!(StableBuffer::size(&b), 13);
+
+    assert_eq!(s.as_slice(), b);
+    assert_eq!(b.as_slice(), s.as_bytes());
+}
 
 #[test]
 fn string() {
@@ -46,7 +58,7 @@ fn boxed() {
 mod view {
     use std::ops::RangeBounds;
 
-    use inel_reactor::buffer::{StableBuffer, View};
+    use inel_reactor::buffer::{StableBuffer, StableBufferMut, View};
 
     #[test]
     fn included() {

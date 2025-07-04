@@ -9,7 +9,7 @@ use std::{
 use futures::join;
 use inel_interface::Reactor;
 use inel_reactor::{
-    buffer::StableBuffer,
+    buffer::{StableBuffer, StableBufferMut},
     op::{self, OpExt},
     FileSlotKey,
 };
@@ -76,7 +76,7 @@ where
 pub async fn read<P, B>(path: P, buffer: B) -> (B, Result<usize>)
 where
     P: AsRef<Path>,
-    B: StableBuffer,
+    B: StableBufferMut,
 {
     with_slot(async |slot| {
         let open = op::OpenAt::new(path, libc::O_RDWR)

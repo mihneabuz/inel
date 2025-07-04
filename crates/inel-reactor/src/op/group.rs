@@ -6,7 +6,7 @@ use io_uring::{
 };
 
 use crate::{
-    buffer::StableBuffer,
+    buffer::StableBufferMut,
     op::{util, Op},
     ring::{BufferGroupKey, RingResult},
     AsSource, Source,
@@ -30,7 +30,7 @@ impl<B> ProvideBuffer<B> {
 
 unsafe impl<B> Op for ProvideBuffer<B>
 where
-    B: StableBuffer,
+    B: StableBufferMut,
 {
     type Output = Result<(B, u16)>;
 
