@@ -148,7 +148,7 @@ where
 pub(crate) mod util {
     use super::*;
 
-    use crate::FileSlotKey;
+    use crate::DirectSlot;
 
     pub(crate) fn expect_zero(res: &RingResult) -> Result<()> {
         let ret = res.ret();
@@ -168,10 +168,10 @@ pub(crate) mod util {
         }
     }
 
-    pub(crate) fn expect_direct(res: &RingResult) -> Result<FileSlotKey> {
+    pub(crate) fn expect_direct(res: &RingResult) -> Result<DirectSlot> {
         let ret = res.ret();
         match ret {
-            1.. => Ok(FileSlotKey::from_raw_slot(ret as u32)),
+            1.. => Ok(DirectSlot::from_raw_slot(ret as u32)),
             ..0 => Err(Error::from_raw_os_error(-ret)),
             0 => unreachable!(),
         }

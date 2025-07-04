@@ -7,9 +7,9 @@ mod source;
 mod submission;
 pub mod util;
 
-pub(crate) use reactor::RingReactor;
+pub use reactor::RingReactor;
 
 pub use cancellation::Cancellation;
-pub use ring::{BufferGroupKey, BufferSlotKey, FileSlotKey, Key, Ring, RingOptions};
+pub use ring::{BufferGroup, BufferSlot, DirectSlot, Key, Ring, RingOptions};
 pub use source::{AsSource, Source};
 pub use submission::Submission;

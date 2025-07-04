@@ -2,10 +2,11 @@ use std::marker::PhantomData;
 
 use io_uring::types::DestinationSlot;
 
-pub struct SlotRegister {
+pub struct SlotRegister<T> {
     vacant: Vec<u32>,
     len: u32,
     size: u32,
+    _phantom: PhantomData<T>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,23 +15,23 @@ pub(crate) struct SlotKey {
     _marker: PhantomData<*const ()>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BufferSlotKey(SlotKey);
+#[derive(Debug, PartialEq)]
+pub struct BufferSlot(SlotKey);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BufferGroupKey(SlotKey);
+pub struct BufferGroup(SlotKey);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FileSlotKey(SlotKey);
+#[derive(Debug, PartialEq)]
+pub struct DirectSlot(SlotKey);
 
 pub(crate) trait WrapSlotKey {
     fn wrap(key: SlotKey) -> Self;
     fn unwrap(self) -> SlotKey;
 }
 
-impl WrapSlotKey for FileSlotKey {
+impl WrapSlotKey for DirectSlot {
     fn wrap(key: SlotKey) -> Self {
-        FileSlotKey(key)
+        DirectSlot(key)
     }
 
     fn unwrap(self) -> SlotKey {
@@ -38,9 +39,9 @@ impl WrapSlotKey for FileSlotKey {
     }
 }
 
-impl WrapSlotKey for BufferSlotKey {
+impl WrapSlotKey for BufferSlot {
     fn wrap(key: SlotKey) -> Self {
-        BufferSlotKey(key)
+        BufferSlot(key)
     }
 
     fn unwrap(self) -> SlotKey {
@@ -48,9 +49,9 @@ impl WrapSlotKey for BufferSlotKey {
     }
 }
 
-impl WrapSlotKey for BufferGroupKey {
+impl WrapSlotKey for BufferGroup {
     fn wrap(key: SlotKey) -> Self {
-        BufferGroupKey(key)
+        BufferGroup(key)
     }
 
     fn unwrap(self) -> SlotKey {
@@ -58,18 +59,23 @@ impl WrapSlotKey for BufferGroupKey {
     }
 }
 
-impl SlotRegister {
+impl<T: WrapSlotKey> SlotRegister<T> {
     pub fn new(size: u32) -> Self {
         Self {
             vacant: Vec::new(),
             len: 0,
             size,
+            _phantom: PhantomData,
         }
     }
 
-    pub fn get(&mut self) -> Option<SlotKey> {
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    pub fn get(&mut self) -> Option<T> {
         if let Some(slot) = self.vacant.pop() {
-            return Some(SlotKey::new(slot));
+            return Some(T::wrap(SlotKey::new(slot)));
         };
 
         if self.len == self.size {
@@ -79,11 +85,14 @@ impl SlotRegister {
         let index = self.len;
         self.len += 1;
 
-        Some(SlotKey::new(index))
+        Some(T::wrap(SlotKey::new(index)))
     }
 
-    pub fn remove(&mut self, key: SlotKey) {
-        self.vacant.push(key.index());
+    pub fn remove(&mut self, key: T) {
+        let key = key.unwrap();
+        if key.index() < self.size() {
+            self.vacant.push(key.index());
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -104,7 +113,7 @@ impl SlotKey {
     }
 }
 
-impl FileSlotKey {
+impl DirectSlot {
     pub fn index(&self) -> u32 {
         self.0.index()
     }
@@ -118,13 +127,13 @@ impl FileSlotKey {
     }
 }
 
-impl BufferSlotKey {
+impl BufferSlot {
     pub fn index(&self) -> u32 {
         self.0.index()
     }
 }
 
-impl BufferGroupKey {
+impl BufferGroup {
     pub fn index(&self) -> u16 {
         self.0.index() as u16
     }

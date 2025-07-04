@@ -1,7 +1,7 @@
 use io_uring::types::Target as RawTarget;
 use std::os::fd::RawFd;
 
-use crate::FileSlotKey;
+use crate::DirectSlot;
 
 #[derive(Clone, Debug)]
 pub struct Source(RawTarget);
@@ -36,7 +36,7 @@ impl AsSource for RawFd {
     }
 }
 
-impl AsSource for FileSlotKey {
+impl AsSource for DirectSlot {
     fn as_source(&self) -> Source {
         Source::fixed(self.index())
     }

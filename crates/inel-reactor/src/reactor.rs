@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 use std::{io::Result, task::Waker};
 
 use inel_interface::Reactor;
@@ -5,8 +6,8 @@ use io_uring::squeue::Entry;
 
 use crate::{
     buffer::StableBuffer,
-    ring::{BufferSlotKey, RingResult},
-    Cancellation, Key, Ring,
+    ring::{BufferSlot, RingResult},
+    Cancellation, DirectSlot, Key, Ring,
 };
 
 pub trait RingReactor {
@@ -14,8 +15,11 @@ pub trait RingReactor {
     unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation);
     fn check_result(&mut self, key: Key) -> Option<RingResult>;
 
-    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlotKey>;
-    fn unregister_buffer(&mut self, key: BufferSlotKey);
+    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlot>;
+    fn unregister_buffer(&mut self, slot: BufferSlot);
+
+    fn get_direct_slot(&mut self) -> Result<DirectSlot>;
+    fn release_direct_slot(&mut self, slot: DirectSlot);
 }
 
 impl<R> RingReactor for R
@@ -34,11 +38,19 @@ where
         self.with(|react| react.check_result(key)).unwrap()
     }
 
-    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlotKey> {
+    fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlot> {
         self.with(|react| react.register_buffer(buffer)).unwrap()
     }
 
-    fn unregister_buffer(&mut self, key: BufferSlotKey) {
-        self.with(|react| react.unregister_buffer(key)).unwrap()
+    fn unregister_buffer(&mut self, slot: BufferSlot) {
+        self.with(|react| react.unregister_buffer(slot));
+    }
+
+    fn get_direct_slot(&mut self) -> Result<DirectSlot> {
+        self.with(|react| react.get_direct_slot()).unwrap()
+    }
+
+    fn release_direct_slot(&mut self, slot: DirectSlot) {
+        self.with(|react| react.release_direct_slot(slot));
     }
 }

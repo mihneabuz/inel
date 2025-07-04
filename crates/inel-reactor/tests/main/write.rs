@@ -15,7 +15,7 @@ fn single() {
     let (reactor, notifier) = runtime();
     let mut file = TempFile::with_content("");
 
-    let mut write = op::Write::new(file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut write = op::Write::new(&file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
     let mut fut = pin!(&mut write);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -41,7 +41,7 @@ fn offset() {
     let (reactor, notifier) = runtime();
     let mut file = TempFile::with_content("");
 
-    let mut write = op::Write::new(file.fd(), MESSAGE.as_bytes().to_vec())
+    let mut write = op::Write::new(&file.fd(), MESSAGE.as_bytes().to_vec())
         .offset(512)
         .run_on(reactor.clone());
     let mut fut = pin!(&mut write);
@@ -74,7 +74,7 @@ fn view() {
     let file = TempFile::with_content(&MESSAGE);
 
     let buf = MESSAGE.as_bytes().to_vec();
-    let mut read = op::Write::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
+    let mut read = op::Write::new(&file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -107,9 +107,9 @@ fn multi() {
 
     let content = MESSAGE.as_bytes().to_vec();
 
-    let mut write1 = op::Write::new(file1.fd(), content.clone()).run_on(reactor.clone());
-    let mut write2 = op::Write::new(file2.fd(), content.clone()).run_on(reactor.clone());
-    let mut write3 = op::Write::new(file3.fd(), content.clone()).run_on(reactor.clone());
+    let mut write1 = op::Write::new(&file1.fd(), content.clone()).run_on(reactor.clone());
+    let mut write2 = op::Write::new(&file2.fd(), content.clone()).run_on(reactor.clone());
+    let mut write3 = op::Write::new(&file3.fd(), content.clone()).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut write1);
     let mut fut2 = pin!(&mut write2);
@@ -165,7 +165,7 @@ fn multi() {
 fn error() {
     let (reactor, notifier) = runtime();
 
-    let mut write = op::Write::new(RawFd::from(9999), Box::new([0; 128])).run_on(reactor.clone());
+    let mut write = op::Write::new(&RawFd::from(9999), Box::new([0; 128])).run_on(reactor.clone());
     let mut fut = pin!(&mut write);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -188,11 +188,11 @@ fn cancel() {
     let file2 = TempFile::with_content("");
     let file3 = TempFile::with_content("");
 
-    let mut write1 = op::Write::new(file1.fd(), MESSAGE.to_string()).run_on(reactor.clone());
-    let mut write2 = op::Write::new(file2.fd(), MESSAGE.as_bytes().to_vec())
+    let mut write1 = op::Write::new(&file1.fd(), MESSAGE.to_string()).run_on(reactor.clone());
+    let mut write2 = op::Write::new(&file2.fd(), MESSAGE.as_bytes().to_vec())
         .offset(256)
         .run_on(reactor.clone());
-    let mut write3 = op::Write::new(file3.fd(), View::new(MESSAGE.as_bytes().to_vec(), ..512))
+    let mut write3 = op::Write::new(&file3.fd(), View::new(MESSAGE.as_bytes().to_vec(), ..512))
         .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut write1);
@@ -232,7 +232,7 @@ mod vectored {
         let mut file = TempFile::with_content("");
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
-        let mut write = op::WriteVectored::new(file.fd(), bufs).run_on(reactor.clone());
+        let mut write = op::WriteVectored::new(&file.fd(), bufs).run_on(reactor.clone());
 
         let mut fut = pin!(&mut write);
 
@@ -266,7 +266,7 @@ mod vectored {
         let mut file = TempFile::with_content("");
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
-        let mut read = op::WriteVectored::new(file.fd(), bufs)
+        let mut read = op::WriteVectored::new(&file.fd(), bufs)
             .offset(512)
             .run_on(reactor.clone());
 
@@ -304,8 +304,8 @@ mod vectored {
         let orig_bufs_exact: [Box<[u8]>; 6] = std::array::from_fn(|_| vec![0u8; 256].into());
 
         let mut write1 =
-            op::WriteVectored::new(RawFd::from(9999), orig_bufs.clone()).run_on(reactor.clone());
-        let mut write2 = op::WriteVectoredExact::new(RawFd::from(9999), orig_bufs_exact.clone())
+            op::WriteVectored::new(&RawFd::from(9999), orig_bufs.clone()).run_on(reactor.clone());
+        let mut write2 = op::WriteVectoredExact::new(&RawFd::from(9999), orig_bufs_exact.clone())
             .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut write1);
@@ -343,9 +343,9 @@ mod vectored {
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
 
-        let mut write1 = op::WriteVectored::from_iter(file1.fd(), bufs.clone().into_iter())
+        let mut write1 = op::WriteVectored::from_iter(&file1.fd(), bufs.clone().into_iter())
             .run_on(reactor.clone());
-        let mut write2 = op::WriteVectored::from_iter(file2.fd(), bufs.clone().into_iter())
+        let mut write2 = op::WriteVectored::from_iter(&file2.fd(), bufs.clone().into_iter())
             .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut write1);
@@ -381,8 +381,8 @@ mod vectored {
         let file2 = TempFile::with_content("");
 
         let bufs: [Box<[u8]>; 6] = std::array::from_fn(|_| MESSAGE.as_bytes()[0..256].into());
-        let mut w1 = op::WriteVectoredExact::new(file1.fd(), bufs.clone()).run_on(reactor.clone());
-        let mut w2 = op::WriteVectoredExact::new(file2.fd(), bufs.clone())
+        let mut w1 = op::WriteVectoredExact::new(&file1.fd(), bufs.clone()).run_on(reactor.clone());
+        let mut w2 = op::WriteVectoredExact::new(&file2.fd(), bufs.clone())
             .offset(0)
             .run_on(reactor.clone());
 
@@ -431,7 +431,7 @@ fn sync() {
     let (reactor, notifier) = runtime();
     let file = TempFile::with_content("");
 
-    let mut write = op::Write::new(file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
+    let mut write = op::Write::new(&file.fd(), MESSAGE.as_bytes().to_vec()).run_on(reactor.clone());
     let mut fut = pin!(&mut write);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -441,7 +441,7 @@ fn sync() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert!(matches!(assert_ready!(poll!(fut, notifier)), (_, Ok(_))));
 
-    let mut sync = op::Fsync::new(file.fd()).run_on(reactor.clone());
+    let mut sync = op::Fsync::new(&file.fd()).run_on(reactor.clone());
     let mut fut = pin!(&mut sync);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -451,7 +451,7 @@ fn sync() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert!(matches!(assert_ready!(poll!(fut, notifier)), Ok(())));
 
-    let mut sync_all = op::Fsync::new(file.fd())
+    let mut sync_all = op::Fsync::new(&file.fd())
         .sync_meta()
         .run_on(reactor.clone());
     let mut fut = pin!(&mut sync_all);
@@ -482,7 +482,7 @@ mod fixed {
             reactor.clone(),
         )
         .unwrap();
-        let mut write = op::WriteFixed::new(file.fd(), buf).run_on(reactor.clone());
+        let mut write = op::WriteFixed::new(&file.fd(), buf).run_on(reactor.clone());
         let mut fut = pin!(&mut write);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -516,7 +516,7 @@ mod fixed {
         )
         .unwrap();
         let mut read =
-            op::WriteFixed::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
+            op::WriteFixed::new(&file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -554,9 +554,9 @@ mod fixed {
         let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
         let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
 
-        let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
-        let mut write2 = op::WriteFixed::new(file2.fd(), buf2).run_on(reactor.clone());
-        let mut write3 = op::WriteFixed::new(file3.fd(), buf3).run_on(reactor.clone());
+        let mut write1 = op::WriteFixed::new(&file1.fd(), buf1).run_on(reactor.clone());
+        let mut write2 = op::WriteFixed::new(&file2.fd(), buf2).run_on(reactor.clone());
+        let mut write3 = op::WriteFixed::new(&file3.fd(), buf3).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut write1);
         let mut fut2 = pin!(&mut write2);
@@ -621,7 +621,7 @@ mod fixed {
             reactor.clone(),
         )
         .unwrap();
-        let mut write = op::WriteFixed::new(RawFd::from(9999), buf).run_on(reactor.clone());
+        let mut write = op::WriteFixed::new(&RawFd::from(9999), buf).run_on(reactor.clone());
         let mut fut = pin!(&mut write);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -649,12 +649,12 @@ mod fixed {
         let buf2 = Fixed::register(content.clone(), reactor.clone()).unwrap();
         let buf3 = Fixed::register(content.clone(), reactor.clone()).unwrap();
 
-        let mut write1 = op::WriteFixed::new(file1.fd(), buf1).run_on(reactor.clone());
-        let mut write2 = op::WriteFixed::new(file2.fd(), buf2)
+        let mut write1 = op::WriteFixed::new(&file1.fd(), buf1).run_on(reactor.clone());
+        let mut write2 = op::WriteFixed::new(&file2.fd(), buf2)
             .offset(256)
             .run_on(reactor.clone());
         let mut write3 =
-            op::WriteFixed::new(file3.fd(), View::new(buf3, ..512)).run_on(reactor.clone());
+            op::WriteFixed::new(&file3.fd(), View::new(buf3, ..512)).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut write1);
         let mut fut2 = pin!(&mut write2);

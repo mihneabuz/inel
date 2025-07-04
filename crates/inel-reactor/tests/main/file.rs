@@ -217,9 +217,9 @@ fn close() {
     let fd1 = std::fs::File::open(file1.name()).unwrap().into_raw_fd();
     let fd2 = std::fs::File::open(file2.name()).unwrap().into_raw_fd();
 
-    let mut close1 = op::Close::new(fd1).run_on(reactor.clone());
-    let mut close2 = op::Close::new(fd2).run_on(reactor.clone());
-    let mut error = op::Close::new(1337).run_on(reactor.clone());
+    let mut close1 = op::Close::new(&fd1).run_on(reactor.clone());
+    let mut close2 = op::Close::new(&fd2).run_on(reactor.clone());
+    let mut error = op::Close::new(&1337).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut close1);
     let mut fut2 = pin!(&mut close2);
@@ -397,34 +397,36 @@ mod direct {
         let filename1 = TempFile::new_name();
         let filename2 = TempFile::new_name();
 
-        let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
-            .fixed(slot1)
-            .run_on(reactor.clone());
-        let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-            .fixed(slot2)
-            .run_on(reactor.clone());
+        {
+            let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
+                .fixed(&slot1)
+                .run_on(reactor.clone());
+            let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
+                .fixed(&slot2)
+                .run_on(reactor.clone());
 
-        let mut fut1 = pin!(&mut creat1);
-        let mut fut2 = pin!(&mut creat2);
+            let mut fut1 = pin!(&mut creat1);
+            let mut fut2 = pin!(&mut creat2);
 
-        assert!(poll!(fut1, notifier).is_pending());
-        assert!(poll!(fut2, notifier).is_pending());
-        assert_eq!(reactor.active(), 2);
+            assert!(poll!(fut1, notifier).is_pending());
+            assert!(poll!(fut2, notifier).is_pending());
+            assert_eq!(reactor.active(), 2);
 
-        reactor.wait();
-        reactor.wait();
+            reactor.wait();
+            reactor.wait();
 
-        assert_eq!(notifier.try_recv(), Some(()));
-        assert_eq!(notifier.try_recv(), Some(()));
+            assert_eq!(notifier.try_recv(), Some(()));
+            assert_eq!(notifier.try_recv(), Some(()));
 
-        let fd1 = assert_ready!(poll!(fut1, notifier));
-        assert!(fd1.is_ok());
+            let fd1 = assert_ready!(poll!(fut1, notifier));
+            assert!(fd1.is_ok());
 
-        let fd2 = assert_ready!(poll!(fut2, notifier));
-        assert!(fd2.is_ok());
+            let fd2 = assert_ready!(poll!(fut2, notifier));
+            assert!(fd2.is_ok());
 
-        assert!(fut1.is_terminated());
-        assert!(fut2.is_terminated());
+            assert!(fut1.is_terminated());
+            assert!(fut2.is_terminated());
+        }
 
         reactor.release_file_slot(slot1);
         reactor.release_file_slot(slot2);

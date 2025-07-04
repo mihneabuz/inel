@@ -20,7 +20,7 @@ use rand::Rng;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    BufferGroupKey, FileSlotKey, Ring,
+    BufferGroup, DirectSlot, Ring,
 };
 
 macro_rules! assert_ready {
@@ -83,31 +83,31 @@ impl ScopedReactor {
         self.inner.borrow().is_done()
     }
 
-    pub fn try_get_file_slot(&self) -> Option<FileSlotKey> {
-        self.with(|reactor| reactor.get_file_slot()).unwrap().ok()
+    pub fn try_get_file_slot(&self) -> Option<DirectSlot> {
+        self.with(|reactor| reactor.get_direct_slot()).unwrap().ok()
     }
 
-    pub fn get_file_slot(&self) -> FileSlotKey {
+    pub fn get_file_slot(&self) -> DirectSlot {
         self.try_get_file_slot().unwrap()
     }
 
-    pub fn release_file_slot(&self, slot: FileSlotKey) {
-        self.with(|reactor| reactor.release_file_slot(slot))
+    pub fn release_file_slot(&self, slot: DirectSlot) {
+        self.with(|reactor| reactor.release_direct_slot(slot))
             .unwrap();
     }
 
-    pub fn get_buffer_group(&self) -> BufferGroupKey {
+    pub fn get_buffer_group(&self) -> BufferGroup {
         self.with(|reactor| reactor.get_buffer_group())
             .unwrap()
             .unwrap()
     }
 
-    pub fn release_buffer_group(&self, key: BufferGroupKey) {
-        self.with(|reactor| reactor.release_buffer_group(key))
+    pub fn release_buffer_group(&self, slot: BufferGroup) {
+        self.with(|reactor| reactor.release_buffer_group(slot))
             .unwrap();
     }
 
-    pub fn register_file(&self, fd: RawFd) -> FileSlotKey {
+    pub fn register_file(&self, fd: RawFd) -> DirectSlot {
         let notifier = WakeNotifier::new();
         let register = op::RegisterFile::new(fd).run_on(self.clone());
         let mut fut = pin!(register);

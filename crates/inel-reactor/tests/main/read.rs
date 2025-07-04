@@ -15,7 +15,7 @@ fn single() {
     let (reactor, notifier) = runtime();
     let file = TempFile::with_content(&MESSAGE);
 
-    let mut read = op::Read::new(file.fd(), Box::new([0; 1024])).run_on(reactor.clone());
+    let mut read = op::Read::new(&file.fd(), Box::new([0; 1024])).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -40,7 +40,7 @@ fn offset() {
     let (reactor, notifier) = runtime();
     let file = TempFile::with_content(&MESSAGE);
 
-    let mut read = op::Read::new(file.fd(), Box::new([0; 1024]))
+    let mut read = op::Read::new(&file.fd(), Box::new([0; 1024]))
         .offset(512)
         .run_on(reactor.clone());
     let mut fut = pin!(&mut read);
@@ -68,7 +68,7 @@ fn view() {
     let file = TempFile::with_content(&MESSAGE);
 
     let buf = Box::new([0; 1024]);
-    let mut read = op::Read::new(file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
+    let mut read = op::Read::new(&file.fd(), View::new(buf, 64..512)).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -104,9 +104,9 @@ fn multi() {
     const READ_LEN2: usize = 256;
     const READ_LEN3: usize = 512;
 
-    let mut read1 = op::Read::new(file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
-    let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2])).run_on(reactor.clone());
-    let mut read3 = op::Read::new(file3.fd(), Vec::from([0; READ_LEN3])).run_on(reactor.clone());
+    let mut read1 = op::Read::new(&file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
+    let mut read2 = op::Read::new(&file2.fd(), Box::new([0; READ_LEN2])).run_on(reactor.clone());
+    let mut read3 = op::Read::new(&file3.fd(), Vec::from([0; READ_LEN3])).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut read1);
     let mut fut2 = pin!(&mut read2);
@@ -159,7 +159,7 @@ fn multi() {
 fn error() {
     let (reactor, notifier) = runtime();
 
-    let mut read = op::Read::new(RawFd::from(9999), Box::new([0; 128])).run_on(reactor.clone());
+    let mut read = op::Read::new(&RawFd::from(9999), Box::new([0; 128])).run_on(reactor.clone());
     let mut fut = pin!(&mut read);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -186,11 +186,11 @@ fn cancel() {
     const READ_LEN2: usize = 2048;
     const READ_LEN3: usize = 2048;
 
-    let mut read1 = op::Read::new(file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
-    let mut read2 = op::Read::new(file2.fd(), Box::new([0; READ_LEN2]))
+    let mut read1 = op::Read::new(&file1.fd(), Box::new([0; READ_LEN1])).run_on(reactor.clone());
+    let mut read2 = op::Read::new(&file2.fd(), Box::new([0; READ_LEN2]))
         .offset(128)
         .run_on(reactor.clone());
-    let mut read3 = op::Read::new(file3.fd(), View::new(Box::new([0; READ_LEN3]), 128..))
+    let mut read3 = op::Read::new(&file3.fd(), View::new(Box::new([0; READ_LEN3]), 128..))
         .run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut read1);
@@ -230,7 +230,7 @@ mod vectored {
         let file = TempFile::with_content(&MESSAGE);
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
-        let mut read = op::ReadVectored::new(file.fd(), bufs).run_on(reactor.clone());
+        let mut read = op::ReadVectored::new(&file.fd(), bufs).run_on(reactor.clone());
 
         let mut fut = pin!(&mut read);
 
@@ -263,7 +263,7 @@ mod vectored {
         let file = TempFile::with_content(&MESSAGE);
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
-        let mut read = op::ReadVectored::new(file.fd(), bufs)
+        let mut read = op::ReadVectored::new(&file.fd(), bufs)
             .offset(512)
             .run_on(reactor.clone());
 
@@ -300,8 +300,8 @@ mod vectored {
         let orig_bufs_exact: [Box<[u8]>; 6] = std::array::from_fn(|_| vec![0u8; 256].into());
 
         let mut read1 =
-            op::ReadVectored::new(RawFd::from(9999), orig_bufs.clone()).run_on(reactor.clone());
-        let mut read2 = op::ReadVectoredExact::new(RawFd::from(9999), orig_bufs_exact.clone())
+            op::ReadVectored::new(&RawFd::from(9999), orig_bufs.clone()).run_on(reactor.clone());
+        let mut read2 = op::ReadVectoredExact::new(&RawFd::from(9999), orig_bufs_exact.clone())
             .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
@@ -339,9 +339,9 @@ mod vectored {
 
         let bufs: Vec<Box<[u8]>> = vec![vec![0u8; 256].into(); 6];
 
-        let mut read1 = op::ReadVectored::from_iter(file1.fd(), bufs.clone().into_iter())
+        let mut read1 = op::ReadVectored::from_iter(&file1.fd(), bufs.clone().into_iter())
             .run_on(reactor.clone());
-        let mut read2 = op::ReadVectored::from_iter(file2.fd(), bufs.clone().into_iter())
+        let mut read2 = op::ReadVectored::from_iter(&file2.fd(), bufs.clone().into_iter())
             .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
@@ -377,8 +377,8 @@ mod vectored {
         let file2 = TempFile::with_content(&MESSAGE);
 
         let bufs: [Box<[u8]>; 6] = std::array::from_fn(|_| vec![0u8; 256].into());
-        let mut r1 = op::ReadVectoredExact::new(file1.fd(), bufs.clone()).run_on(reactor.clone());
-        let mut r2 = op::ReadVectoredExact::new(file2.fd(), bufs.clone())
+        let mut r1 = op::ReadVectoredExact::new(&file1.fd(), bufs.clone()).run_on(reactor.clone());
+        let mut r2 = op::ReadVectoredExact::new(&file2.fd(), bufs.clone())
             .offset(0)
             .run_on(reactor.clone());
 
@@ -433,7 +433,7 @@ mod fixed {
         let slot = reactor.register_file(file.fd());
 
         let buf = Fixed::register(Box::new([0; 1024]), reactor.clone()).unwrap();
-        let mut read = op::ReadFixed::new(slot, buf).run_on(reactor.clone());
+        let mut read = op::ReadFixed::new(&slot, buf).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -462,7 +462,7 @@ mod fixed {
         let slot = reactor.register_file(file.fd());
 
         let buf = Fixed::register(Box::new([0; 1024]), reactor.clone()).unwrap();
-        let mut read = op::ReadFixed::new(slot, View::new(buf, 64..512)).run_on(reactor.clone());
+        let mut read = op::ReadFixed::new(&slot, View::new(buf, 64..512)).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -504,9 +504,9 @@ mod fixed {
         let buf2 = Fixed::new(READ_LEN2, reactor.clone()).unwrap();
         let buf3 = Fixed::new(READ_LEN3, reactor.clone()).unwrap();
 
-        let mut read1 = op::ReadFixed::new(file1.fd(), buf1).run_on(reactor.clone());
-        let mut read2 = op::ReadFixed::new(file2.fd(), buf2).run_on(reactor.clone());
-        let mut read3 = op::ReadFixed::new(file3.fd(), buf3).run_on(reactor.clone());
+        let mut read1 = op::ReadFixed::new(&file1.fd(), buf1).run_on(reactor.clone());
+        let mut read2 = op::ReadFixed::new(&file2.fd(), buf2).run_on(reactor.clone());
+        let mut read3 = op::ReadFixed::new(&file3.fd(), buf3).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
         let mut fut2 = pin!(&mut read2);
@@ -564,7 +564,7 @@ mod fixed {
         let (reactor, notifier) = runtime();
 
         let buf = Fixed::register(Box::new([0; 128]), reactor.clone()).unwrap();
-        let mut read = op::ReadFixed::new(RawFd::from(9999), buf).run_on(reactor.clone());
+        let mut read = op::ReadFixed::new(&RawFd::from(9999), buf).run_on(reactor.clone());
         let mut fut = pin!(&mut read);
 
         assert!(poll!(fut, notifier).is_pending());
@@ -599,12 +599,12 @@ mod fixed {
         let buf2 = Fixed::new(READ_LEN2, reactor.clone()).unwrap();
         let buf3 = Fixed::new(READ_LEN3, reactor.clone()).unwrap();
 
-        let mut read1 = op::ReadFixed::new(file1.fd(), buf1).run_on(reactor.clone());
-        let mut read2 = op::ReadFixed::new(file2.fd(), buf2)
+        let mut read1 = op::ReadFixed::new(&file1.fd(), buf1).run_on(reactor.clone());
+        let mut read2 = op::ReadFixed::new(&file2.fd(), buf2)
             .offset(128)
             .run_on(reactor.clone());
         let mut read3 =
-            op::ReadFixed::new(file3.fd(), View::new(buf3, 128..)).run_on(reactor.clone());
+            op::ReadFixed::new(&file3.fd(), View::new(buf3, 128..)).run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut read1);
         let mut fut2 = pin!(&mut read2);

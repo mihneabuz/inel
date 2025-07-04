@@ -203,11 +203,11 @@ impl File {
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(self.fd.as_raw()).run_on(GlobalReactor).await
+        op::Fsync::new(&self.fd).run_on(GlobalReactor).await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(self.fd.as_raw())
+        op::Fsync::new(&self.fd)
             .sync_meta()
             .run_on(GlobalReactor)
             .await
@@ -236,13 +236,13 @@ impl AsRawFd for File {
 
 impl ReadSource for File {
     fn read_source(&self) -> Source {
-        self.as_raw_fd().as_source()
+        self.fd.as_source()
     }
 }
 
 impl WriteSource for File {
     fn write_source(&self) -> Source {
-        self.as_raw_fd().as_source()
+        self.fd.as_source()
     }
 }
 
@@ -262,13 +262,11 @@ impl DirectFile {
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(self.direct.as_slot())
-            .run_on(GlobalReactor)
-            .await
+        op::Fsync::new(&self.direct).run_on(GlobalReactor).await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(self.direct.as_slot())
+        op::Fsync::new(&self.direct)
             .sync_meta()
             .run_on(GlobalReactor)
             .await
@@ -277,12 +275,12 @@ impl DirectFile {
 
 impl ReadSource for DirectFile {
     fn read_source(&self) -> Source {
-        self.direct.as_slot().as_source()
+        self.direct.as_source()
     }
 }
 
 impl WriteSource for DirectFile {
     fn write_source(&self) -> Source {
-        self.direct.as_slot().as_source()
+        self.direct.as_source()
     }
 }

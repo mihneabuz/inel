@@ -8,18 +8,18 @@ use io_uring::{
 use crate::{
     buffer::StableBufferMut,
     op::{util, Op},
-    ring::{BufferGroupKey, RingResult},
+    ring::{BufferGroup, RingResult},
     AsSource, Source,
 };
 
 pub struct ProvideBuffer<B> {
-    group: BufferGroupKey,
+    group: BufferGroup,
     buffer: ManuallyDrop<B>,
     id: u16,
 }
 
 impl<B> ProvideBuffer<B> {
-    pub fn new(group: BufferGroupKey, buffer: B, id: u16) -> Self {
+    pub fn new(group: BufferGroup, buffer: B, id: u16) -> Self {
         Self {
             buffer: ManuallyDrop::new(buffer),
             group,
@@ -51,12 +51,12 @@ where
 }
 
 pub struct RemoveBuffers {
-    group: BufferGroupKey,
+    group: BufferGroup,
     count: u16,
 }
 
 impl RemoveBuffers {
-    pub fn new(group: BufferGroupKey, count: u16) -> Self {
+    pub fn new(group: BufferGroup, count: u16) -> Self {
         Self { group, count }
     }
 }
@@ -75,11 +75,11 @@ unsafe impl Op for RemoveBuffers {
 
 pub struct ReadGroup {
     source: Source,
-    group: BufferGroupKey,
+    group: BufferGroup,
 }
 
 impl ReadGroup {
-    pub fn new(source: impl AsSource, group: BufferGroupKey) -> Self {
+    pub fn new(source: impl AsSource, group: BufferGroup) -> Self {
         Self {
             source: source.as_source(),
             group,

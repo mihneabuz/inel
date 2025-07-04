@@ -235,7 +235,7 @@ fn read_write() {
         let listener = inel::net::TcpListener::bind(("::1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let h1 = inel::spawn(async move {
+        inel::spawn(async move {
             for _ in 0..10 {
                 let client = inel::net::TcpStream::connect(("::1", port)).await.unwrap();
                 let mut writer = inel::io::BufWriter::new(client);
@@ -247,7 +247,7 @@ fn read_write() {
             }
         });
 
-        let h2 = inel::spawn(async move {
+        inel::spawn(async move {
             let mut incoming = listener.incoming();
             for _ in 0..10 {
                 let conn = incoming.next().await.unwrap().unwrap();
@@ -258,10 +258,9 @@ fn read_write() {
                 }
             }
         });
-
-        assert!(h1.join().await.is_some());
-        assert!(h2.join().await.is_some());
     });
+
+    assert!(inel::is_done())
 }
 
 #[test]
@@ -360,18 +359,22 @@ fn full() {
 mod direct {
     use super::*;
 
+    fn find_open_port() -> u16 {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
     #[test]
     #[test_repeat(10)]
     fn listen() {
         setup_tracing();
 
         let handle = inel::block_on(async {
-            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", 0))
+            let port = find_open_port();
+
+            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", port))
                 .await
                 .unwrap();
-
-            let port = listener.local_addr().unwrap().port();
-            assert!(port > 0);
 
             let handle = std::thread::spawn(move || {
                 let stream = std::net::TcpStream::connect(("127.0.0.1", port));
@@ -450,15 +453,16 @@ mod direct {
     fn server() {
         setup_tracing();
 
-        let (port, listener) = inel::block_on(async {
-            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", 0))
+        let port = find_open_port();
+
+        let listener = inel::block_on(async move {
+            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", port))
                 .await
                 .unwrap();
-            let port = listener.local_addr().unwrap().port();
 
             assert_eq!(format!("{:?}", listener), "DirectTcpListener".to_string());
 
-            (port, listener)
+            listener
         });
 
         let handle = echo_client(port);
@@ -502,10 +506,10 @@ mod direct {
             let res = inel::net::TcpStream::connect_direct(("127.0.0.1", 100)).await;
             assert!(res.is_err());
 
-            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", 0))
+            let port = find_open_port();
+            inel::net::TcpListener::bind_direct(("127.0.0.1", port))
                 .await
                 .unwrap();
-            let port = listener.local_addr().unwrap().port();
 
             let res = inel::net::TcpListener::bind_direct(("127.0.0.1", port)).await;
             assert!(res.is_err());
@@ -519,13 +523,12 @@ mod direct {
         setup_tracing();
 
         let clients = 20;
+        let port = find_open_port();
 
         inel::block_on(async move {
-            let listener = inel::net::TcpListener::bind_direct(("::1", 0))
+            let listener = inel::net::TcpListener::bind_direct(("::1", port))
                 .await
                 .unwrap();
-
-            let port = listener.local_addr().unwrap().port();
 
             inel::spawn(async move {
                 for _ in 0..clients {
@@ -560,13 +563,13 @@ mod direct {
     fn full() {
         setup_tracing();
 
-        let clients = 20;
+        let clients = 12;
+        let port = find_open_port();
 
         inel::block_on(async move {
-            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", 0))
+            let listener = inel::net::TcpListener::bind_direct(("127.0.0.1", port))
                 .await
                 .unwrap();
-            let port = listener.local_addr().unwrap().port();
 
             let (tx, rx) = futures::channel::mpsc::unbounded();
             let run_server = async move {

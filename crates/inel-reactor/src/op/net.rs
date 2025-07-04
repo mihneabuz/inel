@@ -12,7 +12,7 @@ use crate::{
     op::{util, MultiOp, Op},
     ring::RingResult,
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
-    AsSource, Cancellation, FileSlotKey, Source,
+    AsSource, Cancellation, DirectSlot, Source,
 };
 
 pub struct Socket {
@@ -45,7 +45,7 @@ impl Socket {
         self
     }
 
-    pub fn fixed(self, slot: FileSlotKey) -> SocketFixed {
+    pub fn fixed(self, slot: &DirectSlot) -> SocketFixed {
         SocketFixed::from_raw(self, slot)
     }
 
@@ -76,12 +76,15 @@ unsafe impl Op for Socket {
 
 pub struct SocketFixed {
     inner: Socket,
-    slot: FileSlotKey,
+    slot: DestinationSlot,
 }
 
 impl SocketFixed {
-    fn from_raw(op: Socket, slot: FileSlotKey) -> Self {
-        Self { inner: op, slot }
+    fn from_raw(op: Socket, slot: &DirectSlot) -> Self {
+        Self {
+            inner: op,
+            slot: slot.as_destination_slot(),
+        }
     }
 }
 
@@ -89,10 +92,7 @@ unsafe impl Op for SocketFixed {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        self.inner
-            .entry_raw()
-            .file_index(Some(self.slot.as_destination_slot()))
-            .build()
+        self.inner.entry_raw().file_index(Some(self.slot)).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
@@ -115,7 +115,7 @@ impl SocketAuto {
 }
 
 unsafe impl Op for SocketAuto {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -238,7 +238,7 @@ impl Accept {
         }
     }
 
-    pub fn fixed(self, slot: FileSlotKey) -> AcceptFixed {
+    pub fn fixed(self, slot: &DirectSlot) -> AcceptFixed {
         AcceptFixed::from_raw(self, slot)
     }
 
@@ -277,12 +277,15 @@ unsafe impl Op for Accept {
 
 pub struct AcceptFixed {
     inner: Accept,
-    slot: FileSlotKey,
+    slot: DestinationSlot,
 }
 
 impl AcceptFixed {
-    fn from_raw(op: Accept, slot: FileSlotKey) -> Self {
-        Self { inner: op, slot }
+    fn from_raw(op: Accept, slot: &DirectSlot) -> Self {
+        Self {
+            inner: op,
+            slot: slot.as_destination_slot(),
+        }
     }
 }
 
@@ -290,10 +293,7 @@ unsafe impl Op for AcceptFixed {
     type Output = Result<SocketAddr>;
 
     fn entry(&mut self) -> Entry {
-        self.inner
-            .entry_raw()
-            .file_index(Some(self.slot.as_destination_slot()))
-            .build()
+        self.inner.entry_raw().file_index(Some(self.slot)).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
@@ -319,7 +319,7 @@ impl AcceptAuto {
 }
 
 unsafe impl Op for AcceptAuto {
-    type Output = Result<(FileSlotKey, SocketAddr)>;
+    type Output = Result<(DirectSlot, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -342,14 +342,18 @@ unsafe impl Op for AcceptAuto {
 
 pub struct Shutdown {
     src: Source,
-    how: std::net::Shutdown,
+    how: libc::c_int,
 }
 
 impl Shutdown {
     pub fn new(source: &impl AsSource, how: std::net::Shutdown) -> Self {
         Self {
             src: source.as_source(),
-            how,
+            how: match how {
+                std::net::Shutdown::Read => libc::SHUT_RD,
+                std::net::Shutdown::Write => libc::SHUT_WR,
+                std::net::Shutdown::Both => libc::SHUT_RDWR,
+            },
         }
     }
 }
@@ -358,12 +362,7 @@ unsafe impl Op for Shutdown {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        let how = match self.how {
-            std::net::Shutdown::Read => libc::SHUT_RD,
-            std::net::Shutdown::Write => libc::SHUT_WR,
-            std::net::Shutdown::Both => libc::SHUT_RDWR,
-        };
-        opcode::Shutdown::new(self.src.as_raw(), how).build()
+        opcode::Shutdown::new(self.src.as_raw(), self.how).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
@@ -414,7 +413,7 @@ pub struct AcceptMultiAuto {
 }
 
 unsafe impl Op for AcceptMultiAuto {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         opcode::AcceptMulti::new(self.src.as_raw())

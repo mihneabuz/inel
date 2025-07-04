@@ -19,7 +19,7 @@ impl<Buf> Read<Buf>
 where
     Buf: StableBufferMut,
 {
-    pub fn new(source: impl AsSource, buf: Buf) -> Self {
+    pub fn new(source: &impl AsSource, buf: Buf) -> Self {
         Self {
             buf,
             src: source.as_source(),
@@ -68,7 +68,7 @@ impl<Buf> ReadFixed<Buf>
 where
     Buf: FixedBuffer,
 {
-    pub fn new(source: impl AsSource, buf: Buf) -> Self {
+    pub fn new(source: &impl AsSource, buf: Buf) -> Self {
         Self {
             buf,
             src: source.as_source(),
@@ -93,7 +93,7 @@ where
             self.src.as_raw(),
             self.buf.stable_mut_ptr(),
             self.buf.size() as u32,
-            self.buf.key().index() as u16,
+            self.buf.slot().index() as u16,
         )
         .offset(self.offset)
         .build()
@@ -119,7 +119,7 @@ impl<Buf> ReadVectored<Buf>
 where
     Buf: StableBufferMut,
 {
-    pub fn new(source: impl AsSource, bufs: Vec<Buf>) -> Self {
+    pub fn new(source: &impl AsSource, bufs: Vec<Buf>) -> Self {
         let iovecs = Vec::with_capacity(bufs.len());
         Self {
             bufs,
@@ -129,7 +129,7 @@ where
         }
     }
 
-    pub fn from_iter<I>(source: impl AsSource, bufs: I) -> Self
+    pub fn from_iter<I>(source: &impl AsSource, bufs: I) -> Self
     where
         I: Iterator<Item = Buf>,
     {
@@ -187,7 +187,7 @@ impl<const N: usize, Buf> ReadVectoredExact<N, Buf>
 where
     Buf: StableBufferMut,
 {
-    pub fn new(source: impl AsSource, bufs: [Buf; N]) -> Self {
+    pub fn new(source: &impl AsSource, bufs: [Buf; N]) -> Self {
         Self {
             bufs,
             iovecs: std::array::from_fn(|_| libc::iovec {
