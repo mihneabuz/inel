@@ -140,7 +140,7 @@ pub struct Bind {
 }
 
 impl Bind {
-    pub fn new(source: impl AsSource, addr: SocketAddr) -> Self {
+    pub fn new(source: &impl AsSource, addr: SocketAddr) -> Self {
         let (addr, len) = into_raw_addr(addr);
         Self {
             src: source.as_source(),
@@ -172,7 +172,7 @@ pub struct Listen {
 }
 
 impl Listen {
-    pub fn new(source: impl AsSource, backlog: u32) -> Self {
+    pub fn new(source: &impl AsSource, backlog: u32) -> Self {
         Self {
             src: source.as_source(),
             backlog,
@@ -203,7 +203,7 @@ pub struct Connect {
 }
 
 impl Connect {
-    pub fn new(source: impl AsSource, addr: SocketAddr) -> Self {
+    pub fn new(source: &impl AsSource, addr: SocketAddr) -> Self {
         let (addr, len) = into_raw_addr(addr);
         Self {
             src: source.as_source(),
@@ -231,7 +231,7 @@ pub struct Accept {
 }
 
 impl Accept {
-    pub fn new(source: impl AsSource) -> Self {
+    pub fn new(source: &impl AsSource) -> Self {
         Self {
             src: source.as_source(),
             addr: Box::new_uninit(),
@@ -346,7 +346,7 @@ pub struct Shutdown {
 }
 
 impl Shutdown {
-    pub fn new(source: impl AsSource, how: std::net::Shutdown) -> Self {
+    pub fn new(source: &impl AsSource, how: std::net::Shutdown) -> Self {
         Self {
             src: source.as_source(),
             how,
@@ -380,7 +380,7 @@ pub struct AcceptMulti {
 }
 
 impl AcceptMulti {
-    pub fn new(source: impl AsSource) -> Self {
+    pub fn new(source: &impl AsSource) -> Self {
         Self {
             src: source.as_source(),
         }

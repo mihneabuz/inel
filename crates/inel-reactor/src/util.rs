@@ -84,15 +84,6 @@ fn check_ret(ret: i32) -> Result<()> {
     }
 }
 
-pub fn bind(sock: RawFd, addr: SocketAddr) -> Result<()> {
-    let (addr, len) = into_raw_addr(addr);
-    check_ret(unsafe { libc::bind(sock, addr.as_ptr() as *const _, len) })
-}
-
-pub fn listen(sock: RawFd, capacity: u32) -> Result<()> {
-    check_ret(unsafe { libc::listen(sock, capacity as i32) })
-}
-
 pub fn getsockname(sock: RawFd) -> Result<SocketAddr> {
     let mut addr: MaybeUninit<SocketAddrCRepr> = MaybeUninit::uninit();
     let mut len = std::mem::size_of::<SocketAddrCRepr>() as u32;

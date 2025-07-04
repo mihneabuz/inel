@@ -124,7 +124,7 @@ fn connect_test(reactor: ScopedReactor, addr: &str, port: u16) -> RawFd {
         libc::SOCK_STREAM,
     );
 
-    let res = complete_op(reactor, op::Connect::new(sock, addr));
+    let res = complete_op(reactor, op::Connect::new(&sock, addr));
     assert!(res.is_ok());
 
     sock
@@ -142,7 +142,7 @@ fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> FileSlot
         libc::SOCK_STREAM,
     );
 
-    let res = complete_op(reactor, op::Connect::new(slot, addr));
+    let res = complete_op(reactor, op::Connect::new(&slot, addr));
     assert!(res.is_ok());
 
     slot
@@ -176,7 +176,7 @@ fn connect_error_test(reactor: ScopedReactor, addr: &str) {
         libc::SOCK_STREAM,
     );
 
-    let res = complete_op(reactor, op::Connect::new(sock, addr));
+    let res = complete_op(reactor, op::Connect::new(&sock, addr));
     assert!(res.is_err());
 }
 
@@ -200,7 +200,7 @@ fn connect_cancel_test(reactor: ScopedReactor, addr: &str) {
         libc::SOCK_STREAM,
     );
 
-    cancel_op(reactor, op::Connect::new(sock, addr));
+    cancel_op(reactor, op::Connect::new(&sock, addr));
 }
 
 fn connect_cancel_test_ipv4(reactor: ScopedReactor) {
@@ -212,7 +212,7 @@ fn connect_cancel_test_ipv6(reactor: ScopedReactor) {
 }
 
 fn accept_test(reactor: ScopedReactor, sock: RawFd) -> (RawFd, SocketAddr) {
-    let addr = complete_op(reactor, op::Accept::new(sock));
+    let addr = complete_op(reactor, op::Accept::new(&sock));
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().0 > 0);
     assert!(addr.as_ref().unwrap().1.ip().is_loopback());
@@ -220,17 +220,17 @@ fn accept_test(reactor: ScopedReactor, sock: RawFd) -> (RawFd, SocketAddr) {
 }
 
 fn accept_error_test(reactor: ScopedReactor, sock: RawFd) {
-    let addr = complete_op(reactor, op::Accept::new(sock));
+    let addr = complete_op(reactor, op::Accept::new(&sock));
     assert!(addr.is_err());
 }
 
 fn accept_cancel_test(reactor: ScopedReactor, sock: RawFd) {
-    cancel_op(reactor, op::Accept::new(sock));
+    cancel_op(reactor, op::Accept::new(&sock));
 }
 
 fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
     let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor, op::Accept::new(listener).fixed(slot));
+    let addr = complete_op(reactor, op::Accept::new(&listener).fixed(slot));
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().ip().is_loopback());
     (slot, addr.unwrap())
@@ -238,36 +238,36 @@ fn accept_fixed_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlot
 
 fn accept_fixed_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor.clone(), op::Accept::new(listener).fixed(slot));
+    let addr = complete_op(reactor.clone(), op::Accept::new(&listener).fixed(slot));
     assert!(addr.is_err());
     reactor.release_file_slot(slot);
 }
 
 fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
     let slot = reactor.get_file_slot();
-    cancel_op(reactor.clone(), op::Accept::new(listener).fixed(slot));
+    cancel_op(reactor.clone(), op::Accept::new(&listener).fixed(slot));
     reactor.release_file_slot(slot);
 }
 
 fn accept_auto_test(reactor: ScopedReactor, listener: FileSlotKey) -> (FileSlotKey, SocketAddr) {
-    let addr = complete_op(reactor, op::Accept::new(listener).direct());
+    let addr = complete_op(reactor, op::Accept::new(&listener).direct());
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().1.ip().is_loopback());
     addr.unwrap()
 }
 
 fn accept_auto_error_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    let addr = complete_op(reactor, op::Accept::new(listener).direct());
+    let addr = complete_op(reactor, op::Accept::new(&listener).direct());
     assert!(addr.is_err());
 }
 
 fn accept_auto_cancel_test(reactor: ScopedReactor, listener: FileSlotKey) {
-    cancel_op(reactor, op::Accept::new(listener).direct());
+    cancel_op(reactor, op::Accept::new(&listener).direct());
 }
 
 fn accept_multi_test(reactor: ScopedReactor, sock: RawFd, count: usize) {
     let notifier = notifier();
-    let mut con = op::AcceptMulti::new(sock).run_on(reactor.clone());
+    let mut con = op::AcceptMulti::new(&sock).run_on(reactor.clone());
     let mut stream = pin!(&mut con);
 
     for _ in 0..count {
@@ -295,7 +295,7 @@ fn accept_multi_test(reactor: ScopedReactor, sock: RawFd, count: usize) {
 fn accept_multi_direct_test(reactor: ScopedReactor, slot: FileSlotKey, count: usize) {
     let notifier = notifier();
 
-    let mut con = op::AcceptMulti::new(slot).direct().run_on(reactor.clone());
+    let mut con = op::AcceptMulti::new(&slot).direct().run_on(reactor.clone());
     let mut stream = pin!(&mut con);
 
     for _ in 0..count {
@@ -320,31 +320,31 @@ fn accept_multi_direct_test(reactor: ScopedReactor, slot: FileSlotKey, count: us
 }
 
 fn accept_multi_once_test(reactor: ScopedReactor, sock: RawFd) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(sock));
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&sock));
     assert!(res.is_ok());
     reactor.wait();
 }
 
 fn accept_multi_direct_once_test(reactor: ScopedReactor, slot: FileSlotKey) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(slot));
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&slot));
     assert!(res.is_ok());
     reactor.wait();
 }
 
 fn accept_multi_error_test(reactor: ScopedReactor, sock: RawFd) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(sock));
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&sock));
     assert!(res.is_err());
     reactor.wait();
 }
 
 fn accept_multi_direct_error_test(reactor: ScopedReactor, slot: FileSlotKey) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(slot));
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&slot));
     assert!(res.is_err());
     reactor.wait();
 }
 
 fn shutdown_test(reactor: ScopedReactor, sock: RawFd, how: Shutdown) -> Result<()> {
-    complete_op(reactor, op::Shutdown::new(sock, how))
+    complete_op(reactor, op::Shutdown::new(&sock, how))
 }
 
 fn create_listener(reactor: ScopedReactor, addr: &str) -> (RawFd, u16) {
@@ -359,8 +359,8 @@ fn create_listener(reactor: ScopedReactor, addr: &str) -> (RawFd, u16) {
         libc::SOCK_STREAM,
     );
 
-    assert!(complete_op(reactor.clone(), op::Bind::new(sock, addr)).is_ok());
-    assert!(complete_op(reactor.clone(), op::Listen::new(sock, 32)).is_ok());
+    assert!(complete_op(reactor.clone(), op::Bind::new(&sock, addr)).is_ok());
+    assert!(complete_op(reactor.clone(), op::Listen::new(&sock, 32)).is_ok());
 
     let addr = getsockname(sock);
     let port = addr.unwrap().port();
