@@ -93,7 +93,7 @@ where
             self.src.as_raw(),
             self.buf.stable_ptr(),
             self.buf.size() as u32,
-            self.buf.key().index() as u16,
+            self.buf.slot().index() as u16,
         )
         .offset(self.offset)
         .build()

@@ -15,7 +15,7 @@ use io_uring::{
 use crate::{
     op::{util, Op},
     ring::RingResult,
-    AsSource, Cancellation, FileSlotKey, Source,
+    AsSource, Cancellation, DirectSlot, Source,
 };
 
 pub struct OpenAt<S> {
@@ -63,7 +63,7 @@ impl<S: AsRef<CStr>> OpenAt<S> {
         self
     }
 
-    pub fn fixed(self, slot: &FileSlotKey) -> OpenAtFixed<S> {
+    pub fn fixed(self, slot: &DirectSlot) -> OpenAtFixed<S> {
         OpenAtFixed::from_raw(self, slot)
     }
 
@@ -96,7 +96,7 @@ pub struct OpenAtFixed<S> {
 }
 
 impl<S: AsRef<CStr>> OpenAtFixed<S> {
-    pub fn from_raw(inner: OpenAt<S>, slot: &FileSlotKey) -> Self {
+    pub fn from_raw(inner: OpenAt<S>, slot: &DirectSlot) -> Self {
         Self {
             inner,
             slot: slot.as_destination_slot(),
@@ -127,7 +127,7 @@ impl<S: AsRef<CStr>> OpenAtAuto<S> {
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAtAuto<S> {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -187,7 +187,7 @@ impl<S: AsRef<CStr>> OpenAt2<S> {
         self
     }
 
-    pub fn fixed(self, slot: &FileSlotKey) -> OpenAt2Fixed<S> {
+    pub fn fixed(self, slot: &DirectSlot) -> OpenAt2Fixed<S> {
         OpenAt2Fixed::from_raw(self, slot)
     }
 
@@ -218,7 +218,7 @@ pub struct OpenAt2Fixed<S> {
 }
 
 impl<S: AsRef<CStr>> OpenAt2Fixed<S> {
-    pub fn from_raw(inner: OpenAt2<S>, slot: &FileSlotKey) -> Self {
+    pub fn from_raw(inner: OpenAt2<S>, slot: &DirectSlot) -> Self {
         Self {
             inner,
             slot: slot.as_destination_slot(),
@@ -249,7 +249,7 @@ impl<S: AsRef<CStr>> OpenAt2Auto<S> {
 }
 
 unsafe impl<S: AsRef<CStr>> Op for OpenAt2Auto<S> {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         self.inner

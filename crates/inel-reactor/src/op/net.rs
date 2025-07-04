@@ -12,7 +12,7 @@ use crate::{
     op::{util, MultiOp, Op},
     ring::RingResult,
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
-    AsSource, Cancellation, FileSlotKey, Source,
+    AsSource, Cancellation, DirectSlot, Source,
 };
 
 pub struct Socket {
@@ -45,7 +45,7 @@ impl Socket {
         self
     }
 
-    pub fn fixed(self, slot: &FileSlotKey) -> SocketFixed {
+    pub fn fixed(self, slot: &DirectSlot) -> SocketFixed {
         SocketFixed::from_raw(self, slot)
     }
 
@@ -80,7 +80,7 @@ pub struct SocketFixed {
 }
 
 impl SocketFixed {
-    fn from_raw(op: Socket, slot: &FileSlotKey) -> Self {
+    fn from_raw(op: Socket, slot: &DirectSlot) -> Self {
         Self {
             inner: op,
             slot: slot.as_destination_slot(),
@@ -115,7 +115,7 @@ impl SocketAuto {
 }
 
 unsafe impl Op for SocketAuto {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -238,7 +238,7 @@ impl Accept {
         }
     }
 
-    pub fn fixed(self, slot: &FileSlotKey) -> AcceptFixed {
+    pub fn fixed(self, slot: &DirectSlot) -> AcceptFixed {
         AcceptFixed::from_raw(self, slot)
     }
 
@@ -281,7 +281,7 @@ pub struct AcceptFixed {
 }
 
 impl AcceptFixed {
-    fn from_raw(op: Accept, slot: &FileSlotKey) -> Self {
+    fn from_raw(op: Accept, slot: &DirectSlot) -> Self {
         Self {
             inner: op,
             slot: slot.as_destination_slot(),
@@ -319,7 +319,7 @@ impl AcceptAuto {
 }
 
 unsafe impl Op for AcceptAuto {
-    type Output = Result<(FileSlotKey, SocketAddr)>;
+    type Output = Result<(DirectSlot, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -413,7 +413,7 @@ pub struct AcceptMultiAuto {
 }
 
 unsafe impl Op for AcceptMultiAuto {
-    type Output = Result<FileSlotKey>;
+    type Output = Result<DirectSlot>;
 
     fn entry(&mut self) -> Entry {
         opcode::AcceptMulti::new(self.src.as_raw())

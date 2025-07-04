@@ -2,7 +2,7 @@ use std::{io::Result, mem::ManuallyDrop, os::fd::RawFd};
 
 use inel_reactor::{
     op::{self, OpExt},
-    AsSource, FileSlotKey, RingReactor, Source,
+    AsSource, DirectSlot, RingReactor, Source,
 };
 
 use crate::GlobalReactor;
@@ -42,7 +42,7 @@ impl Drop for OwnedFd {
 }
 
 pub struct OwnedDirect {
-    slot: ManuallyDrop<FileSlotKey>,
+    slot: ManuallyDrop<DirectSlot>,
     manual: bool,
 }
 
@@ -54,21 +54,21 @@ impl AsSource for OwnedDirect {
 
 impl OwnedDirect {
     pub fn reserve() -> Result<Self> {
-        let slot = GlobalReactor.get_file_slot()?;
+        let slot = GlobalReactor.get_direct_slot()?;
         Ok(Self {
             slot: ManuallyDrop::new(slot),
             manual: true,
         })
     }
 
-    pub fn auto(slot: FileSlotKey) -> Self {
+    pub fn auto(slot: DirectSlot) -> Self {
         Self {
             slot: ManuallyDrop::new(slot),
             manual: false,
         }
     }
 
-    pub fn as_slot(&self) -> &FileSlotKey {
+    pub fn as_slot(&self) -> &DirectSlot {
         &self.slot
     }
 }
@@ -77,7 +77,7 @@ impl Drop for OwnedDirect {
     fn drop(&mut self) {
         let slot = unsafe { ManuallyDrop::take(&mut self.slot) };
         if self.manual {
-            GlobalReactor.release_file_slot(slot);
+            GlobalReactor.release_direct_slot(slot);
         } else {
             crate::spawn(op::Close::new(&slot).run_on(GlobalReactor));
         }

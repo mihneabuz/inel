@@ -14,7 +14,7 @@ use completion::CompletionSet;
 use register::SlotRegister;
 
 pub use completion::Key;
-pub use register::{BufferGroupKey, BufferSlotKey, FileSlotKey};
+pub use register::{BufferGroup, BufferSlot, DirectSlot};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -128,9 +128,9 @@ impl RingOptions {
             active: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(self.submissions as usize),
+            direct_files: SlotRegister::new(self.manual_direct_files),
             fixed_buffers: SlotRegister::new(self.fixed_buffers),
             buffer_groups: SlotRegister::new(self.buffer_groups),
-            files: SlotRegister::new(self.manual_direct_files),
         }
     }
 }
@@ -146,9 +146,9 @@ pub struct Ring {
     active: u32,
     canceled: u32,
     completions: CompletionSet,
-    files: SlotRegister<FileSlotKey>,
-    fixed_buffers: SlotRegister<BufferSlotKey>,
-    buffer_groups: SlotRegister<BufferGroupKey>,
+    direct_files: SlotRegister<DirectSlot>,
+    fixed_buffers: SlotRegister<BufferSlot>,
+    buffer_groups: SlotRegister<BufferGroup>,
 }
 
 impl Default for Ring {
@@ -175,8 +175,8 @@ impl Ring {
     pub fn is_done(&self) -> bool {
         self.active == 0
             && self.completions.is_empty()
+            && self.direct_files.is_full()
             && self.fixed_buffers.is_full()
-            && self.files.is_full()
             && self.buffer_groups.is_full()
     }
 
@@ -276,11 +276,11 @@ impl Ring {
     }
 
     /// Attempt to register a [StableBuffer] for use with fixed operations.
-    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferSlotKey>
+    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferSlot>
     where
         B: StableBuffer,
     {
-        let key = self
+        let slot = self
             .fixed_buffers
             .get()
             .ok_or(Error::other("No fixed buffer slots available"))?;
@@ -293,36 +293,36 @@ impl Ring {
         unsafe {
             self.ring
                 .submitter()
-                .register_buffers_update(key.index(), &[iovec], None)?;
+                .register_buffers_update(slot.index(), &[iovec], None)?;
         }
 
-        Ok(key)
+        Ok(slot)
     }
 
     /// Unregister a buffer
-    pub fn unregister_buffer(&mut self, key: BufferSlotKey) {
-        self.fixed_buffers.remove(key);
+    pub fn unregister_buffer(&mut self, slot: BufferSlot) {
+        self.fixed_buffers.remove(slot);
     }
 
     /// Attempt to get an io_uring file index
-    pub fn get_file_slot(&mut self) -> Result<FileSlotKey> {
-        self.files
+    pub fn get_direct_slot(&mut self) -> Result<DirectSlot> {
+        self.direct_files
             .get()
             .ok_or(Error::other("No manual direct file slots available"))
     }
 
     /// Unregister a buffer
-    pub fn release_file_slot(&mut self, key: FileSlotKey) {
-        self.files.remove(key);
+    pub fn release_direct_slot(&mut self, slot: DirectSlot) {
+        self.direct_files.remove(slot);
     }
 
-    pub fn get_buffer_group(&mut self) -> Result<BufferGroupKey> {
+    pub fn get_buffer_group(&mut self) -> Result<BufferGroup> {
         self.buffer_groups
             .get()
             .ok_or(Error::other("No manual buffer group slots available"))
     }
 
-    pub fn release_buffer_group(&mut self, key: BufferGroupKey) {
-        self.buffer_groups.remove(key);
+    pub fn release_buffer_group(&mut self, slot: BufferGroup) {
+        self.buffer_groups.remove(slot);
     }
 }
