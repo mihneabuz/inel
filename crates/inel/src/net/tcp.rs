@@ -66,8 +66,11 @@ impl TcpListener {
 
             let sock = OwnedFd::from_raw(sock);
 
-            util::bind(sock.as_raw(), addr)?;
-            util::listen(sock.as_raw(), DEFAULT_LISTEN_BACKLOG)?;
+            op::Bind::new(&sock, addr).run_on(GlobalReactor).await?;
+
+            op::Listen::new(&sock, DEFAULT_LISTEN_BACKLOG)
+                .run_on(GlobalReactor)
+                .await?;
 
             Ok(Self { sock })
         })
@@ -94,9 +97,7 @@ impl TcpListener {
     }
 
     pub async fn accept(&self) -> Result<(TcpStream, SocketAddr)> {
-        let (sock, peer) = op::Accept::new(self.sock.as_raw())
-            .run_on(GlobalReactor)
-            .await?;
+        let (sock, peer) = op::Accept::new(&self.sock).run_on(GlobalReactor).await?;
 
         Ok((unsafe { TcpStream::from_raw_fd(sock) }, peer))
     }
@@ -134,7 +135,7 @@ pub struct Incoming {
 
 impl Incoming {
     pub fn new(listener: TcpListener) -> Self {
-        let stream = AcceptMulti::new(listener.as_raw_fd()).run_on(GlobalReactor);
+        let stream = AcceptMulti::new(&listener.sock).run_on(GlobalReactor);
         Self { listener, stream }
     }
 }
@@ -158,7 +159,7 @@ pub struct DirectIncoming {
 
 impl DirectIncoming {
     pub fn new(listener: DirectTcpListener) -> Self {
-        let stream = AcceptMulti::new(listener.direct.as_slot())
+        let stream = AcceptMulti::new(&listener.direct)
             .direct()
             .run_on(GlobalReactor);
 
@@ -193,13 +194,13 @@ impl Debug for TcpStream {
 
 impl ReadSource for TcpStream {
     fn read_source(&self) -> Source {
-        self.as_raw_fd().as_source()
+        self.sock.as_source()
     }
 }
 
 impl WriteSource for TcpStream {
     fn write_source(&self) -> Source {
-        self.as_raw_fd().as_source()
+        self.sock.as_source()
     }
 }
 
@@ -215,9 +216,7 @@ impl TcpStream {
 
             let sock = OwnedFd::from_raw(sock);
 
-            op::Connect::new(sock.as_raw(), addr)
-                .run_on(GlobalReactor)
-                .await?;
+            op::Connect::new(&sock, addr).run_on(GlobalReactor).await?;
 
             Ok(Self { sock })
         })
@@ -236,9 +235,7 @@ impl TcpStream {
 
             let slot = OwnedDirect::auto(slot);
 
-            op::Connect::new(slot.as_slot(), addr)
-                .run_on(GlobalReactor)
-                .await?;
+            op::Connect::new(&slot, addr).run_on(GlobalReactor).await?;
 
             Ok(DirectTcpStream::from_direct(slot))
         })
@@ -254,7 +251,7 @@ impl TcpStream {
     }
 
     pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-        op::Shutdown::new(self.sock.as_raw(), how)
+        op::Shutdown::new(&self.sock, how)
             .run_on(GlobalReactor)
             .await
     }
@@ -293,7 +290,7 @@ impl Debug for DirectTcpListener {
 
 impl DirectTcpListener {
     pub async fn accept(&self) -> Result<(DirectTcpStream, SocketAddr)> {
-        let (slot, peer) = op::Accept::new(self.direct.as_slot())
+        let (slot, peer) = op::Accept::new(&self.direct)
             .direct()
             .run_on(GlobalReactor)
             .await?;
@@ -324,13 +321,13 @@ impl Debug for DirectTcpStream {
 
 impl ReadSource for DirectTcpStream {
     fn read_source(&self) -> Source {
-        self.direct.as_slot().as_source()
+        self.direct.as_source()
     }
 }
 
 impl WriteSource for DirectTcpStream {
     fn write_source(&self) -> Source {
-        self.direct.as_slot().as_source()
+        self.direct.as_source()
     }
 }
 
@@ -340,7 +337,7 @@ impl DirectTcpStream {
     }
 
     pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-        op::Shutdown::new(self.direct.as_slot(), how)
+        op::Shutdown::new(&self.direct, how)
             .run_on(GlobalReactor)
             .await
     }

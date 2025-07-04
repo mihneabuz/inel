@@ -2,7 +2,7 @@ use std::os::fd::RawFd;
 
 use inel_reactor::{
     op::{self, OpExt},
-    FileSlotKey,
+    AsSource, FileSlotKey, Source,
 };
 
 use crate::GlobalReactor;
@@ -27,6 +27,12 @@ impl OwnedFd {
     }
 }
 
+impl AsSource for OwnedFd {
+    fn as_source(&self) -> Source {
+        self.fd.as_source()
+    }
+}
+
 impl Drop for OwnedFd {
     fn drop(&mut self) {
         if self.fd > 0 {
@@ -37,6 +43,12 @@ impl Drop for OwnedFd {
 
 pub struct OwnedDirect {
     slot: FileSlotKey,
+}
+
+impl AsSource for OwnedDirect {
+    fn as_source(&self) -> Source {
+        self.slot.as_source()
+    }
 }
 
 impl OwnedDirect {
