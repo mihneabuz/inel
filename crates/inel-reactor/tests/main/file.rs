@@ -343,6 +343,8 @@ fn stats_cancel() {
 }
 
 mod direct {
+    use inel_reactor::DirectFd;
+
     use super::*;
 
     #[test]
@@ -391,18 +393,18 @@ mod direct {
     #[test]
     fn manual() {
         let (reactor, notifier) = runtime();
-        let slot1 = reactor.get_file_slot();
-        let slot2 = reactor.get_file_slot();
+        let direct1 = DirectFd::get(reactor.clone()).unwrap();
+        let direct2 = DirectFd::get(reactor.clone()).unwrap();
 
         let filename1 = TempFile::new_name();
         let filename2 = TempFile::new_name();
 
         {
             let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
-                .fixed(&slot1)
+                .fixed(direct1.slot())
                 .run_on(reactor.clone());
             let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-                .fixed(&slot2)
+                .fixed(direct2.slot())
                 .run_on(reactor.clone());
 
             let mut fut1 = pin!(&mut creat1);
@@ -428,8 +430,8 @@ mod direct {
             assert!(fut2.is_terminated());
         }
 
-        reactor.release_file_slot(slot1);
-        reactor.release_file_slot(slot2);
+        direct1.release();
+        direct2.release();
         assert!(reactor.is_done());
 
         assert!(std::fs::exists(&filename1).is_ok_and(|exists| exists));
@@ -443,17 +445,15 @@ mod direct {
     fn error() {
         let (reactor, _) = runtime();
 
-        let slots = (0..reactor.resources())
-            .filter_map(|_| reactor.try_get_file_slot())
+        let directs = (0..reactor.resources())
+            .filter_map(|_| DirectFd::get(reactor.clone()).ok())
             .collect::<Vec<_>>();
 
-        assert_eq!(slots.len(), 64);
-        assert!(reactor.try_get_file_slot().is_none());
+        assert_eq!(directs.len(), reactor.resources() as usize);
+        assert!(DirectFd::get(reactor.clone()).is_err());
 
-        slots
-            .into_iter()
-            .for_each(|slot| reactor.release_file_slot(slot));
+        directs.into_iter().for_each(|direct| direct.release());
 
-        assert!(reactor.try_get_file_slot().is_some());
+        assert!(DirectFd::get(reactor.clone()).is_ok());
     }
 }

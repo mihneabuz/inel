@@ -2,7 +2,7 @@ use std::{io::Result, mem::ManuallyDrop, os::fd::RawFd};
 
 use inel_reactor::{
     op::{self, OpExt},
-    AsSource, DirectSlot, RingReactor, Source,
+    AsSource, DirectFd, DirectSlot, Source,
 };
 
 use crate::GlobalReactor;
@@ -42,44 +42,43 @@ impl Drop for OwnedFd {
 }
 
 pub struct OwnedDirect {
-    slot: ManuallyDrop<DirectSlot>,
+    fd: ManuallyDrop<DirectFd<GlobalReactor>>,
     manual: bool,
 }
 
 impl AsSource for OwnedDirect {
     fn as_source(&self) -> Source {
-        self.slot.as_source()
+        self.fd.as_source()
     }
 }
 
 impl OwnedDirect {
     pub fn reserve() -> Result<Self> {
-        let slot = GlobalReactor.get_direct_slot()?;
         Ok(Self {
-            slot: ManuallyDrop::new(slot),
+            fd: ManuallyDrop::new(DirectFd::get(GlobalReactor)?),
             manual: true,
         })
     }
 
     pub fn auto(slot: DirectSlot) -> Self {
         Self {
-            slot: ManuallyDrop::new(slot),
+            fd: ManuallyDrop::new(DirectFd::from_slot(slot, GlobalReactor)),
             manual: false,
         }
     }
 
-    pub fn as_slot(&self) -> &DirectSlot {
-        &self.slot
+    pub fn slot(&self) -> &DirectSlot {
+        self.fd.slot()
     }
 }
 
 impl Drop for OwnedDirect {
     fn drop(&mut self) {
-        let slot = unsafe { ManuallyDrop::take(&mut self.slot) };
+        let direct = unsafe { ManuallyDrop::take(&mut self.fd) };
         if self.manual {
-            GlobalReactor.release_direct_slot(slot);
+            direct.release();
         } else {
-            crate::spawn(op::Close::new(&slot).run_on(GlobalReactor));
+            crate::spawn(op::Close::new(&direct).run_on(GlobalReactor));
         }
     }
 }

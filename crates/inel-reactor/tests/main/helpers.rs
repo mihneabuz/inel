@@ -20,7 +20,7 @@ use rand::Rng;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    BufferGroupId, DirectSlot, Ring,
+    BufferGroupId, DirectFd, Ring,
 };
 
 macro_rules! assert_ready {
@@ -83,19 +83,6 @@ impl ScopedReactor {
         self.inner.borrow().is_done()
     }
 
-    pub fn try_get_file_slot(&self) -> Option<DirectSlot> {
-        self.with(|reactor| reactor.get_direct_slot()).unwrap().ok()
-    }
-
-    pub fn get_file_slot(&self) -> DirectSlot {
-        self.try_get_file_slot().unwrap()
-    }
-
-    pub fn release_file_slot(&self, slot: DirectSlot) {
-        self.with(|reactor| reactor.release_direct_slot(slot))
-            .unwrap();
-    }
-
     pub fn get_buffer_group(&self) -> BufferGroupId {
         self.with(|reactor| reactor.get_buffer_group())
             .unwrap()
@@ -107,7 +94,7 @@ impl ScopedReactor {
             .unwrap();
     }
 
-    pub fn register_file(&self, fd: RawFd) -> DirectSlot {
+    pub fn register_file(&self, fd: RawFd) -> DirectFd<Self> {
         let notifier = WakeNotifier::new();
         let register = op::RegisterFile::new(fd).run_on(self.clone());
         let mut fut = pin!(register);
@@ -120,7 +107,7 @@ impl ScopedReactor {
         let res = assert_ready!(poll!(fut, notifier));
         assert!(res.is_ok());
 
-        res.unwrap()
+        DirectFd::from_slot(res.unwrap(), self.clone())
     }
 
     pub fn block_on<F, T>(&self, fut: F) -> T

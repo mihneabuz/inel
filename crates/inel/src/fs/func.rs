@@ -24,7 +24,7 @@ where
 {
     let direct = OwnedDirect::reserve().unwrap();
     op::OpenAt::new(path, libc::O_WRONLY)
-        .fixed(direct.as_slot())
+        .fixed(direct.slot())
         .chain()
         .run_on(GlobalReactor)
         .await
@@ -40,7 +40,7 @@ where
 
     let open = op::OpenAt::new(path, libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC)
         .mode(0o666)
-        .fixed(direct.as_slot())
+        .fixed(direct.slot())
         .chain()
         .run_on(GlobalReactor);
     let write = op::Write::new(&direct, contents)
@@ -66,7 +66,7 @@ where
     let direct = OwnedDirect::reserve().unwrap();
 
     let open = op::OpenAt::new(path, libc::O_RDWR)
-        .fixed(direct.as_slot())
+        .fixed(direct.slot())
         .chain()
         .run_on(GlobalReactor);
     let read = op::Read::new(&direct, buffer).chain().run_on(GlobalReactor);

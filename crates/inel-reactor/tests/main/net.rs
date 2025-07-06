@@ -17,7 +17,7 @@ use inel_reactor::{
     buffer::StableBuffer,
     op::{self, Op, OpExt},
     util::{getpeername, getsockname},
-    DirectSlot,
+    DirectFd,
 };
 
 fn make_addr(ip: &str, port: u16) -> SocketAddr {
@@ -68,36 +68,52 @@ fn create_socket_cancel_test(reactor: ScopedReactor) {
     cancel_op(reactor, op::Socket::new(AF_INET, SOCK_STREAM).proto(0));
 }
 
-fn create_fixed_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> DirectSlot {
-    let slot = reactor.get_file_slot();
-    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).fixed(&slot));
+fn create_fixed_socket_test(
+    reactor: ScopedReactor,
+    domain: i32,
+    typ: i32,
+) -> DirectFd<ScopedReactor> {
+    let direct = DirectFd::get(reactor.clone()).unwrap();
+    let res = complete_op(
+        reactor,
+        op::Socket::new(domain, typ).proto(0).fixed(direct.slot()),
+    );
     assert!(res.is_ok());
-    slot
+    direct
 }
 
 fn create_fixed_socket_error_test(reactor: ScopedReactor) {
-    let slot = reactor.get_file_slot();
+    let direct = DirectFd::get(reactor.clone()).unwrap();
     let res = complete_op(
         reactor.clone(),
-        op::Socket::new(i32::MAX, i32::MAX).proto(0).fixed(&slot),
+        op::Socket::new(i32::MAX, i32::MAX)
+            .proto(0)
+            .fixed(&direct.slot()),
     );
     assert!(res.is_err());
-    reactor.release_file_slot(slot);
+    direct.release();
 }
 
 fn create_fixed_socket_cancel_test(reactor: ScopedReactor) {
-    let slot = reactor.get_file_slot();
+    let direct = DirectFd::get(reactor.clone()).unwrap();
     cancel_op(
         reactor.clone(),
-        op::Socket::new(AF_INET, SOCK_STREAM).fixed(&slot),
+        op::Socket::new(AF_INET, SOCK_STREAM).fixed(direct.slot()),
     );
-    reactor.release_file_slot(slot);
+    direct.release();
 }
 
-fn create_auto_socket_test(reactor: ScopedReactor, domain: i32, typ: i32) -> DirectSlot {
-    let res = complete_op(reactor, op::Socket::new(domain, typ).proto(0).direct());
+fn create_auto_socket_test(
+    reactor: ScopedReactor,
+    domain: i32,
+    typ: i32,
+) -> DirectFd<ScopedReactor> {
+    let res = complete_op(
+        reactor.clone(),
+        op::Socket::new(domain, typ).proto(0).direct(),
+    );
     assert!(res.is_ok());
-    res.unwrap()
+    DirectFd::from_slot(res.unwrap(), reactor)
 }
 
 fn create_auto_socket_error_test(reactor: ScopedReactor) {
@@ -130,9 +146,9 @@ fn connect_test(reactor: ScopedReactor, addr: &str, port: u16) -> RawFd {
     sock
 }
 
-fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> DirectSlot {
+fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> DirectFd<ScopedReactor> {
     let addr = make_addr(addr, port);
-    let slot = create_fixed_socket_test(
+    let direct = create_fixed_socket_test(
         reactor.clone(),
         if addr.is_ipv4() {
             libc::AF_INET
@@ -142,10 +158,10 @@ fn connect_fixed_test(reactor: ScopedReactor, addr: &str, port: u16) -> DirectSl
         libc::SOCK_STREAM,
     );
 
-    let res = complete_op(reactor, op::Connect::new(&slot, addr));
+    let res = complete_op(reactor, op::Connect::new(&direct, addr));
     assert!(res.is_ok());
 
-    slot
+    direct
 }
 
 fn connect_test_ipv4(reactor: ScopedReactor, port: u16) -> RawFd {
@@ -156,11 +172,11 @@ fn connect_test_ipv6(reactor: ScopedReactor, port: u16) -> RawFd {
     connect_test(reactor, "::1", port)
 }
 
-fn connect_fixed_test_ipv4(reactor: ScopedReactor, port: u16) -> DirectSlot {
+fn connect_fixed_test_ipv4(reactor: ScopedReactor, port: u16) -> DirectFd<ScopedReactor> {
     connect_fixed_test(reactor, "127.0.0.1", port)
 }
 
-fn connect_fixed_test_ipv6(reactor: ScopedReactor, port: u16) -> DirectSlot {
+fn connect_fixed_test_ipv6(reactor: ScopedReactor, port: u16) -> DirectFd<ScopedReactor> {
     connect_fixed_test(reactor, "::1", port)
 }
 
@@ -228,40 +244,53 @@ fn accept_cancel_test(reactor: ScopedReactor, sock: RawFd) {
     cancel_op(reactor, op::Accept::new(&sock));
 }
 
-fn accept_fixed_test(reactor: ScopedReactor, listener: &DirectSlot) -> (DirectSlot, SocketAddr) {
-    let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor, op::Accept::new(listener).fixed(&slot));
+fn accept_fixed_test(
+    reactor: ScopedReactor,
+    listener: &DirectFd<ScopedReactor>,
+) -> (DirectFd<ScopedReactor>, SocketAddr) {
+    let direct = DirectFd::get(reactor.clone()).unwrap();
+    let addr = complete_op(reactor, op::Accept::new(listener).fixed(direct.slot()));
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().ip().is_loopback());
-    (slot, addr.unwrap())
+    (direct, addr.unwrap())
 }
 
-fn accept_fixed_error_test(reactor: ScopedReactor, listener: &DirectSlot) {
-    let slot = reactor.get_file_slot();
-    let addr = complete_op(reactor.clone(), op::Accept::new(listener).fixed(&slot));
+fn accept_fixed_error_test(reactor: ScopedReactor, listener: &DirectFd<ScopedReactor>) {
+    let direct = DirectFd::get(reactor.clone()).unwrap();
+    let addr = complete_op(
+        reactor.clone(),
+        op::Accept::new(listener).fixed(direct.slot()),
+    );
     assert!(addr.is_err());
-    reactor.release_file_slot(slot);
+    direct.release();
 }
 
-fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: &DirectSlot) {
-    let slot = reactor.get_file_slot();
-    cancel_op(reactor.clone(), op::Accept::new(listener).fixed(&slot));
-    reactor.release_file_slot(slot);
+fn accept_fixed_cancel_test(reactor: ScopedReactor, listener: &DirectFd<ScopedReactor>) {
+    let direct = DirectFd::get(reactor.clone()).unwrap();
+    cancel_op(
+        reactor.clone(),
+        op::Accept::new(listener).fixed(direct.slot()),
+    );
+    direct.release();
 }
 
-fn accept_auto_test(reactor: ScopedReactor, listener: &DirectSlot) -> (DirectSlot, SocketAddr) {
-    let addr = complete_op(reactor, op::Accept::new(listener).direct());
+fn accept_auto_test(
+    reactor: ScopedReactor,
+    listener: &DirectFd<ScopedReactor>,
+) -> (DirectFd<ScopedReactor>, SocketAddr) {
+    let addr = complete_op(reactor.clone(), op::Accept::new(listener).direct());
     assert!(addr.is_ok());
     assert!(addr.as_ref().unwrap().1.ip().is_loopback());
-    addr.unwrap()
+    let (slot, addr) = addr.unwrap();
+    (DirectFd::from_slot(slot, reactor), addr)
 }
 
-fn accept_auto_error_test(reactor: ScopedReactor, listener: &DirectSlot) {
+fn accept_auto_error_test(reactor: ScopedReactor, listener: &DirectFd<ScopedReactor>) {
     let addr = complete_op(reactor, op::Accept::new(listener).direct());
     assert!(addr.is_err());
 }
 
-fn accept_auto_cancel_test(reactor: ScopedReactor, listener: &DirectSlot) {
+fn accept_auto_cancel_test(reactor: ScopedReactor, listener: &DirectFd<ScopedReactor>) {
     cancel_op(reactor, op::Accept::new(listener).direct());
 }
 
@@ -292,10 +321,12 @@ fn accept_multi_test(reactor: ScopedReactor, sock: RawFd, count: usize) {
     reactor.wait();
 }
 
-fn accept_multi_direct_test(reactor: ScopedReactor, slot: DirectSlot, count: usize) {
+fn accept_multi_direct_test(reactor: ScopedReactor, direct: DirectFd<ScopedReactor>, count: usize) {
     let notifier = notifier();
 
-    let mut con = op::AcceptMulti::new(&slot).direct().run_on(reactor.clone());
+    let mut con = op::AcceptMulti::new(&direct)
+        .direct()
+        .run_on(reactor.clone());
     let mut stream = pin!(&mut con);
 
     for _ in 0..count {
@@ -325,8 +356,8 @@ fn accept_multi_once_test(reactor: ScopedReactor, sock: RawFd) {
     reactor.wait();
 }
 
-fn accept_multi_direct_once_test(reactor: ScopedReactor, slot: DirectSlot) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&slot));
+fn accept_multi_direct_once_test(reactor: ScopedReactor, direct: DirectFd<ScopedReactor>) {
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&direct));
     assert!(res.is_ok());
     reactor.wait();
 }
@@ -337,8 +368,8 @@ fn accept_multi_error_test(reactor: ScopedReactor, sock: RawFd) {
     reactor.wait();
 }
 
-fn accept_multi_direct_error_test(reactor: ScopedReactor, slot: DirectSlot) {
-    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&slot));
+fn accept_multi_direct_error_test(reactor: ScopedReactor, direct: DirectFd<ScopedReactor>) {
+    let res = complete_op(reactor.clone(), op::AcceptMulti::new(&direct));
     assert!(res.is_err());
     reactor.wait();
 }
@@ -376,12 +407,12 @@ fn create_listener_ipv6(reactor: ScopedReactor) -> (RawFd, u16) {
     create_listener(reactor.clone(), "::1")
 }
 
-fn create_fixed_listener_ipv4(reactor: ScopedReactor) -> (DirectSlot, u16) {
+fn create_fixed_listener_ipv4(reactor: ScopedReactor) -> (DirectFd<ScopedReactor>, u16) {
     let (fd, port) = create_listener_ipv4(reactor.clone());
     (reactor.register_file(fd), port)
 }
 
-fn create_fixed_listener_ipv6(reactor: ScopedReactor) -> (DirectSlot, u16) {
+fn create_fixed_listener_ipv6(reactor: ScopedReactor) -> (DirectFd<ScopedReactor>, u16) {
     let (fd, port) = create_listener_ipv6(reactor.clone());
     (reactor.register_file(fd), port)
 }
@@ -587,10 +618,10 @@ mod direct {
         create_auto_socket_test(reactor.clone(), libc::AF_INET6, libc::SOCK_STREAM);
         create_auto_socket_test(reactor.clone(), libc::AF_INET6, libc::SOCK_DGRAM);
 
-        reactor.release_file_slot(s1);
-        reactor.release_file_slot(s2);
-        reactor.release_file_slot(s3);
-        reactor.release_file_slot(s4);
+        s1.release();
+        s2.release();
+        s3.release();
+        s4.release();
 
         assert!(reactor.is_done());
     }
@@ -598,22 +629,22 @@ mod direct {
     #[test]
     fn connect() {
         let (reactor, _) = runtime();
-        let mut slots = vec![];
+        let mut directs = vec![];
 
         let (_, port) = create_fixed_listener_ipv4(reactor.clone());
         for _ in 0..10 {
-            let slot = connect_fixed_test_ipv4(reactor.clone(), port);
-            slots.push(slot);
+            let direct = connect_fixed_test_ipv4(reactor.clone(), port);
+            directs.push(direct);
         }
 
         let (_, port) = create_fixed_listener_ipv6(reactor.clone());
         for _ in 0..10 {
-            let slot = connect_fixed_test_ipv6(reactor.clone(), port);
-            slots.push(slot);
+            let direct = connect_fixed_test_ipv6(reactor.clone(), port);
+            directs.push(direct);
         }
 
-        for slot in slots {
-            reactor.release_file_slot(slot);
+        for direct in directs {
+            direct.release();
         }
 
         assert!(reactor.is_done());
@@ -622,29 +653,29 @@ mod direct {
     #[test]
     fn accept() {
         let (reactor, _) = runtime();
-        let mut slots = vec![];
+        let mut directs = vec![];
 
-        let (slot4, port) = create_fixed_listener_ipv4(reactor.clone());
+        let (direct4, port) = create_fixed_listener_ipv4(reactor.clone());
         for _ in 0..10 {
             let s = connect_fixed_test_ipv4(reactor.clone(), port);
-            slots.push(s);
+            directs.push(s);
         }
         for _ in 0..10 {
-            let (s, _) = accept_fixed_test(reactor.clone(), &slot4);
-            slots.push(s);
+            let (s, _) = accept_fixed_test(reactor.clone(), &direct4);
+            directs.push(s);
         }
 
-        let (slot6, port) = create_fixed_listener_ipv6(reactor.clone());
+        let (direct6, port) = create_fixed_listener_ipv6(reactor.clone());
         for _ in 0..10 {
             let s = connect_fixed_test_ipv6(reactor.clone(), port);
-            slots.push(s);
+            directs.push(s);
         }
         for _ in 0..10 {
-            accept_auto_test(reactor.clone(), &slot6);
+            accept_auto_test(reactor.clone(), &direct6);
         }
 
-        for slot in slots {
-            reactor.release_file_slot(slot);
+        for direct in directs {
+            direct.release();
         }
 
         assert!(reactor.is_done());
@@ -653,29 +684,29 @@ mod direct {
     #[test]
     fn accept_multi() {
         let (reactor, _) = runtime();
-        let mut slots = vec![];
+        let mut directs = vec![];
 
-        let (slot4, port) = create_fixed_listener_ipv4(reactor.clone());
+        let (direct4, port) = create_fixed_listener_ipv4(reactor.clone());
         for _ in 0..10 {
             let s = connect_fixed_test_ipv4(reactor.clone(), port);
-            slots.push(s);
+            directs.push(s);
         }
-        accept_multi_direct_test(reactor.clone(), slot4, 10);
+        accept_multi_direct_test(reactor.clone(), direct4, 10);
 
-        let (slot6, port) = create_fixed_listener_ipv6(reactor.clone());
+        let (direct6, port) = create_fixed_listener_ipv6(reactor.clone());
         for _ in 0..10 {
             let s = connect_fixed_test_ipv6(reactor.clone(), port);
-            slots.push(s);
+            directs.push(s);
         }
-        accept_multi_direct_test(reactor.clone(), slot6, 10);
+        accept_multi_direct_test(reactor.clone(), direct6, 10);
 
-        let (slot4, port) = create_fixed_listener_ipv4(reactor.clone());
+        let (direct4, port) = create_fixed_listener_ipv4(reactor.clone());
         let s = connect_fixed_test_ipv4(reactor.clone(), port);
-        slots.push(s);
-        accept_multi_direct_once_test(reactor.clone(), slot4);
+        directs.push(s);
+        accept_multi_direct_once_test(reactor.clone(), direct4);
 
-        for slot in slots {
-            reactor.release_file_slot(slot);
+        for direct in directs {
+            direct.release();
         }
 
         assert!(reactor.is_done());
@@ -752,7 +783,7 @@ mod direct {
 
         assert_eq!(wrote.as_slice(), &read.as_slice()[..4096]);
 
-        reactor.release_file_slot(conn1);
+        conn1.release();
         assert!(reactor.is_done());
     }
 }
