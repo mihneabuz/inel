@@ -1,23 +1,26 @@
 use std::{
-    io::{self, Error, Result},
+    io::{Error, Result},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
-use futures::{AsyncBufRead, AsyncRead, FutureExt};
+use futures::{AsyncBufRead, AsyncBufReadExt, AsyncRead};
 
 use super::{fixed::FixedBufReader, generic::*};
-use crate::{
-    buffer::Fixed,
-    io::{owned::ReadOwned, AsyncReadOwned},
-};
+use crate::io::{owned::ReadOwned, AsyncReadOwned, ReadSource};
 
 const DEFAULT_BUF_SIZE: usize = 4096 * 2;
 
 type BoxBuf = Box<[u8]>;
-type ReadFut = ReadOwned<BoxBuf>;
 
-pub struct BufReader<S>(BufReaderGeneric<S, BoxBuf, ReadFut>);
+struct OwnedAdapter;
+impl<S: ReadSource> BufReaderAdapter<S, BoxBuf, ReadOwned<BoxBuf>> for OwnedAdapter {
+    fn create_future(&self, source: &mut S, buffer: BoxBuf) -> ReadOwned<BoxBuf> {
+        source.read_owned(buffer)
+    }
+}
+
+pub struct BufReader<S>(BufReaderGeneric<S, BoxBuf, ReadOwned<BoxBuf>, OwnedAdapter>);
 
 impl<S> BufReader<S> {
     pub fn new(source: S) -> Self {
@@ -25,20 +28,17 @@ impl<S> BufReader<S> {
     }
 
     pub fn with_capacity(capacity: usize, source: S) -> Self {
-        Self(BufReaderGeneric {
-            state: BufReaderState::Ready(RBuffer::empty(capacity)),
+        Self(BufReaderGeneric::empty(
+            vec![0; capacity].into_boxed_slice(),
             source,
-        })
+            OwnedAdapter,
+        ))
     }
 
     pub fn fix(self) -> Result<FixedBufReader<S>> {
         let (source, buf) = self.0.into_raw_parts();
         let (buf, pos, filled) = buf.ok_or(Error::other("BufReader was in use"))?;
-
-        let fixed = Fixed::register(buf)?;
-        let buffer = RBuffer::new(fixed, pos, filled);
-
-        Ok(FixedBufReader::from_raw(source, buffer))
+        FixedBufReader::from_raw(source, buf, pos, filled)
     }
 
     pub fn capacity(&self) -> Option<usize> {
@@ -64,66 +64,26 @@ impl<S> BufReader<S> {
 
 impl<S> AsyncRead for BufReader<S>
 where
-    S: AsyncReadOwned + Unpin,
+    S: ReadSource + Unpin,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        let mut inner = ready!(self.as_mut().poll_fill_buf(cx))?;
-        let len = io::Read::read(&mut inner, buf)?;
-        self.consume(len);
-        Poll::Ready(Ok(len))
+        Pin::new(&mut Pin::into_inner(self).0).poll_read(cx, buf)
     }
 }
 
 impl<S> AsyncBufRead for BufReader<S>
 where
-    S: AsyncReadOwned + Unpin,
+    S: ReadSource + Unpin,
 {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        let this = Pin::into_inner(self);
-
-        match &mut this.0.state {
-            BufReaderState::Empty => unreachable!(),
-
-            BufReaderState::Pending(fut) => {
-                let (buf, res) = ready!(fut.poll_unpin(cx));
-                match res {
-                    Ok(filled) => {
-                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, filled));
-                    }
-
-                    Err(err) => {
-                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, 0));
-
-                        return Poll::Ready(Err(err));
-                    }
-                }
-            }
-
-            BufReaderState::Ready(buf) => {
-                if buf.is_empty() {
-                    let BufReaderState::Ready(buf) = std::mem::take(&mut this.0.state) else {
-                        unreachable!();
-                    };
-
-                    let fut = this.0.source.read_owned(buf.into_raw_parts().0);
-
-                    this.0.state = BufReaderState::Pending(fut);
-
-                    return Pin::new(this).poll_fill_buf(cx);
-                }
-            }
-        };
-
-        Poll::Ready(Ok(this.0.buffer().unwrap()))
+        Pin::new(&mut Pin::into_inner(self).0).poll_fill_buf(cx)
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        if let BufReaderState::Ready(buf) = &mut Pin::into_inner(self).0.state {
-            buf.consume(amt);
-        }
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        self.0.consume_unpin(amt);
     }
 }

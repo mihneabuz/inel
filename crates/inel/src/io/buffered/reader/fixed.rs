@@ -1,27 +1,42 @@
 use std::{
-    io::{self, Result},
+    io::Result,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
-use futures::{AsyncBufRead, AsyncRead, FutureExt};
+use futures::{AsyncBufRead, AsyncBufReadExt, AsyncRead};
 
 use super::generic::*;
 use crate::{
     buffer::Fixed,
-    io::{owned::ReadFixed, AsyncReadOwned},
+    io::{owned::ReadFixed, AsyncReadOwned, ReadSource},
 };
 
-type FixedReadFut = ReadFixed<Fixed>;
+type FixedRead = ReadFixed<Fixed>;
 
-pub struct FixedBufReader<S>(BufReaderGeneric<S, Fixed, FixedReadFut>);
+struct FixedAdapter;
+impl<S: ReadSource> BufReaderAdapter<S, Fixed, FixedRead> for FixedAdapter {
+    fn create_future(&self, source: &mut S, buffer: Fixed) -> FixedRead {
+        source.read_fixed(buffer)
+    }
+}
+
+pub struct FixedBufReader<S>(BufReaderGeneric<S, Fixed, FixedRead, FixedAdapter>);
 
 impl<S> FixedBufReader<S> {
-    pub(crate) fn from_raw(source: S, buffer: RBuffer<Fixed>) -> Self {
-        Self(BufReaderGeneric {
-            state: BufReaderState::Ready(buffer),
+    pub(crate) fn from_raw(
+        source: S,
+        buffer: Box<[u8]>,
+        pos: usize,
+        filled: usize,
+    ) -> Result<Self> {
+        Ok(Self(BufReaderGeneric::new(
+            Fixed::register(buffer)?,
             source,
-        })
+            pos,
+            filled,
+            FixedAdapter,
+        )))
     }
 
     pub fn capacity(&self) -> Option<usize> {
@@ -47,65 +62,26 @@ impl<S> FixedBufReader<S> {
 
 impl<S> AsyncRead for FixedBufReader<S>
 where
-    S: AsyncReadOwned + Unpin,
+    S: ReadSource + Unpin,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        let mut inner = ready!(self.as_mut().poll_fill_buf(cx))?;
-        let len = io::Read::read(&mut inner, buf)?;
-        self.consume(len);
-        Poll::Ready(Ok(len))
+        Pin::new(&mut Pin::into_inner(self).0).poll_read(cx, buf)
     }
 }
 
 impl<S> AsyncBufRead for FixedBufReader<S>
 where
-    S: AsyncReadOwned + Unpin,
+    S: ReadSource + Unpin,
 {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        let this = Pin::into_inner(self);
-
-        match &mut this.0.state {
-            BufReaderState::Empty => unreachable!(),
-
-            BufReaderState::Pending(fut) => {
-                let (buf, res) = ready!(fut.poll_unpin(cx));
-                match res {
-                    Ok(filled) => {
-                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, filled));
-                    }
-
-                    Err(err) => {
-                        this.0.state = BufReaderState::Ready(RBuffer::new(buf, 0, 0));
-
-                        return Poll::Ready(Err(err));
-                    }
-                }
-            }
-
-            BufReaderState::Ready(buf) => {
-                if buf.is_empty() {
-                    let BufReaderState::Ready(buf) = std::mem::take(&mut this.0.state) else {
-                        unreachable!();
-                    };
-
-                    let fut = this.0.source.read_fixed(buf.into_raw_parts().0);
-                    this.0.state = BufReaderState::Pending(fut);
-
-                    return Pin::new(this).poll_fill_buf(cx);
-                }
-            }
-        };
-
-        Poll::Ready(Ok(this.0.buffer().unwrap()))
+        Pin::new(&mut Pin::into_inner(self).0).poll_fill_buf(cx)
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        if let BufReaderState::Ready(buf) = &mut Pin::into_inner(self).0.state {
-            buf.consume(amt);
-        }
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        self.0.consume_unpin(amt);
     }
 }
