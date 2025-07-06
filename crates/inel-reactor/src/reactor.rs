@@ -7,7 +7,7 @@ use io_uring::squeue::Entry;
 use crate::{
     buffer::StableBuffer,
     ring::{BufferSlot, RingResult},
-    Cancellation, DirectSlot, Key, Ring,
+    BufferGroupId, Cancellation, DirectSlot, Key, Ring,
 };
 
 pub trait RingReactor {
@@ -20,6 +20,9 @@ pub trait RingReactor {
 
     fn get_direct_slot(&mut self) -> Result<DirectSlot>;
     fn release_direct_slot(&mut self, slot: DirectSlot);
+
+    fn get_buffer_group(&mut self) -> Result<BufferGroupId>;
+    fn release_buffer_group(&mut self, id: BufferGroupId);
 }
 
 impl<R> RingReactor for R
@@ -52,5 +55,13 @@ where
 
     fn release_direct_slot(&mut self, slot: DirectSlot) {
         self.with(|react| react.release_direct_slot(slot));
+    }
+
+    fn get_buffer_group(&mut self) -> Result<BufferGroupId> {
+        self.with(|react| react.get_buffer_group()).unwrap()
+    }
+
+    fn release_buffer_group(&mut self, id: BufferGroupId) {
+        self.with(|react| react.release_buffer_group(id));
     }
 }

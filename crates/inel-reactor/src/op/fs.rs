@@ -455,7 +455,6 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        println!("{res:?}");
         util::expect_zero(&res)
     }
 }

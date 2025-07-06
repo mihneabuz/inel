@@ -18,8 +18,8 @@ pub(crate) struct SlotKey {
 #[derive(Debug, PartialEq)]
 pub struct BufferSlot(SlotKey);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BufferGroup(SlotKey);
+#[derive(Debug, PartialEq)]
+pub struct BufferGroupId(SlotKey);
 
 #[derive(Debug, PartialEq)]
 pub struct DirectSlot(SlotKey);
@@ -49,9 +49,9 @@ impl WrapSlotKey for BufferSlot {
     }
 }
 
-impl WrapSlotKey for BufferGroup {
+impl WrapSlotKey for BufferGroupId {
     fn wrap(key: SlotKey) -> Self {
-        BufferGroup(key)
+        BufferGroupId(key)
     }
 
     fn unwrap(self) -> SlotKey {
@@ -133,7 +133,7 @@ impl BufferSlot {
     }
 }
 
-impl BufferGroup {
+impl BufferGroupId {
     pub fn index(&self) -> u16 {
         self.0.index() as u16
     }

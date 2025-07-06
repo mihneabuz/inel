@@ -14,7 +14,7 @@ use completion::CompletionSet;
 use register::SlotRegister;
 
 pub use completion::Key;
-pub use register::{BufferGroup, BufferSlot, DirectSlot};
+pub use register::{BufferGroupId, BufferSlot, DirectSlot};
 
 const CANCEL_KEY: u64 = 1_333_337;
 
@@ -148,7 +148,7 @@ pub struct Ring {
     completions: CompletionSet,
     direct_files: SlotRegister<DirectSlot>,
     fixed_buffers: SlotRegister<BufferSlot>,
-    buffer_groups: SlotRegister<BufferGroup>,
+    buffer_groups: SlotRegister<BufferGroupId>,
 }
 
 impl Default for Ring {
@@ -316,13 +316,13 @@ impl Ring {
         self.direct_files.remove(slot);
     }
 
-    pub fn get_buffer_group(&mut self) -> Result<BufferGroup> {
+    pub fn get_buffer_group(&mut self) -> Result<BufferGroupId> {
         self.buffer_groups
             .get()
             .ok_or(Error::other("No manual buffer group slots available"))
     }
 
-    pub fn release_buffer_group(&mut self, slot: BufferGroup) {
+    pub fn release_buffer_group(&mut self, slot: BufferGroupId) {
         self.buffer_groups.remove(slot);
     }
 }

@@ -10,6 +10,6 @@ pub mod util;
 pub use reactor::RingReactor;
 
 pub use cancellation::Cancellation;
-pub use ring::{BufferGroup, BufferSlot, DirectSlot, Key, Ring, RingOptions};
+pub use ring::{BufferGroupId, BufferSlot, DirectSlot, Key, Ring, RingOptions};
 pub use source::{AsSource, Source};
 pub use submission::Submission;

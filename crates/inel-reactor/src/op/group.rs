@@ -8,22 +8,24 @@ use io_uring::{
 use crate::{
     buffer::StableBufferMut,
     op::{util, Op},
-    ring::{BufferGroup, RingResult},
+    ring::{BufferGroupId, RingResult},
     AsSource, Source,
 };
 
 pub struct ProvideBuffer<B> {
-    group: BufferGroup,
     buffer: ManuallyDrop<B>,
-    id: u16,
+    buffer_id: u16,
+    group_id: u16,
 }
 
 impl<B> ProvideBuffer<B> {
-    pub fn new(group: BufferGroup, buffer: B, id: u16) -> Self {
+    /// # Safety
+    /// Caller must not drop the buffer until it is removed from the group
+    pub unsafe fn new(group: &BufferGroupId, buffer: B, id: u16) -> Self {
         Self {
             buffer: ManuallyDrop::new(buffer),
-            group,
-            id,
+            buffer_id: id,
+            group_id: group.index(),
         }
     }
 }
@@ -32,32 +34,38 @@ unsafe impl<B> Op for ProvideBuffer<B>
 where
     B: StableBufferMut,
 {
-    type Output = Result<(B, u16)>;
+    type Output = (B, Result<u16>);
 
     fn entry(&mut self) -> Entry {
         opcode::ProvideBuffers::new(
             self.buffer.stable_mut_ptr(),
             self.buffer.size() as i32,
             1,
-            self.group.index(),
-            self.id,
+            self.group_id,
+            self.buffer_id,
         )
         .build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        util::expect_zero(&res).map(|_| (ManuallyDrop::into_inner(self.buffer), self.id))
+        (
+            ManuallyDrop::into_inner(self.buffer),
+            util::expect_zero(&res).map(|_| self.buffer_id),
+        )
     }
 }
 
 pub struct RemoveBuffers {
-    group: BufferGroup,
+    group_id: u16,
     count: u16,
 }
 
 impl RemoveBuffers {
-    pub fn new(group: BufferGroup, count: u16) -> Self {
-        Self { group, count }
+    pub fn new(group: &BufferGroupId, count: u16) -> Self {
+        Self {
+            group_id: group.index(),
+            count,
+        }
     }
 }
 
@@ -65,7 +73,7 @@ unsafe impl Op for RemoveBuffers {
     type Output = Result<usize>;
 
     fn entry(&mut self) -> Entry {
-        opcode::RemoveBuffers::new(self.count, self.group.index()).build()
+        opcode::RemoveBuffers::new(self.count, self.group_id).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
@@ -75,14 +83,14 @@ unsafe impl Op for RemoveBuffers {
 
 pub struct ReadGroup {
     source: Source,
-    group: BufferGroup,
+    group_id: u16,
 }
 
 impl ReadGroup {
-    pub fn new(source: impl AsSource, group: BufferGroup) -> Self {
+    pub fn new(source: impl AsSource, group: &BufferGroupId) -> Self {
         Self {
             source: source.as_source(),
-            group,
+            group_id: group.index(),
         }
     }
 }
@@ -92,7 +100,8 @@ unsafe impl Op for ReadGroup {
 
     fn entry(&mut self) -> Entry {
         opcode::Read::new(self.source.as_raw(), std::ptr::null_mut(), 0)
-            .buf_group(self.group.index())
+            .buf_group(self.group_id)
+            .offset(u64::MAX)
             .build()
             .flags(squeue::Flags::BUFFER_SELECT)
     }
