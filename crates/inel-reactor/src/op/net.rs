@@ -11,6 +11,7 @@ use io_uring::{opcode, squeue::Entry, types::DestinationSlot};
 use crate::{
     op::{util, MultiOp, Op},
     ring::RingResult,
+    source::{AsDirectSlot, DirectAutoFd},
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
     AsSource, Cancellation, DirectSlot, Source,
 };
@@ -45,8 +46,8 @@ impl Socket {
         self
     }
 
-    pub fn fixed(self, slot: &DirectSlot) -> SocketFixed {
-        SocketFixed::from_raw(self, slot)
+    pub fn fixed(self, direct: &impl AsDirectSlot) -> SocketFixed {
+        SocketFixed::from_raw(self, direct.as_slot())
     }
 
     pub fn direct(self) -> SocketAuto {
@@ -115,7 +116,7 @@ impl SocketAuto {
 }
 
 unsafe impl Op for SocketAuto {
-    type Output = Result<DirectSlot>;
+    type Output = Result<DirectAutoFd>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -238,8 +239,8 @@ impl Accept {
         }
     }
 
-    pub fn fixed(self, slot: &DirectSlot) -> AcceptFixed {
-        AcceptFixed::from_raw(self, slot)
+    pub fn fixed(self, direct: &impl AsDirectSlot) -> AcceptFixed {
+        AcceptFixed::from_raw(self, direct.as_slot())
     }
 
     pub fn direct(self) -> AcceptAuto {
@@ -319,7 +320,7 @@ impl AcceptAuto {
 }
 
 unsafe impl Op for AcceptAuto {
-    type Output = Result<(DirectSlot, SocketAddr)>;
+    type Output = Result<(DirectAutoFd, SocketAddr)>;
 
     fn entry(&mut self) -> Entry {
         self.inner
@@ -413,7 +414,7 @@ pub struct AcceptMultiAuto {
 }
 
 unsafe impl Op for AcceptMultiAuto {
-    type Output = Result<DirectSlot>;
+    type Output = Result<DirectAutoFd>;
 
     fn entry(&mut self) -> Entry {
         opcode::AcceptMulti::new(self.src.as_raw())

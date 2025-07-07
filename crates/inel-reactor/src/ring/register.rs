@@ -114,7 +114,7 @@ impl SlotKey {
 }
 
 impl DirectSlot {
-    pub fn index(&self) -> u32 {
+    pub(crate) fn index(&self) -> u32 {
         self.0.index()
     }
 
@@ -128,13 +128,13 @@ impl DirectSlot {
 }
 
 impl BufferSlot {
-    pub fn index(&self) -> u32 {
+    pub(crate) fn index(&self) -> u32 {
         self.0.index()
     }
 }
 
 impl BufferGroupId {
-    pub fn index(&self) -> u16 {
+    pub(crate) fn index(&self) -> u16 {
         self.0.index() as u16
     }
 }

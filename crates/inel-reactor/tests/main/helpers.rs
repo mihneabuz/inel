@@ -20,7 +20,7 @@ use rand::Rng;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    BufferGroupId, DirectFd, Ring,
+    BufferGroupId, DirectAutoFd, Ring,
 };
 
 macro_rules! assert_ready {
@@ -94,7 +94,7 @@ impl ScopedReactor {
             .unwrap();
     }
 
-    pub fn register_file(&self, fd: RawFd) -> DirectFd<Self> {
+    pub fn register_file(&self, fd: RawFd) -> DirectAutoFd {
         let notifier = WakeNotifier::new();
         let register = op::RegisterFile::new(fd).run_on(self.clone());
         let mut fut = pin!(register);
@@ -107,7 +107,7 @@ impl ScopedReactor {
         let res = assert_ready!(poll!(fut, notifier));
         assert!(res.is_ok());
 
-        DirectFd::from_slot(res.unwrap(), self.clone())
+        res.unwrap()
     }
 
     pub fn block_on<F, T>(&self, fut: F) -> T

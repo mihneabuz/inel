@@ -6,8 +6,8 @@ use io_uring::squeue::Entry;
 
 use crate::{
     buffer::StableBuffer,
-    ring::{BufferSlot, RingResult},
-    BufferGroupId, Cancellation, DirectSlot, Key, Ring,
+    ring::{BufferSlot, DirectSlot, RingResult},
+    BufferGroupId, Cancellation, Key, Ring,
 };
 
 pub trait RingReactor {

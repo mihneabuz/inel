@@ -7,7 +7,7 @@ use std::{
 
 use inel_interface::Reactor;
 
-use crate::{BufferSlot, Cancellation, Ring, RingReactor};
+use crate::{ring::BufferSlot, Cancellation, Ring, RingReactor};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
@@ -118,7 +118,7 @@ impl StableBufferMut for String {
 #[derive(Debug)]
 pub struct Fixed<R: Reactor<Handle = Ring>> {
     inner: Option<Box<[u8]>>,
-    key: ManuallyDrop<BufferSlot>,
+    slot: ManuallyDrop<BufferSlot>,
     reactor: R,
 }
 
@@ -138,11 +138,11 @@ where
     where
         R: Reactor<Handle = Ring>,
     {
-        let key = reactor.register_buffer(&mut buffer)?;
+        let slot = reactor.register_buffer(&mut buffer)?;
 
         Ok(Self {
             inner: Some(buffer),
-            key: ManuallyDrop::new(key),
+            slot: ManuallyDrop::new(slot),
             reactor,
         })
     }
@@ -153,8 +153,8 @@ where
     R: Reactor<Handle = Ring>,
 {
     fn drop(&mut self) {
-        let key = unsafe { ManuallyDrop::take(&mut self.key) };
-        self.reactor.unregister_buffer(key);
+        let slot = unsafe { ManuallyDrop::take(&mut self.slot) };
+        self.reactor.unregister_buffer(slot);
     }
 }
 
@@ -214,7 +214,7 @@ where
     R: Reactor<Handle = Ring>,
 {
     fn slot(&self) -> &BufferSlot {
-        &self.key
+        &self.slot
     }
 }
 

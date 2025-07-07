@@ -2,7 +2,7 @@ use std::{io::Result, os::fd::RawFd};
 
 use io_uring::types::Target as RawTarget;
 
-use crate::{DirectSlot, Ring, RingReactor};
+use crate::{ring::DirectSlot, Ring, RingReactor};
 
 use inel_interface::Reactor;
 
@@ -23,30 +23,36 @@ impl Source {
     }
 }
 
-pub struct DirectFd<R> {
+pub struct DirectFd {
     slot: DirectSlot,
-    reactor: R,
 }
 
-impl<R> DirectFd<R>
-where
-    R: Reactor<Handle = Ring>,
-{
-    pub fn get(mut reactor: R) -> Result<Self> {
+impl DirectFd {
+    pub fn get<R>(reactor: &mut R) -> Result<Self>
+    where
+        R: Reactor<Handle = Ring>,
+    {
         let slot = reactor.get_direct_slot()?;
-        Ok(Self { slot, reactor })
+        Ok(Self { slot })
     }
 
-    pub fn from_slot(slot: DirectSlot, reactor: R) -> Self {
-        Self { slot, reactor }
+    pub fn release<R>(self, reactor: &mut R)
+    where
+        R: Reactor<Handle = Ring>,
+    {
+        reactor.release_direct_slot(self.slot);
     }
+}
 
-    pub fn slot(&self) -> &DirectSlot {
-        &self.slot
-    }
+pub struct DirectAutoFd {
+    slot: DirectSlot,
+}
 
-    pub fn release(mut self) {
-        self.reactor.release_direct_slot(self.slot);
+impl DirectAutoFd {
+    pub(crate) fn from_raw_slot(slot: u32) -> Self {
+        Self {
+            slot: DirectSlot::from_raw_slot(slot),
+        }
     }
 }
 
@@ -66,8 +72,30 @@ impl AsSource for RawFd {
     }
 }
 
-impl<R> AsSource for DirectFd<R> {
+impl AsSource for DirectFd {
     fn as_source(&self) -> Source {
         Source::fixed(self.slot.index())
+    }
+}
+
+impl AsSource for DirectAutoFd {
+    fn as_source(&self) -> Source {
+        Source::fixed(self.slot.index())
+    }
+}
+
+pub trait AsDirectSlot {
+    fn as_slot(&self) -> &DirectSlot;
+}
+
+impl AsDirectSlot for DirectFd {
+    fn as_slot(&self) -> &DirectSlot {
+        &self.slot
+    }
+}
+
+impl AsDirectSlot for DirectAutoFd {
+    fn as_slot(&self) -> &DirectSlot {
+        &self.slot
     }
 }

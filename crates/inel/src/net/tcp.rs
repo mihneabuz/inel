@@ -85,7 +85,7 @@ impl TcpListener {
             let direct = OwnedDirect::reserve().unwrap();
 
             let socket = op::Socket::stream_from_addr(&addr)
-                .fixed(direct.slot())
+                .fixed(&direct)
                 .run_on(GlobalReactor);
             let bind = op::Bind::new(&direct, addr).chain().run_on(GlobalReactor);
             let listen = op::Listen::new(&direct, DEFAULT_LISTEN_BACKLOG).run_on(GlobalReactor);
@@ -236,7 +236,7 @@ impl TcpStream {
             let direct = OwnedDirect::reserve().unwrap();
 
             let socket = op::Socket::stream_from_addr(&addr)
-                .fixed(direct.slot())
+                .fixed(&direct)
                 .run_on(GlobalReactor);
             let connect = op::Connect::new(&direct, addr).run_on(GlobalReactor);
 

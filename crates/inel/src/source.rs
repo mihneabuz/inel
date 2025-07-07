@@ -2,7 +2,7 @@ use std::{io::Result, mem::ManuallyDrop, os::fd::RawFd};
 
 use inel_reactor::{
     op::{self, OpExt},
-    AsSource, DirectFd, DirectSlot, Source,
+    AsDirectSlot, AsSource, DirectAutoFd, DirectFd, DirectSlot, Source,
 };
 
 use crate::GlobalReactor;
@@ -41,44 +41,49 @@ impl Drop for OwnedFd {
     }
 }
 
-pub struct OwnedDirect {
-    fd: ManuallyDrop<DirectFd<GlobalReactor>>,
-    manual: bool,
+pub enum OwnedDirect {
+    Manual(ManuallyDrop<DirectFd>),
+    Auto(DirectAutoFd),
 }
 
 impl AsSource for OwnedDirect {
     fn as_source(&self) -> Source {
-        self.fd.as_source()
+        match self {
+            Self::Manual(fd) => fd.as_source(),
+            Self::Auto(fd) => fd.as_source(),
+        }
+    }
+}
+
+impl AsDirectSlot for OwnedDirect {
+    fn as_slot(&self) -> &DirectSlot {
+        match self {
+            Self::Manual(fd) => fd.as_slot(),
+            Self::Auto(fd) => fd.as_slot(),
+        }
     }
 }
 
 impl OwnedDirect {
     pub fn reserve() -> Result<Self> {
-        Ok(Self {
-            fd: ManuallyDrop::new(DirectFd::get(GlobalReactor)?),
-            manual: true,
-        })
+        let direct = DirectFd::get(&mut GlobalReactor)?;
+        Ok(Self::Manual(ManuallyDrop::new(direct)))
     }
 
-    pub fn auto(slot: DirectSlot) -> Self {
-        Self {
-            fd: ManuallyDrop::new(DirectFd::from_slot(slot, GlobalReactor)),
-            manual: false,
-        }
-    }
-
-    pub fn slot(&self) -> &DirectSlot {
-        self.fd.slot()
+    pub fn auto(direct: DirectAutoFd) -> Self {
+        Self::Auto(direct)
     }
 }
 
 impl Drop for OwnedDirect {
     fn drop(&mut self) {
-        let direct = unsafe { ManuallyDrop::take(&mut self.fd) };
-        if self.manual {
-            direct.release();
-        } else {
-            crate::spawn(op::Close::new(&direct).run_on(GlobalReactor));
+        match self {
+            Self::Manual(fd) => {
+                unsafe { ManuallyDrop::take(fd) }.release(&mut GlobalReactor);
+            }
+            Self::Auto(fd) => {
+                crate::spawn(op::Close::new(fd).run_on(GlobalReactor));
+            }
         }
     }
 }

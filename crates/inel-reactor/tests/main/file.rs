@@ -374,10 +374,10 @@ mod direct {
         assert_eq!(notifier.try_recv(), Some(()));
 
         let fd1 = assert_ready!(poll!(fut1, notifier));
-        assert!(fd1.is_ok_and(|fd| fd.index() > 0));
+        assert!(fd1.is_ok());
 
         let fd2 = assert_ready!(poll!(fut2, notifier));
-        assert!(fd2.is_ok_and(|fd| fd.index() > 0));
+        assert!(fd2.is_ok());
 
         assert!(fut1.is_terminated());
         assert!(fut2.is_terminated());
@@ -392,19 +392,19 @@ mod direct {
 
     #[test]
     fn manual() {
-        let (reactor, notifier) = runtime();
-        let direct1 = DirectFd::get(reactor.clone()).unwrap();
-        let direct2 = DirectFd::get(reactor.clone()).unwrap();
+        let (mut reactor, notifier) = runtime();
+        let direct1 = DirectFd::get(&mut reactor).unwrap();
+        let direct2 = DirectFd::get(&mut reactor).unwrap();
 
         let filename1 = TempFile::new_name();
         let filename2 = TempFile::new_name();
 
         {
             let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
-                .fixed(direct1.slot())
+                .fixed(&direct1)
                 .run_on(reactor.clone());
             let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-                .fixed(direct2.slot())
+                .fixed(&direct2)
                 .run_on(reactor.clone());
 
             let mut fut1 = pin!(&mut creat1);
@@ -430,8 +430,8 @@ mod direct {
             assert!(fut2.is_terminated());
         }
 
-        direct1.release();
-        direct2.release();
+        direct1.release(&mut reactor);
+        direct2.release(&mut reactor);
         assert!(reactor.is_done());
 
         assert!(std::fs::exists(&filename1).is_ok_and(|exists| exists));
@@ -443,17 +443,19 @@ mod direct {
 
     #[test]
     fn error() {
-        let (reactor, _) = runtime();
+        let (mut reactor, _) = runtime();
 
         let directs = (0..reactor.resources())
-            .filter_map(|_| DirectFd::get(reactor.clone()).ok())
+            .filter_map(|_| DirectFd::get(&mut reactor).ok())
             .collect::<Vec<_>>();
 
         assert_eq!(directs.len(), reactor.resources() as usize);
-        assert!(DirectFd::get(reactor.clone()).is_err());
+        assert!(DirectFd::get(&mut reactor).is_err());
 
-        directs.into_iter().for_each(|direct| direct.release());
+        directs
+            .into_iter()
+            .for_each(|direct| direct.release(&mut reactor));
 
-        assert!(DirectFd::get(reactor.clone()).is_ok());
+        assert!(DirectFd::get(&mut reactor).is_ok());
     }
 }

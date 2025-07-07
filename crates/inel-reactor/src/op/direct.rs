@@ -5,7 +5,7 @@ use std::{
 
 use io_uring::{opcode, squeue::Entry};
 
-use crate::{op::Op, ring::RingResult, DirectSlot};
+use crate::{op::Op, ring::RingResult, source::DirectAutoFd};
 
 pub struct RegisterFile {
     fd: RawFd,
@@ -18,7 +18,7 @@ impl RegisterFile {
 }
 
 unsafe impl Op for RegisterFile {
-    type Output = Result<DirectSlot>;
+    type Output = Result<DirectAutoFd>;
 
     fn entry(&mut self) -> Entry {
         opcode::FilesUpdate::new(&self.fd as *const _, 1)
@@ -28,7 +28,7 @@ unsafe impl Op for RegisterFile {
 
     fn result(self, res: RingResult) -> Self::Output {
         match res.ret() {
-            1 => Ok(DirectSlot::from_raw_slot(self.fd as u32)),
+            1 => Ok(DirectAutoFd::from_raw_slot(self.fd as u32)),
             ..0 => Err(Error::from_raw_os_error(res.ret())),
             0 => unreachable!(),
             _ => unreachable!(),

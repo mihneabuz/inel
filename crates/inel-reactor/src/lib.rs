@@ -11,5 +11,5 @@ pub use reactor::RingReactor;
 
 pub use cancellation::Cancellation;
 pub use ring::{BufferGroupId, BufferSlot, DirectSlot, Key, Ring, RingOptions};
-pub use source::{AsSource, DirectFd, Source};
+pub use source::{AsDirectSlot, AsSource, DirectAutoFd, DirectFd, Source};
 pub use submission::Submission;
