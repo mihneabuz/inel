@@ -1,112 +1,152 @@
 use std::{io::Result, mem::ManuallyDrop};
 
+use inel_interface::Reactor;
 use io_uring::{
     opcode,
     squeue::{self, Entry},
 };
 
 use crate::{
-    buffer::StableBufferMut,
-    op::{util, Op},
-    ring::{BufferGroupId, RingResult},
-    AsSource, Source,
+    buffer::{StableBuffer, StableBufferMut},
+    group::ReadBufferGroup,
+    op::{util, MultiOp, Op},
+    ring::RingResult,
+    AsSource, Ring, Source,
 };
 
-pub struct ProvideBuffer<B> {
-    buffer: ManuallyDrop<B>,
-    buffer_id: u16,
-    group_id: u16,
+pub struct ProvideBuffer<'a, R> {
+    group: &'a ReadBufferGroup<R>,
+    buffer: ManuallyDrop<Box<[u8]>>,
 }
 
-impl<B> ProvideBuffer<B> {
-    /// # Safety
-    /// Caller must not drop the buffer until it is removed from the group
-    pub unsafe fn new(group: &BufferGroupId, buffer: B, id: u16) -> Self {
+impl<'a, R> ProvideBuffer<'a, R> {
+    pub fn new(group: &'a ReadBufferGroup<R>, buffer: Box<[u8]>) -> Self {
         Self {
+            group,
             buffer: ManuallyDrop::new(buffer),
-            buffer_id: id,
-            group_id: group.index(),
         }
     }
 }
 
-unsafe impl<B> Op for ProvideBuffer<B>
+unsafe impl<R> Op for ProvideBuffer<'_, R> {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        let ptr = self.buffer.stable_mut_ptr();
+        let size = self.buffer.size() as i32;
+
+        let buffer = unsafe { ManuallyDrop::take(&mut self.buffer) };
+        let id = self.group.put(buffer);
+
+        opcode::ProvideBuffers::new(ptr, size, 1, self.group.id().index(), id).build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
+    }
+}
+
+pub struct ReleaseGroup<R> {
+    group: ReadBufferGroup<R>,
+}
+
+impl<R> ReleaseGroup<R> {
+    pub fn new(group: ReadBufferGroup<R>) -> Self {
+        Self { group }
+    }
+}
+
+unsafe impl<R> Op for ReleaseGroup<R>
 where
-    B: StableBufferMut,
+    R: Reactor<Handle = Ring>,
 {
-    type Output = (B, Result<u16>);
+    type Output = ();
 
     fn entry(&mut self) -> Entry {
-        opcode::ProvideBuffers::new(
-            self.buffer.stable_mut_ptr(),
-            self.buffer.size() as i32,
-            1,
-            self.group_id,
-            self.buffer_id,
-        )
-        .build()
+        println!("PRESENT {}", self.group.present());
+        opcode::RemoveBuffers::new(self.group.present() as u16, self.group.id().index()).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        (
-            ManuallyDrop::into_inner(self.buffer),
-            util::expect_zero(&res).map(|_| self.buffer_id),
-        )
+        println!("PRESENT {}", self.group.present());
+        let removed = util::expect_positive(&res).unwrap();
+        assert_eq!(removed, self.group.present());
+        unsafe { self.group.release_id() };
     }
 }
 
-pub struct RemoveBuffers {
-    group_id: u16,
-    count: u16,
-}
-
-impl RemoveBuffers {
-    pub fn new(group: &BufferGroupId, count: u16) -> Self {
-        Self {
-            group_id: group.index(),
-            count,
-        }
-    }
-}
-
-unsafe impl Op for RemoveBuffers {
-    type Output = Result<usize>;
-
-    fn entry(&mut self) -> Entry {
-        opcode::RemoveBuffers::new(self.count, self.group_id).build()
-    }
-
-    fn result(self, res: RingResult) -> Self::Output {
-        util::expect_positive(&res)
-    }
-}
-
-pub struct ReadGroup {
+pub struct ReadGroup<'a, R> {
     source: Source,
-    group_id: u16,
+    group: &'a ReadBufferGroup<R>,
 }
 
-impl ReadGroup {
-    pub fn new(source: impl AsSource, group: &BufferGroupId) -> Self {
+impl<'a, R> ReadGroup<'a, R> {
+    pub fn new(source: impl AsSource, group: &'a ReadBufferGroup<R>) -> Self {
         Self {
             source: source.as_source(),
-            group_id: group.index(),
+            group,
         }
     }
 }
 
-unsafe impl Op for ReadGroup {
-    type Output = Result<(u16, usize)>;
+unsafe impl<R> Op for ReadGroup<'_, R> {
+    type Output = (Option<Box<[u8]>>, Result<usize>);
 
     fn entry(&mut self) -> Entry {
         opcode::Read::new(self.source.as_raw(), std::ptr::null_mut(), 0)
-            .buf_group(self.group_id)
+            .buf_group(self.group.id().index())
             .offset(u64::MAX)
             .build()
             .flags(squeue::Flags::BUFFER_SELECT)
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        util::expect_positive(&res).map(|read| (res.buffer_id().unwrap(), read))
+        let buffer = res.buffer_id().map(|id| self.group.take(id));
+        let read = util::expect_positive(&res);
+        (buffer, read)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
+    }
+}
+
+pub struct ReadGroupMulti<'a, R> {
+    source: Source,
+    group: &'a ReadBufferGroup<R>,
+}
+
+impl<'a, R> ReadGroupMulti<'a, R> {
+    pub fn new(source: impl AsSource, group: &'a ReadBufferGroup<R>) -> Self {
+        Self {
+            source: source.as_source(),
+            group,
+        }
+    }
+}
+
+unsafe impl<R> Op for ReadGroupMulti<'_, R> {
+    type Output = (Option<Box<[u8]>>, Result<usize>);
+
+    fn entry(&mut self) -> Entry {
+        opcode::ReadMulti::new(self.source.as_raw(), self.group.id().index())
+            .offset(u64::MAX)
+            .build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        self.next(res)
+    }
+}
+
+impl<R> MultiOp for ReadGroupMulti<'_, R> {
+    fn next(&self, res: RingResult) -> Self::Output {
+        let buffer = res.buffer_id().map(|id| self.group.take(id));
+        let read = util::expect_positive(&res);
+        (buffer, read)
     }
 }

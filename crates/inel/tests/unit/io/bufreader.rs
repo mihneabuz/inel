@@ -285,7 +285,7 @@ mod group {
         std::fs::write(&name, old.as_slice()).unwrap();
 
         let new = inel::block_on(async move {
-            let group = ReadBuffers::new(2048, 4).await.unwrap();
+            let group = ReadBuffers::new(4, 2048).await.unwrap();
 
             let file = inel::fs::File::open(name_clone).await.unwrap();
             let mut reader = group.provide_to(file);
@@ -317,7 +317,7 @@ mod group {
         std::fs::write(&name, &content).unwrap();
 
         inel::block_on(async move {
-            let group = ReadBuffers::new(256, 4).await.unwrap();
+            let group = ReadBuffers::new(8, 256).await.unwrap();
 
             let file = inel::fs::File::open(name_clone).await.unwrap();
             let reader = group.provide_to(file);
@@ -353,7 +353,7 @@ mod group {
         std::fs::write(&name, [b'a'; 128_000]).unwrap();
 
         inel::block_on(async move {
-            let group = ReadBuffers::new(2048, 4).await.unwrap();
+            let group = ReadBuffers::new(4, 1024).await.unwrap();
 
             let file = inel::fs::File::options()
                 .readable(false)
