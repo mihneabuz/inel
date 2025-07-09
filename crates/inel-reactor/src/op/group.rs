@@ -9,7 +9,7 @@ use io_uring::{
 use crate::{
     buffer::{StableBuffer, StableBufferMut},
     group::ReadBufferGroup,
-    op::{util, MultiOp, Op},
+    op::{util, DetachOp, MultiOp, Op},
     ring::RingResult,
     AsSource, Ring, Source,
 };
@@ -49,6 +49,8 @@ unsafe impl<R> Op for ProvideBuffer<'_, R> {
         None
     }
 }
+
+impl<R> DetachOp for ProvideBuffer<'_, R> {}
 
 pub struct ReleaseGroup<R> {
     group: ReadBufferGroup<R>,

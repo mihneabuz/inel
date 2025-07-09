@@ -1,7 +1,7 @@
 use std::{io::Result, mem::ManuallyDrop, os::fd::RawFd};
 
 use inel_reactor::{
-    op::{self, OpExt},
+    op::{self, DetachOp},
     AsDirectSlot, AsSource, DirectAutoFd, DirectFd, DirectSlot, Source,
 };
 
@@ -36,7 +36,7 @@ impl AsSource for OwnedFd {
 impl Drop for OwnedFd {
     fn drop(&mut self) {
         if self.fd > 0 {
-            crate::spawn(op::Close::new(&self.fd).run_on(GlobalReactor));
+            op::Close::new(&self.fd).run_detached(&mut GlobalReactor);
         }
     }
 }
@@ -82,7 +82,7 @@ impl Drop for OwnedDirect {
                 unsafe { ManuallyDrop::take(fd) }.release(&mut GlobalReactor);
             }
             Self::Auto(fd) => {
-                crate::spawn(op::Close::new(fd).run_on(GlobalReactor));
+                op::Close::new(fd).run_detached(&mut GlobalReactor);
             }
         }
     }

@@ -14,7 +14,7 @@ use std::pin::{pin, Pin};
 use futures::{future::FusedFuture, StreamExt};
 use helpers::{assert_ready, poll, runtime};
 use inel_interface::Reactor;
-use inel_reactor::op::{self, OpExt};
+use inel_reactor::op::{self, DetachOp, OpExt};
 
 #[test]
 fn sanity() {
@@ -99,6 +99,18 @@ fn stream() {
 
     assert_eq!(assert_ready!(poll!(stream, notifier)), vec![()]);
     assert!(nop.is_terminated());
+
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn detach() {
+    let (mut reactor, notifier) = runtime();
+
+    op::Nop.run_detached(&mut reactor);
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), None);
 
     assert!(reactor.is_done());
 }

@@ -10,8 +10,9 @@ use crate::{
     BufferGroupId, Cancellation, Key, Ring,
 };
 
-pub trait RingReactor {
+pub(crate) trait RingReactor {
     unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key;
+    unsafe fn submit_detached(&mut self, entry: Entry);
     unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation);
     fn check_result(&mut self, key: Key) -> Option<RingResult>;
 
@@ -30,38 +31,42 @@ where
     R: Reactor<Handle = Ring>,
 {
     unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
-        self.with(|react| react.submit(entry, waker)).unwrap()
+        self.with(|ring| ring.submit(entry, waker)).unwrap()
+    }
+
+    unsafe fn submit_detached(&mut self, entry: Entry) {
+        self.with(|ring| ring.submit_detached(entry));
     }
 
     unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation) {
-        self.with(|react| react.cancel(key, entry, cancel));
+        self.with(|ring| ring.cancel(key, entry, cancel));
     }
 
     fn check_result(&mut self, key: Key) -> Option<RingResult> {
-        self.with(|react| react.check_result(key)).unwrap()
+        self.with(|ring| ring.check_result(key)).unwrap()
     }
 
     fn register_buffer<B: StableBuffer>(&mut self, buffer: &mut B) -> Result<BufferSlot> {
-        self.with(|react| react.register_buffer(buffer)).unwrap()
+        self.with(|ring| ring.register_buffer(buffer)).unwrap()
     }
 
     fn unregister_buffer(&mut self, slot: BufferSlot) {
-        self.with(|react| react.unregister_buffer(slot));
+        self.with(|ring| ring.unregister_buffer(slot));
     }
 
     fn get_direct_slot(&mut self) -> Result<DirectSlot> {
-        self.with(|react| react.get_direct_slot()).unwrap()
+        self.with(|ring| ring.get_direct_slot()).unwrap()
     }
 
     fn release_direct_slot(&mut self, slot: DirectSlot) {
-        self.with(|react| react.release_direct_slot(slot));
+        self.with(|ring| ring.release_direct_slot(slot));
     }
 
     fn get_buffer_group(&mut self) -> Result<BufferGroupId> {
-        self.with(|react| react.get_buffer_group()).unwrap()
+        self.with(|ring| ring.get_buffer_group()).unwrap()
     }
 
     fn release_buffer_group(&mut self, id: BufferGroupId) {
-        self.with(|react| react.release_buffer_group(id));
+        self.with(|ring| ring.release_buffer_group(id));
     }
 }

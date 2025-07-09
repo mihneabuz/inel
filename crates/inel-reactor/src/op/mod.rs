@@ -16,7 +16,7 @@ use io_uring::{
     squeue::{Entry, Flags},
 };
 
-use crate::{ring::RingResult, Cancellation, Ring, Submission};
+use crate::{ring::RingResult, Cancellation, Ring, RingReactor, Submission};
 
 pub use direct::*;
 pub use fs::*;
@@ -66,6 +66,17 @@ pub trait MultiOp: Op {
     fn next(&self, res: RingResult) -> Self::Output;
 }
 
+/// Marks an Op that can be run without caring about the result
+pub trait DetachOp: Op {
+    fn run_detached<R>(mut self, reactor: &mut R)
+    where
+        R: inel_interface::Reactor<Handle = Ring>,
+        Self: Op + Sized,
+    {
+        unsafe { reactor.submit_detached(self.entry()) };
+    }
+}
+
 pub trait OpExt {
     fn chain(self) -> Chain<Self>
     where
@@ -111,6 +122,8 @@ impl MultiOp for Nop {
         assert!(res.ret() == 0 || res.ret() == -libc::ECANCELED)
     }
 }
+
+impl DetachOp for Nop {}
 
 pub struct Chain<O> {
     inner: O,

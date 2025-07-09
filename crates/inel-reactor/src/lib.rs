@@ -8,7 +8,7 @@ mod source;
 mod submission;
 pub mod util;
 
-pub use reactor::RingReactor;
+pub(crate) use reactor::RingReactor;
 
 pub use cancellation::Cancellation;
 pub use ring::{BufferGroupId, BufferSlot, DirectSlot, Key, Ring, RingOptions};

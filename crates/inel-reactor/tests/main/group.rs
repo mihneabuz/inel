@@ -3,7 +3,7 @@ use std::pin::pin;
 use inel_interface::Reactor;
 use inel_reactor::{
     group::ReadBufferGroup,
-    op::{self, OpExt},
+    op::{self, DetachOp, OpExt},
 };
 
 use crate::{
@@ -34,6 +34,22 @@ fn provide() {
             assert!(assert_ready!(poll!(fut, notifier)).is_ok());
         }
     }
+
+    reactor.block_on(group.release().run_on(reactor.clone()));
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn provide_detach() {
+    let (mut reactor, notifier) = runtime();
+    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
+
+    group.provide(Box::new([0; 128])).run_detached(&mut reactor);
+    group.provide(Box::new([0; 256])).run_detached(&mut reactor);
+    group.provide(Box::new([0; 512])).run_detached(&mut reactor);
+
+    reactor.wait();
+    assert!(notifier.try_recv().is_none());
 
     reactor.block_on(group.release().run_on(reactor.clone()));
     assert!(reactor.is_done());

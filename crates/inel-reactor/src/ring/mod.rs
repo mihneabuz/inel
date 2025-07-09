@@ -16,7 +16,7 @@ use register::SlotRegister;
 pub use completion::Key;
 pub use register::{BufferGroupId, BufferSlot, DirectSlot};
 
-const CANCEL_KEY: u64 = 1_333_337;
+const IGNORE_KEY: u64 = u64::MAX - 1;
 
 pub struct RingOptions {
     submissions: u32,
@@ -126,6 +126,7 @@ impl RingOptions {
         Ring {
             ring,
             active: 0,
+            detached: 0,
             canceled: 0,
             completions: CompletionSet::with_capacity(self.submissions as usize),
             direct_files: SlotRegister::new(self.manual_direct_files),
@@ -137,13 +138,13 @@ impl RingOptions {
 
 /// Reactor implemented over a [IoUring].
 ///
-/// Used by [Submission](crate::Submission) to submit sqes and get notified
-/// of completions by use of [Waker].
+/// Used by [Submission](crate::Submission) to submit sqes and get notified of completions by use of [Waker].
 ///
 /// Also used to register other resources, such as fixed buffers.
 pub struct Ring {
     ring: IoUring,
     active: u32,
+    detached: u32,
     canceled: u32,
     completions: CompletionSet,
     direct_files: SlotRegister<DirectSlot>,
@@ -173,15 +174,27 @@ impl Ring {
     ///  - all buffers have been unregistered
     ///  - all files have been unregistered
     pub fn is_done(&self) -> bool {
-        self.active == 0
+        self.active + self.detached == 0
             && self.completions.is_empty()
             && self.direct_files.is_full()
             && self.fixed_buffers.is_full()
             && self.buffer_groups.is_full()
     }
 
-    /// Submit an sqe with an associated [Waker] which will be called
-    /// when the entry completes.
+    /// # Safety
+    /// Caller must ensure that the entry is valid
+    pub unsafe fn submit_detached(&mut self, entry: Entry) {
+        debug!(?entry, "Detached");
+
+        self.ring
+            .submission()
+            .push(&entry.user_data(IGNORE_KEY))
+            .expect("Submission queue is full");
+
+        self.detached += 1;
+    }
+
+    /// Submit an sqe with an associated [Waker] which will be called when the entry completes.
     /// Returns a [Key] which allowes the caller to get the cqe result
     /// by calling [Ring::check_result].
     ///
@@ -222,9 +235,10 @@ impl Ring {
         if let Some(entry) = entry {
             self.ring
                 .submission()
-                .push(&entry.user_data(CANCEL_KEY))
+                .push(&entry.user_data(IGNORE_KEY))
                 .expect("Submission queue is full");
 
+            self.detached += 1;
             self.canceled += 1;
         }
     }
@@ -236,17 +250,22 @@ impl Ring {
     }
 
     fn submit_and_wait(&mut self) {
-        if self.active == 0 {
+        if self.active + self.detached == 0 {
             return;
         }
 
         let want = if self.active == self.canceled {
-            self.active
+            2 * self.canceled
         } else {
             1 + 2 * self.canceled
         };
 
-        debug!(active =? self.active, canceled = ?self.canceled, ?want, "Waiting");
+        debug!(
+            active =? self.active,
+            detached =? self.detached,
+            canceled =? self.canceled,
+            ?want, "Waiting"
+        );
 
         self.ring
             .submit_and_wait(want as usize)
@@ -261,7 +280,8 @@ impl Ring {
         for entry in self.ring.completion() {
             debug!(key = entry.user_data(), ?entry, "Completion");
 
-            if entry.user_data() == CANCEL_KEY {
+            if entry.user_data() == IGNORE_KEY {
+                self.detached -= 1;
                 continue;
             }
 

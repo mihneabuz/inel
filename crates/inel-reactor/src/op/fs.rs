@@ -13,7 +13,7 @@ use io_uring::{
 };
 
 use crate::{
-    op::{util, Op},
+    op::{util, DetachOp, Op},
     ring::RingResult,
     source::{AsDirectSlot, DirectAutoFd},
     AsSource, Cancellation, DirectSlot, Source,
@@ -291,6 +291,8 @@ unsafe impl Op for Close {
         None
     }
 }
+
+impl DetachOp for Close {}
 
 pub struct Fsync {
     src: Source,

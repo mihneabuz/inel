@@ -17,7 +17,11 @@ use crate::{
     GlobalReactor,
 };
 
-use inel_reactor::{group::ReadBufferGroup, op::OpExt, AsSource};
+use inel_reactor::{
+    group::ReadBufferGroup,
+    op::{DetachOp, OpExt},
+    AsSource,
+};
 
 #[derive(Clone)]
 pub struct ReadBuffers {
@@ -54,15 +58,6 @@ impl ReadBuffers {
 
     async fn read(&self, source: impl AsSource) -> (Option<Box<[u8]>>, Result<usize>) {
         self.inner.group().read(source).run_on(GlobalReactor).await
-    }
-
-    async fn provide(&self, buffer: Box<[u8]>) {
-        self.inner
-            .group()
-            .provide(buffer)
-            .run_on(GlobalReactor)
-            .await
-            .unwrap();
     }
 
     pub fn provide_to<S>(&self, source: S) -> GroupBufReader<S> {
@@ -110,10 +105,11 @@ struct GroupAdapter(ReadBuffers);
 impl<S: ReadSource> BufReaderAdapter<S, GroupBuffer, GroupFuture> for GroupAdapter {
     fn create_future(&self, source: &mut S, buffer: GroupBuffer) -> GroupFuture {
         if let Some(buffer) = buffer.0 {
-            let group = self.0.clone();
-            crate::spawn(async move {
-                group.provide(buffer).await;
-            });
+            self.0
+                .inner
+                .group()
+                .provide(buffer)
+                .run_detached(&mut GlobalReactor);
         }
 
         let group = self.0.clone();

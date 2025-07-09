@@ -3,7 +3,7 @@ use std::{os::fd::IntoRawFd, pin::pin};
 use futures::future::FusedFuture;
 use inel_interface::Reactor;
 use inel_macro::test_repeat;
-use inel_reactor::op::{self, OpExt};
+use inel_reactor::op::{self, DetachOp, OpExt};
 
 use crate::helpers::{assert_ready, poll, runtime, TempFile, MESSAGE};
 
@@ -244,6 +244,28 @@ fn close() {
     assert!(fut1.is_terminated());
     assert!(fut2.is_terminated());
     assert!(bad.is_terminated());
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn close_detach() {
+    let (mut reactor, notifier) = runtime();
+    let file1 = TempFile::with_content(&MESSAGE);
+    let file2 = TempFile::with_content(&MESSAGE);
+
+    let fd1 = std::fs::File::open(file1.name()).unwrap().into_raw_fd();
+    let fd2 = std::fs::File::open(file2.name()).unwrap().into_raw_fd();
+
+    op::Close::new(&fd1).run_detached(&mut reactor);
+    op::Close::new(&fd2).run_detached(&mut reactor);
+    op::Close::new(&1338).run_detached(&mut reactor);
+
+    assert_eq!(reactor.active(), 0);
+    assert!(!reactor.is_done());
+
+    reactor.wait();
+    assert_eq!(notifier.try_recv(), None);
+
     assert!(reactor.is_done());
 }
 
