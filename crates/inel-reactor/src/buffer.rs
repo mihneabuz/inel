@@ -15,7 +15,12 @@ pub trait StableBuffer: Into<Cancellation> {
     fn size(&self) -> usize;
 
     fn as_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.stable_ptr(), self.size()) }
+        let base = self.stable_ptr();
+        if base.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(base, self.size()) }
+        }
     }
 }
 
@@ -23,7 +28,12 @@ pub trait StableBufferMut: StableBuffer {
     fn stable_mut_ptr(&mut self) -> *mut u8;
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.stable_mut_ptr(), self.size()) }
+        let base = self.stable_mut_ptr();
+        if base.is_null() {
+            &mut []
+        } else {
+            unsafe { slice::from_raw_parts_mut(base, self.size()) }
+        }
     }
 }
 
@@ -277,7 +287,10 @@ where
     B: StableBuffer,
 {
     pub fn buffer(&self) -> &[u8] {
-        &self.inner.as_slice()[self.range.start..self.range.end]
+        self.inner
+            .as_slice()
+            .get(self.range.start..self.range.end)
+            .unwrap_or(&[])
     }
 
     pub fn is_empty(&self) -> bool {
@@ -298,7 +311,7 @@ where
     B: StableBuffer,
 {
     pub fn buffer(&self) -> &[u8] {
-        &self.inner.as_slice()[..self.range.end]
+        self.inner.as_slice().get(..self.range.end).unwrap_or(&[])
     }
 
     pub fn is_empty(&self) -> bool {
