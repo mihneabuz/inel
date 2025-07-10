@@ -82,6 +82,7 @@ where
 
 pub(crate) trait BufReaderAdapter<S, B, F> {
     fn create_future(&self, source: &mut S, buffer: B) -> F;
+    fn post_consume(&self, _view: &mut View<B, Range<usize>>) {}
 }
 
 impl<S, B, F, A> AsyncRead for BufReaderInner<S, B, F, A>
@@ -151,8 +152,10 @@ where
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        if let BufReaderState::Ready(buf) = &mut Pin::into_inner(self).state {
+        let this = Pin::into_inner(self);
+        if let BufReaderState::Ready(buf) = &mut this.state {
             buf.consume(amt);
+            this.adapter.post_consume(buf);
         }
     }
 }
