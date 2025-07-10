@@ -323,7 +323,7 @@ where
     }
 
     pub fn spare_capacity(&mut self) -> usize {
-        self.inner.size() - self.range.end
+        self.inner.size().saturating_sub(self.range.end)
     }
 
     pub fn into_raw_parts(self) -> (B, usize) {

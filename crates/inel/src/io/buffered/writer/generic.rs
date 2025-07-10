@@ -21,13 +21,13 @@ pub(crate) enum BufWriterState<B, F> {
     Ready(View<B, RangeTo<usize>>),
 }
 
-pub(crate) struct BufWriterGeneric<S, B, F, A> {
+pub(crate) struct BufWriterInner<S, B, F, A> {
     state: BufWriterState<B, F>,
     sink: S,
     adapter: A,
 }
 
-impl<S, B, F, A> BufWriterGeneric<S, B, F, A>
+impl<S, B, F, A> BufWriterInner<S, B, F, A>
 where
     B: StableBufferMut,
 {
@@ -80,11 +80,31 @@ where
     }
 }
 
-pub(crate) trait BufWriterAdapter<S, B, F> {
-    fn create_future(&self, sink: &mut S, buffer: View<B, RangeTo<usize>>) -> F;
+impl<S, B, F, Adapter> BufWriterInner<S, B, F, Adapter>
+where
+    S: WriteSource,
+    B: StableBufferMut,
+    F: Future<Output = (View<B, RangeTo<usize>>, Result<usize>)> + Unpin,
+    Self: Unpin,
+    Adapter: BufWriterAdapter<S, B, F>,
+{
+    pub(crate) fn poll_flush_and_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize>> {
+        ready!(self.as_mut().poll_flush(cx))?;
+        self.poll_write(cx, buf)
+    }
 }
 
-impl<S, B, F, Adapter> AsyncWrite for BufWriterGeneric<S, B, F, Adapter>
+pub(crate) trait BufWriterAdapter<S, B, F> {
+    fn create_future(&self, sink: &mut S, buffer: View<B, RangeTo<usize>>) -> F;
+    fn pre_write(&self, _buffer: &mut B) {}
+    fn post_flush(&self, _buffer: &mut B) {}
+}
+
+impl<S, B, F, Adapter> AsyncWrite for BufWriterInner<S, B, F, Adapter>
 where
     S: WriteSource,
     B: StableBufferMut,
@@ -98,18 +118,13 @@ where
         match &mut this.state {
             BufWriterState::Empty => unreachable!(),
 
-            BufWriterState::Pending(_) => {
-                let mut pinned = Pin::new(this);
-                ready!(pinned.as_mut().poll_flush(cx))?;
-                pinned.poll_write(cx, buf)
-            }
+            BufWriterState::Pending(_) => Pin::new(this).poll_flush_and_write(cx, buf),
 
             BufWriterState::Ready(internal) => {
+                this.adapter.pre_write(internal.inner_mut());
                 let spare_capacity = internal.spare_capacity();
                 if spare_capacity == 0 {
-                    let mut pinned = Pin::new(this);
-                    ready!(pinned.as_mut().poll_flush(cx))?;
-                    pinned.poll_write(cx, buf)
+                    Pin::new(this).poll_flush_and_write(cx, buf)
                 } else {
                     let len = spare_capacity.min(buf.len());
                     let res = internal.fill(&buf[..len]);
@@ -131,6 +146,7 @@ where
                     Ok(wrote) => {
                         assert_eq!(wrote, view.range().end);
                         view.set_pos(0);
+                        this.adapter.post_flush(view.inner_mut());
                         this.state = BufWriterState::Ready(view);
                     }
 

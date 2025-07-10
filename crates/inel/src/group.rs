@@ -1,4 +1,4 @@
-use std::{io::Result, mem::ManuallyDrop, ops::Deref, rc::Rc};
+use std::{cell::RefCell, io::Result, mem::ManuallyDrop, ops::Deref, rc::Rc};
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use inel_reactor::{
@@ -106,5 +106,48 @@ impl Drop for ReadBufferSetInner {
     fn drop(&mut self) {
         let group = unsafe { ManuallyDrop::take(&mut self.group) };
         crate::spawn(op::ReleaseGroup::new(group).run_on(GlobalReactor));
+    }
+}
+
+#[derive(Clone)]
+pub struct WriteBufferSet {
+    inner: Rc<RefCell<WriteBufferSetInner>>,
+}
+
+impl WriteBufferSet {
+    pub fn empty() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(WriteBufferSetInner::empty())),
+        }
+    }
+
+    pub fn insert(&self, buffer: Box<[u8]>) {
+        self.inner.borrow_mut().insert(buffer);
+    }
+
+    pub fn get(&self) -> Box<[u8]> {
+        self.inner.borrow_mut().get()
+    }
+}
+
+struct WriteBufferSetInner {
+    buffers: Vec<Box<[u8]>>,
+}
+
+impl WriteBufferSetInner {
+    pub fn empty() -> Self {
+        Self {
+            buffers: Vec::with_capacity(32),
+        }
+    }
+
+    pub fn insert(&mut self, buffer: Box<[u8]>) {
+        self.buffers.push(buffer);
+    }
+
+    pub fn get(&mut self) -> Box<[u8]> {
+        self.buffers
+            .pop()
+            .unwrap_or(vec![0; 2048].into_boxed_slice())
     }
 }

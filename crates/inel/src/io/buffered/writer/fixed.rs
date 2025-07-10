@@ -15,11 +15,11 @@ impl<S: WriteSource> BufWriterAdapter<S, Fixed, FixedWrite> for FixedAdapter {
     }
 }
 
-pub struct FixedBufWriter<S>(BufWriterGeneric<S, Fixed, FixedWrite, FixedAdapter>);
+pub struct FixedBufWriter<S>(BufWriterInner<S, Fixed, FixedWrite, FixedAdapter>);
 
 impl<S> FixedBufWriter<S> {
     pub(crate) fn from_raw(sink: S, buffer: Fixed, pos: usize) -> Self {
-        Self(BufWriterGeneric::new(buffer, sink, pos, FixedAdapter))
+        Self(BufWriterInner::new(buffer, sink, pos, FixedAdapter))
     }
 }
 

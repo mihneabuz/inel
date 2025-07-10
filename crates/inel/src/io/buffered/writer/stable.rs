@@ -21,7 +21,7 @@ impl<S: WriteSource> BufWriterAdapter<S, BoxBuf, OwnedWrite> for OwnedAdapter {
     }
 }
 
-pub struct BufWriter<S>(BufWriterGeneric<S, BoxBuf, OwnedWrite, OwnedAdapter>);
+pub struct BufWriter<S>(BufWriterInner<S, BoxBuf, OwnedWrite, OwnedAdapter>);
 
 impl<S> BufWriter<S> {
     pub fn new(sink: S) -> Self {
@@ -29,7 +29,7 @@ impl<S> BufWriter<S> {
     }
 
     pub fn with_capacity(capacity: usize, sink: S) -> Self {
-        Self(BufWriterGeneric::empty(
+        Self(BufWriterInner::empty(
             vec![0; capacity].into_boxed_slice(),
             sink,
             OwnedAdapter,
