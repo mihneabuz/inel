@@ -1,8 +1,7 @@
 use std::{
-    io::Result,
+    io::{Result, Write},
     mem::ManuallyDrop,
-    ops::Range,
-    ops::{Bound, Deref, DerefMut, RangeBounds},
+    ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeTo},
     slice,
 };
 
@@ -291,6 +290,44 @@ where
 
     pub fn into_raw_parts(self) -> (B, usize, usize) {
         (self.inner, self.range.start, self.range.end)
+    }
+}
+
+impl<B> View<B, RangeTo<usize>>
+where
+    B: StableBuffer,
+{
+    pub fn buffer(&self) -> &[u8] {
+        &self.inner.as_slice()[..self.range.end]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.range.end == 0
+    }
+
+    pub fn set_pos(&mut self, pos: usize) {
+        self.range.end = pos
+    }
+
+    pub fn spare_capacity(&mut self) -> usize {
+        self.inner.size() - self.range.end
+    }
+
+    pub fn into_raw_parts(self) -> (B, usize) {
+        (self.inner, self.range.end)
+    }
+}
+
+impl<B> View<B, RangeTo<usize>>
+where
+    B: StableBufferMut,
+{
+    pub fn fill(&mut self, data: &[u8]) -> usize {
+        let pos = self.range.end;
+        let mut writer = &mut self.inner_mut().as_mut_slice()[pos..];
+        let wrote = writer.write(data).unwrap();
+        self.range.end += wrote;
+        wrote
     }
 }
 

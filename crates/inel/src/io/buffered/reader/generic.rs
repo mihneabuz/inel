@@ -7,10 +7,11 @@ use std::{
 };
 
 use futures::{AsyncBufRead, AsyncRead, FutureExt};
-use inel_reactor::buffer::{StableBufferMut, View};
 
-use crate::buffer::StableBufferExt;
-use crate::io::ReadSource;
+use crate::{
+    buffer::{StableBufferExt, StableBufferMut, View},
+    io::ReadSource,
+};
 
 #[derive(Default)]
 pub(crate) enum BufReaderState<B, F> {
@@ -41,12 +42,7 @@ where
             adapter,
         }
     }
-}
 
-impl<S, B, F, A> BufReaderInner<S, B, F, A>
-where
-    B: StableBufferMut,
-{
     fn ready(&self) -> Option<&View<B, Range<usize>>> {
         match &self.state {
             BufReaderState::Ready(buf) => Some(buf),
@@ -84,6 +80,10 @@ where
     }
 }
 
+pub(crate) trait BufReaderAdapter<S, B, F> {
+    fn create_future(&self, source: &mut S, buffer: B) -> F;
+}
+
 impl<S, B, F, A> AsyncRead for BufReaderInner<S, B, F, A>
 where
     S: ReadSource,
@@ -100,10 +100,6 @@ where
         self.consume(len);
         Poll::Ready(Ok(len))
     }
-}
-
-pub(crate) trait BufReaderAdapter<S, B, F> {
-    fn create_future(&self, source: &mut S, buffer: B) -> F;
 }
 
 impl<S, B, F, Adapter> AsyncBufRead for BufReaderInner<S, B, F, Adapter>
