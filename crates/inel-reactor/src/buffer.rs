@@ -1,6 +1,7 @@
 use std::{
     io::Result,
     mem::ManuallyDrop,
+    ops::Range,
     ops::{Bound, Deref, DerefMut, RangeBounds},
     slice,
 };
@@ -80,6 +81,26 @@ impl StableBuffer for Box<[u8]> {
 impl StableBufferMut for Box<[u8]> {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
         self.as_mut_ptr()
+    }
+}
+
+impl StableBuffer for Option<Box<[u8]>> {
+    fn stable_ptr(&self) -> *const u8 {
+        self.as_ref()
+            .map(|buf| buf.stable_ptr())
+            .unwrap_or(std::ptr::null())
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().map(|buf| buf.size()).unwrap_or_default()
+    }
+}
+
+impl StableBufferMut for Option<Box<[u8]>> {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.as_mut()
+            .map(|buf| buf.stable_mut_ptr())
+            .unwrap_or(std::ptr::null_mut())
     }
 }
 
@@ -249,6 +270,27 @@ where
 
     pub fn unview(self) -> B {
         self.inner
+    }
+}
+
+impl<B> View<B, Range<usize>>
+where
+    B: StableBuffer,
+{
+    pub fn buffer(&self) -> &[u8] {
+        &self.inner.as_slice()[self.range.start..self.range.end]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.range.is_empty()
+    }
+
+    pub fn consume(&mut self, amt: usize) {
+        self.range.start = std::cmp::min(self.range.start + amt, self.range.end);
+    }
+
+    pub fn into_raw_parts(self) -> (B, usize, usize) {
+        (self.inner, self.range.start, self.range.end)
     }
 }
 

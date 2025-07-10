@@ -1,6 +1,6 @@
 use std::{io::Result, net::Shutdown};
 
-use inel::{io::ReadBuffers, net::TcpListener};
+use inel::{group::ReadBufferSet, net::TcpListener};
 
 use futures::{AsyncBufReadExt, StreamExt};
 
@@ -9,7 +9,7 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    let buffers = ReadBuffers::new(4096, 16).await.unwrap();
+    let buffers = ReadBufferSet::new(16, 4096).await.unwrap();
 
     let mut incoming = TcpListener::bind_direct(("127.0.0.1", 3030))
         .await?
@@ -20,7 +20,7 @@ async fn run() -> Result<()> {
             continue;
         };
 
-        let mut reader = buffers.provide_to(conn);
+        let mut reader = buffers.supply_to(conn);
         inel::spawn(async move {
             let _ = reader.read_line(&mut String::new()).await;
             let _ = reader.inner().shutdown(Shutdown::Both).await;

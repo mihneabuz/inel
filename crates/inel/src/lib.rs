@@ -30,6 +30,7 @@ pub use inel_macro::main;
 
 pub mod buffer;
 pub mod fs;
+pub mod group;
 pub mod io;
 pub mod net;
 pub mod time;

@@ -4,5 +4,5 @@ mod group;
 mod stable;
 
 pub use fixed::FixedBufReader;
-pub use group::{GroupBufReader, ReadBuffers};
+pub use group::GroupBufReader;
 pub use stable::BufReader;

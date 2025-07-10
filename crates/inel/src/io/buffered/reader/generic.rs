@@ -1,82 +1,53 @@
 use std::{
-    cmp,
     future::Future,
     io::Result,
+    ops::Range,
     pin::Pin,
     task::{ready, Context, Poll},
 };
 
 use futures::{AsyncBufRead, AsyncRead, FutureExt};
+use inel_reactor::buffer::{StableBufferMut, View};
 
+use crate::buffer::StableBufferExt;
 use crate::io::ReadSource;
-
-pub(crate) struct DoubleCursor<B> {
-    buf: B,
-    pos: usize,
-    filled: usize,
-}
-
-impl<B> DoubleCursor<B> {
-    pub(crate) fn new(buf: B, pos: usize, filled: usize) -> Self {
-        Self { buf, pos, filled }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.pos >= self.filled
-    }
-
-    pub(crate) fn consume(&mut self, amt: usize) {
-        self.pos = cmp::min(self.pos + amt, self.filled);
-    }
-
-    pub(crate) fn into_raw_parts(self) -> (B, usize, usize) {
-        (self.buf, self.pos, self.filled)
-    }
-}
-
-impl<B: AsRef<[u8]>> DoubleCursor<B> {
-    pub(crate) fn buffer(&self) -> &[u8] {
-        &self.buf.as_ref()[self.pos..self.filled]
-    }
-
-    pub(crate) fn capacity(&self) -> usize {
-        self.buf.as_ref().len()
-    }
-}
 
 #[derive(Default)]
 pub(crate) enum BufReaderState<B, F> {
     #[default]
     Empty,
     Pending(F),
-    Ready(DoubleCursor<B>),
+    Ready(View<B, Range<usize>>),
 }
 
-pub(crate) struct BufReaderGeneric<S, B, F, A> {
-    pub(crate) state: BufReaderState<B, F>,
-    pub(crate) source: S,
-    pub(crate) adapter: A,
+pub(crate) struct BufReaderInner<S, B, F, A> {
+    state: BufReaderState<B, F>,
+    source: S,
+    adapter: A,
 }
 
-impl<S, B, F, A> BufReaderGeneric<S, B, F, A> {
+impl<S, B, F, A> BufReaderInner<S, B, F, A>
+where
+    B: StableBufferMut,
+{
     pub(crate) fn empty(buffer: B, source: S, adapter: A) -> Self {
         Self::new(buffer, source, 0, 0, adapter)
     }
 
     pub(crate) fn new(buffer: B, source: S, pos: usize, filled: usize, adapter: A) -> Self {
         Self {
-            state: BufReaderState::Ready(DoubleCursor::new(buffer, pos, filled)),
+            state: BufReaderState::Ready(buffer.view(pos..filled)),
             source,
             adapter,
         }
     }
 }
 
-impl<S, B, F, A> BufReaderGeneric<S, B, F, A>
+impl<S, B, F, A> BufReaderInner<S, B, F, A>
 where
-    B: AsRef<[u8]>,
+    B: StableBufferMut,
 {
-    fn ready(&self) -> Option<&DoubleCursor<B>> {
+    fn ready(&self) -> Option<&View<B, Range<usize>>> {
         match &self.state {
             BufReaderState::Ready(buf) => Some(buf),
             _ => None,
@@ -88,7 +59,7 @@ where
     }
 
     pub(crate) fn capacity(&self) -> Option<usize> {
-        self.ready().map(|buf| buf.capacity())
+        self.ready().map(|buf| buf.inner().size())
     }
 
     pub(crate) fn inner(&self) -> &S {
@@ -113,10 +84,10 @@ where
     }
 }
 
-impl<S, B, F, A> AsyncRead for BufReaderGeneric<S, B, F, A>
+impl<S, B, F, A> AsyncRead for BufReaderInner<S, B, F, A>
 where
     S: ReadSource,
-    B: AsRef<[u8]>,
+    B: StableBufferMut,
     Self: AsyncBufRead,
 {
     fn poll_read(
@@ -135,10 +106,10 @@ pub(crate) trait BufReaderAdapter<S, B, F> {
     fn create_future(&self, source: &mut S, buffer: B) -> F;
 }
 
-impl<S, B, F, Adapter> AsyncBufRead for BufReaderGeneric<S, B, F, Adapter>
+impl<S, B, F, Adapter> AsyncBufRead for BufReaderInner<S, B, F, Adapter>
 where
     S: ReadSource,
-    B: AsRef<[u8]>,
+    B: StableBufferMut,
     F: Future<Output = (B, Result<usize>)> + Unpin,
     Self: Unpin,
     Adapter: BufReaderAdapter<S, B, F>,
@@ -153,11 +124,11 @@ where
                 let (buf, res) = ready!(fut.poll_unpin(cx));
                 match res {
                     Ok(filled) => {
-                        this.state = BufReaderState::Ready(DoubleCursor::new(buf, 0, filled));
+                        this.state = BufReaderState::Ready(buf.view(0..filled));
                     }
 
                     Err(err) => {
-                        this.state = BufReaderState::Ready(DoubleCursor::new(buf, 0, 0));
+                        this.state = BufReaderState::Ready(buf.view(0..0));
                         return Poll::Ready(Err(err));
                     }
                 }
@@ -189,3 +160,60 @@ where
         }
     }
 }
+
+macro_rules! impl_bufreader {
+    ($bufreader:ident) => {
+        impl<S> $bufreader<S> {
+            pub fn capacity(&self) -> Option<usize> {
+                self.0.capacity()
+            }
+
+            pub fn buffer(&self) -> Option<&[u8]> {
+                self.0.buffer()
+            }
+
+            pub fn inner(&self) -> &S {
+                self.0.inner()
+            }
+
+            pub fn inner_mut(&mut self) -> &mut S {
+                self.0.inner_mut()
+            }
+
+            pub fn into_inner(self) -> S {
+                self.0.into_inner()
+            }
+        }
+
+        impl<S> futures::AsyncRead for $bufreader<S>
+        where
+            S: ReadSource + Unpin,
+        {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut [u8],
+            ) -> std::task::Poll<Result<usize>> {
+                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_read(cx, buf)
+            }
+        }
+
+        impl<S> futures::AsyncBufRead for $bufreader<S>
+        where
+            S: ReadSource + Unpin,
+        {
+            fn poll_fill_buf(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<&[u8]>> {
+                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_fill_buf(cx)
+            }
+
+            fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
+                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).consume(amt)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_bufreader;

@@ -270,7 +270,7 @@ mod fixed {
 }
 
 mod group {
-    use inel::io::ReadBuffers;
+    use inel::group::ReadBufferSet;
 
     use super::*;
 
@@ -285,10 +285,10 @@ mod group {
         std::fs::write(&name, old.as_slice()).unwrap();
 
         let new = inel::block_on(async move {
-            let group = ReadBuffers::new(4, 2048).await.unwrap();
+            let group = ReadBufferSet::new(4, 2048).await.unwrap();
 
             let file = inel::fs::File::open(name_clone).await.unwrap();
-            let mut reader = group.provide_to(file);
+            let mut reader = group.supply_to(file);
 
             let mut new = Box::new([b'_'; 256]);
             let res = reader.read(new.as_mut_slice()).await;
@@ -317,10 +317,10 @@ mod group {
         std::fs::write(&name, &content).unwrap();
 
         inel::block_on(async move {
-            let group = ReadBuffers::new(8, 256).await.unwrap();
+            let group = ReadBufferSet::new(8, 256).await.unwrap();
 
             let file = inel::fs::File::open(name_clone).await.unwrap();
-            let reader = group.provide_to(file);
+            let reader = group.supply_to(file);
 
             let mut counter = 0;
             reader
@@ -353,7 +353,7 @@ mod group {
         std::fs::write(&name, [b'a'; 128_000]).unwrap();
 
         inel::block_on(async move {
-            let group = ReadBuffers::new(4, 1024).await.unwrap();
+            let group = ReadBufferSet::new(4, 1024).await.unwrap();
 
             let file = inel::fs::File::options()
                 .readable(false)
@@ -362,7 +362,7 @@ mod group {
                 .await
                 .unwrap();
 
-            let mut reader = group.provide_to(file);
+            let mut reader = group.supply_to(file);
 
             let mut buf = String::new();
             let res = reader.read_to_string(&mut buf).await;

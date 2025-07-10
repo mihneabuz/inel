@@ -58,6 +58,12 @@ impl<T> From<Box<T>> for Cancellation {
     }
 }
 
+impl<T> From<Option<Box<T>>> for Cancellation {
+    fn from(value: Option<Box<T>>) -> Self {
+        value.map(|value| value.into()).unwrap_or_default()
+    }
+}
+
 impl<T> From<Box<[T]>> for Cancellation {
     fn from(value: Box<[T]>) -> Self {
         let len = value.len();
@@ -68,6 +74,12 @@ impl<T> From<Box<[T]>> for Cancellation {
                 drop(Vec::from_raw_parts(ptr as *mut T, len, len));
             }),
         }
+    }
+}
+
+impl<T> From<Option<Box<[T]>>> for Cancellation {
+    fn from(value: Option<Box<[T]>>) -> Self {
+        value.map(|value| value.into()).unwrap_or_default()
     }
 }
 

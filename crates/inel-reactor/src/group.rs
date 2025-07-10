@@ -5,9 +5,7 @@ use inel_interface::Reactor;
 use slab::Slab;
 
 use crate::{
-    op::{ProvideBuffer, ReadGroup, ReleaseGroup},
     ring::{BufferGroupId, Ring},
-    source::AsSource,
     RingReactor,
 };
 
@@ -38,18 +36,6 @@ where
 }
 
 impl<R> ReadBufferGroup<R> {
-    pub fn provide(&self, buffer: Box<[u8]>) -> ProvideBuffer<R> {
-        ProvideBuffer::new(self, buffer)
-    }
-
-    pub fn read(&self, source: impl AsSource) -> ReadGroup<R> {
-        ReadGroup::new(source, self)
-    }
-
-    pub fn release(self) -> ReleaseGroup<R> {
-        ReleaseGroup::new(self)
-    }
-
     pub(crate) fn id(&self) -> &BufferGroupId {
         &self.id
     }

@@ -4,11 +4,11 @@ mod split;
 
 use std::os::fd::{AsRawFd, RawFd};
 
-pub(crate) trait ReadSource {
+pub trait ReadSource {
     fn read_source(&self) -> Source;
 }
 
-pub(crate) trait WriteSource {
+pub trait WriteSource {
     fn write_source(&self) -> Source;
 }
 

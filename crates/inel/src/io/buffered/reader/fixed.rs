@@ -1,10 +1,4 @@
-use std::{
-    io::Result,
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-use futures::{AsyncBufRead, AsyncBufReadExt, AsyncRead};
+use std::io::Result;
 
 use super::generic::*;
 use crate::{
@@ -21,7 +15,7 @@ impl<S: ReadSource> BufReaderAdapter<S, Fixed, FixedRead> for FixedAdapter {
     }
 }
 
-pub struct FixedBufReader<S>(BufReaderGeneric<S, Fixed, FixedRead, FixedAdapter>);
+pub struct FixedBufReader<S>(BufReaderInner<S, Fixed, FixedRead, FixedAdapter>);
 
 impl<S> FixedBufReader<S> {
     pub(crate) fn from_raw(
@@ -30,7 +24,7 @@ impl<S> FixedBufReader<S> {
         pos: usize,
         filled: usize,
     ) -> Result<Self> {
-        Ok(Self(BufReaderGeneric::new(
+        Ok(Self(BufReaderInner::new(
             Fixed::register(buffer)?,
             source,
             pos,
@@ -38,50 +32,6 @@ impl<S> FixedBufReader<S> {
             FixedAdapter,
         )))
     }
-
-    pub fn capacity(&self) -> Option<usize> {
-        self.0.capacity()
-    }
-
-    pub fn buffer(&self) -> Option<&[u8]> {
-        self.0.buffer()
-    }
-
-    pub fn inner(&self) -> &S {
-        self.0.inner()
-    }
-
-    pub fn inner_mut(&mut self) -> &mut S {
-        self.0.inner_mut()
-    }
-
-    pub fn into_inner(self) -> S {
-        self.0.into_inner()
-    }
 }
 
-impl<S> AsyncRead for FixedBufReader<S>
-where
-    S: ReadSource + Unpin,
-{
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize>> {
-        Pin::new(&mut Pin::into_inner(self).0).poll_read(cx, buf)
-    }
-}
-
-impl<S> AsyncBufRead for FixedBufReader<S>
-where
-    S: ReadSource + Unpin,
-{
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        Pin::new(&mut Pin::into_inner(self).0).poll_fill_buf(cx)
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        self.0.consume_unpin(amt);
-    }
-}
+impl_bufreader!(FixedBufReader);
