@@ -1,4 +1,5 @@
 mod buffer;
+mod cancellation;
 mod chain;
 mod dir;
 mod file;
