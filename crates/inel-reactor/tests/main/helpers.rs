@@ -20,7 +20,8 @@ use rand::Rng;
 use inel_interface::Reactor;
 use inel_reactor::{
     op::{self, OpExt},
-    BufferGroupId, DirectAutoFd, Ring,
+    ring::Ring,
+    source::DirectAutoFd,
 };
 
 macro_rules! assert_ready {
@@ -81,17 +82,6 @@ impl ScopedReactor {
 
     pub fn is_done(&self) -> bool {
         self.inner.borrow().is_done()
-    }
-
-    pub fn get_buffer_group(&self) -> BufferGroupId {
-        self.with(|reactor| reactor.get_buffer_group())
-            .unwrap()
-            .unwrap()
-    }
-
-    pub fn release_buffer_group(&self, slot: BufferGroupId) {
-        self.with(|reactor| reactor.release_buffer_group(slot))
-            .unwrap();
     }
 
     pub fn register_file(&self, fd: RawFd) -> DirectAutoFd {

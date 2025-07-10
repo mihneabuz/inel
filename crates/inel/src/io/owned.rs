@@ -9,7 +9,7 @@ use futures::{future::FusedFuture, FutureExt};
 use inel_reactor::{
     buffer::{FixedBuffer, StableBuffer, StableBufferMut},
     op::{self, OpExt},
-    Submission,
+    submission::Submission,
 };
 
 use crate::{

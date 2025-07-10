@@ -2,7 +2,8 @@ use std::{io::Result, mem::ManuallyDrop, os::fd::RawFd};
 
 use inel_reactor::{
     op::{self, DetachOp},
-    AsDirectSlot, AsSource, DirectAutoFd, DirectFd, DirectSlot, Source,
+    ring::DirectSlot,
+    source::{AsDirectSlot, AsSource, DirectAutoFd, DirectFd, Source},
 };
 
 use crate::GlobalReactor;

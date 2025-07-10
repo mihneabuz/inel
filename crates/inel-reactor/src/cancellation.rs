@@ -1,12 +1,10 @@
 /// Delayed memory reclamation
 ///
-/// If an [crate::op::Op] which uses an internal buffer is dropped before
-/// the sqe complets, we need to make sure not to drop the buffer,
-/// otherwise the kernel might write to freed memory.
+/// If an [crate::op::Op] which uses an internal buffer is dropped before the sqe complets,
+/// we need to make sure not to drop the buffer, otherwise the kernel might write to freed memory.
 ///
-/// Instead, we turn that buffer into a Cancellation and give it
-/// to the [crate::Ring], which will call [Cancellation::drop_raw]
-/// when the sqe complets.
+/// Instead, we turn that buffer into a Cancellation and give it to the [crate::Ring],
+/// which will call [Cancellation::drop_raw] when the sqe complets.
 pub struct Cancellation {
     ptr: *mut (),
     metadata: usize,

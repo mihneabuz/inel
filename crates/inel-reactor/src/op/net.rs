@@ -9,11 +9,11 @@ use std::{
 use io_uring::{opcode, squeue::Entry, types::DestinationSlot};
 
 use crate::{
+    cancellation::Cancellation,
     op::{util, MultiOp, Op},
-    ring::RingResult,
-    source::{AsDirectSlot, DirectAutoFd},
+    ring::{DirectSlot, RingResult},
+    source::{AsDirectSlot, AsSource, DirectAutoFd, Source},
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
-    AsSource, Cancellation, DirectSlot, Source,
 };
 
 pub struct Socket {

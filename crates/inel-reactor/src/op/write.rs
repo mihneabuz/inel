@@ -4,9 +4,10 @@ use io_uring::{opcode, squeue::Entry};
 
 use crate::{
     buffer::{FixedBuffer, StableBuffer},
+    cancellation::Cancellation,
     op::{util, Op},
     ring::RingResult,
-    AsSource, Cancellation, Source,
+    source::{AsSource, Source},
 };
 
 pub struct Write<Buf> {

@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use inel_reactor::Source;
+use inel_reactor::source::Source;
 
 use super::{BufReader, BufWriter, ReadSource, WriteSource};
 

@@ -2,7 +2,7 @@ use std::{io::Result, os::fd::RawFd};
 
 use io_uring::types::Target as RawTarget;
 
-use crate::{ring::DirectSlot, Ring, RingReactor};
+use crate::{ring::DirectSlot, ring::Ring, RingReactor};
 
 use inel_interface::Reactor;
 

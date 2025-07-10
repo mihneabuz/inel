@@ -10,8 +10,8 @@ use crate::{
     buffer::{StableBuffer, StableBufferMut},
     group::ReadBufferGroup,
     op::{util, DetachOp, MultiOp, Op},
-    ring::RingResult,
-    AsSource, Ring, Source,
+    ring::{Ring, RingResult},
+    source::{AsSource, Source},
 };
 
 pub struct ProvideBuffer<'a, R> {
@@ -69,12 +69,10 @@ where
     type Output = ();
 
     fn entry(&mut self) -> Entry {
-        println!("PRESENT {}", self.group.present());
         opcode::RemoveBuffers::new(self.group.present() as u16, self.group.id().index()).build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
-        println!("PRESENT {}", self.group.present());
         let removed = util::expect_positive(&res).unwrap();
         assert_eq!(removed, self.group.present());
         unsafe { self.group.release_id() };

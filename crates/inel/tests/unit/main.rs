@@ -11,7 +11,7 @@ use std::sync::mpsc;
 
 use futures::future::FusedFuture;
 use helpers::setup_tracing;
-use inel_reactor::RingOptions;
+use inel_reactor::ring::RingOptions;
 
 #[test]
 fn sanity() {

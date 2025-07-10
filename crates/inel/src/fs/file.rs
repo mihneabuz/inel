@@ -7,7 +7,7 @@ use std::{
 
 use inel_reactor::{
     op::{self, OpExt},
-    AsSource, Source,
+    source::{AsSource, Source},
 };
 
 use crate::{

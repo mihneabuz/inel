@@ -20,7 +20,7 @@ use crate::{
 use inel_reactor::{
     group::ReadBufferGroup,
     op::{DetachOp, OpExt},
-    AsSource,
+    source::AsSource,
 };
 
 #[derive(Clone)]

@@ -13,10 +13,10 @@ use io_uring::{
 };
 
 use crate::{
+    cancellation::Cancellation,
     op::{util, DetachOp, Op},
-    ring::RingResult,
-    source::{AsDirectSlot, DirectAutoFd},
-    AsSource, Cancellation, DirectSlot, Source,
+    ring::{DirectSlot, RingResult},
+    source::{AsDirectSlot, AsSource, DirectAutoFd, Source},
 };
 
 pub struct OpenAt<S> {

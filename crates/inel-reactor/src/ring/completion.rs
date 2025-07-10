@@ -2,9 +2,9 @@ use std::{collections::VecDeque, task::Waker};
 
 use slab::Slab;
 
-use crate::{ring::RingResult, Cancellation};
+use crate::{cancellation::Cancellation, ring::RingResult};
 
-/// Idenitifies an operation submitted to the [Ring](crate::Ring)
+/// Identifies an operation submitted to the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
 pub struct Key(usize);
 
@@ -22,6 +22,7 @@ impl Key {
     }
 }
 
+/// Keeps track of completions
 pub struct CompletionSet {
     slab: Slab<Completion>,
     queues: ResultQueues,
@@ -74,6 +75,7 @@ impl CompletionSet {
 #[derive(Clone, Copy)]
 struct QueueHandle(u32);
 
+/// Stores results for entries which generate multiple completions
 struct ResultQueues {
     queues: Vec<VecDeque<RingResult>>,
     unused: Vec<QueueHandle>,
@@ -111,6 +113,7 @@ impl ResultQueues {
     }
 }
 
+/// Represents the completion state of a single submitted entry
 enum Completion {
     Vacant {
         waker: Waker,
@@ -230,9 +233,7 @@ impl Completion {
 mod test {
     use std::{collections::VecDeque, iter::repeat, task::Waker};
 
-    use crate::{ring::RingResult, Cancellation};
-
-    use super::CompletionSet;
+    use super::*;
 
     fn waker() -> Waker {
         Waker::noop().clone()

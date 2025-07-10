@@ -11,7 +11,9 @@ use std::{
 use futures::{Stream, StreamExt};
 use inel_reactor::{
     op::{self, AcceptMulti, AcceptMultiAuto, OpExt},
-    util, AsSource, Source, Submission,
+    source::{AsSource, Source},
+    submission::Submission,
+    util,
 };
 
 use crate::{

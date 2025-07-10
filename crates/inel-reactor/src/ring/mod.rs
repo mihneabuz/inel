@@ -8,7 +8,7 @@ use std::task::Waker;
 use io_uring::{cqueue, squeue::Entry, IoUring};
 use tracing::{debug, warn};
 
-use crate::{buffer::StableBuffer, Cancellation};
+use crate::{buffer::StableBuffer, cancellation::Cancellation};
 
 use completion::CompletionSet;
 use register::SlotRegister;
@@ -17,14 +17,6 @@ pub use completion::Key;
 pub use register::{BufferGroupId, BufferSlot, DirectSlot};
 
 const IGNORE_KEY: u64 = u64::MAX - 1;
-
-pub struct RingOptions {
-    submissions: u32,
-    fixed_buffers: u32,
-    buffer_groups: u32,
-    auto_direct_files: u32,
-    manual_direct_files: u32,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct RingResult {
@@ -57,6 +49,15 @@ impl RingResult {
     }
 }
 
+/// Options for resource allocation
+pub struct RingOptions {
+    submissions: u32,
+    fixed_buffers: u32,
+    buffer_groups: u32,
+    auto_direct_files: u32,
+    manual_direct_files: u32,
+}
+
 impl Default for RingOptions {
     fn default() -> Self {
         Self {
@@ -70,26 +71,39 @@ impl Default for RingOptions {
 }
 
 impl RingOptions {
+    /// Sets the maximum capacity of the submission queue.
     pub fn submissions(mut self, capacity: u32) -> Self {
         self.submissions = capacity;
         self
     }
 
-    pub fn fixed_buffers(mut self, capacity: u32) -> Self {
-        self.fixed_buffers = capacity;
-        self
-    }
-
+    /// Sets the number of available auto direct file descriptors
+    /// These are descriptors which are returned by direct operations.
     pub fn auto_direct_files(mut self, capacity: u32) -> Self {
         self.auto_direct_files = capacity;
         self
     }
 
+    /// Sets the number of available manual direct file descriptors.
+    /// These descriptors are mainly used for chained operations.
     pub fn manual_direct_files(mut self, capacity: u32) -> Self {
         self.manual_direct_files = capacity;
         self
     }
 
+    /// Sets the number of available fixed buffer slots.
+    pub fn fixed_buffers(mut self, capacity: u32) -> Self {
+        self.fixed_buffers = capacity;
+        self
+    }
+
+    /// Sets the number of available buffer groups.
+    pub fn buffer_groups(mut self, capacity: u32) -> Self {
+        self.buffer_groups = capacity;
+        self
+    }
+
+    /// Build the [Ring] instance with the specified options.
     pub fn build(self) -> Ring {
         if let Err(err) = crate::util::set_limits() {
             warn!(?err, "failed to set max rlimits");
@@ -136,11 +150,17 @@ impl RingOptions {
     }
 }
 
-/// Reactor implemented over a [IoUring].
+const SUBMISSION_QUEUE_FULL_ERROR_MESSAGE: &str =
+    "Submission queue is full, consider allocating more submissions";
+
+/// Wrapper over an [IoUring] instance.
 ///
-/// Used by [Submission](crate::Submission) to submit sqes and get notified of completions by use of [Waker].
+/// Used to submit [Entry]s and be notified of completions and also manages results.
 ///
-/// Also used to register other resources, such as fixed buffers.
+/// Also used to register other resources:
+///  - direct file descriptors
+///  - fixed buffers
+///  - buffer groups
 pub struct Ring {
     ring: IoUring,
     active: u32,
@@ -163,7 +183,8 @@ impl Ring {
         RingOptions::default()
     }
 
-    /// Returns number of active ops.
+    /// Returns number of active submissions.
+    /// A submission is considered active if it has an associated [Waker]
     pub fn active(&self) -> u32 {
         self.active
     }
@@ -171,8 +192,9 @@ impl Ring {
     /// Returns true if:
     ///  - all sqes have been completed
     ///  - all cqes have been consumed
-    ///  - all buffers have been unregistered
-    ///  - all files have been unregistered
+    ///  - all direct file descriptors have been unregistered
+    ///  - all fixed buffers have been unregistered
+    ///  - all buffer groups have been unregistered
     pub fn is_done(&self) -> bool {
         self.active + self.detached == 0
             && self.completions.is_empty()
@@ -181,26 +203,14 @@ impl Ring {
             && self.buffer_groups.is_full()
     }
 
-    /// # Safety
-    /// Caller must ensure that the entry is valid
-    pub unsafe fn submit_detached(&mut self, entry: Entry) {
-        debug!(?entry, "Detached");
-
-        self.ring
-            .submission()
-            .push(&entry.user_data(IGNORE_KEY))
-            .expect("Submission queue is full");
-
-        self.detached += 1;
-    }
-
     /// Submit an sqe with an associated [Waker] which will be called when the entry completes.
-    /// Returns a [Key] which allowes the caller to get the cqe result
-    /// by calling [Ring::check_result].
+    /// Returns a [Key] which allows the caller to get the cqe result by calling [Ring::check_result].
+    ///
+    /// This submission will be considered active.
     ///
     /// # Safety
-    /// Caller must ensure that the entry is valid until the waker is called.
-    pub unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
+    /// Caller must ensure that the entry is valid until the [Waker] is called.
+    pub(crate) unsafe fn submit(&mut self, entry: Entry, waker: Waker) -> Key {
         let key = self.completions.insert(waker);
 
         debug!(key = key.as_u64(), ?entry, "Submission");
@@ -208,24 +218,37 @@ impl Ring {
         self.ring
             .submission()
             .push(&entry.user_data(key.as_u64()))
-            .expect("Submission queue is full");
+            .expect(SUBMISSION_QUEUE_FULL_ERROR_MESSAGE);
 
         self.active += 1;
 
         key
     }
 
-    /// Attempt to get the result of an entry.
-    pub fn check_result(&mut self, key: Key) -> Option<RingResult> {
-        self.completions.result(key)
+    /// Submit an sqe that will be detached and have its completion ignored.
+    /// This is only useful for entries where the result isn't relevant.
+    ///
+    /// This submission will be _not_ considered active.
+    ///
+    /// # Safety
+    /// Caller must ensure that the entry is valid until it completes.
+    pub(crate) unsafe fn submit_detached(&mut self, entry: Entry) {
+        debug!(?entry, "Detached");
+
+        self.ring
+            .submission()
+            .push(&entry.user_data(IGNORE_KEY))
+            .expect(SUBMISSION_QUEUE_FULL_ERROR_MESSAGE);
+
+        self.detached += 1;
     }
 
-    /// Attempt to cancel the entry referenced by `key`, by submitting a [Cancellation] and,
+    /// Attempt to cancel an entry referenced by a [Key], by submitting a [Cancellation] and,
     /// optionally, another sqe entry which cancels the initial one.
     ///
     /// # Safety
     /// Caller must ensure that the cancel entry is valid until it completes.
-    pub unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation) {
+    pub(crate) unsafe fn cancel(&mut self, key: Key, entry: Option<Entry>, cancel: Cancellation) {
         if !self.completions.cancel(key, cancel) {
             return;
         }
@@ -236,14 +259,19 @@ impl Ring {
             self.ring
                 .submission()
                 .push(&entry.user_data(IGNORE_KEY))
-                .expect("Submission queue is full");
+                .expect(SUBMISSION_QUEUE_FULL_ERROR_MESSAGE);
 
             self.detached += 1;
             self.canceled += 1;
         }
     }
 
-    /// Blocks until at least 1 completion
+    /// Attempt to get the next result of an entry.
+    pub(crate) fn check_result(&mut self, key: Key) -> Option<RingResult> {
+        self.completions.result(key)
+    }
+
+    /// Blocks until one ore more completions and triggers their associated [Waker]s
     pub fn wait(&mut self) {
         self.submit_and_wait();
         self.handle_completions();
@@ -296,7 +324,8 @@ impl Ring {
     }
 
     /// Attempt to register a [StableBuffer] for use with fixed operations.
-    pub fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferSlot>
+    /// Returns a [BufferSlot] if there is one avaialble
+    pub(crate) fn register_buffer<B>(&mut self, buffer: &mut B) -> Result<BufferSlot>
     where
         B: StableBuffer,
     {
@@ -319,30 +348,32 @@ impl Ring {
         Ok(slot)
     }
 
-    /// Unregister a buffer
-    pub fn unregister_buffer(&mut self, slot: BufferSlot) {
+    /// Unregister a fixed buffer and release it's [BufferSlot] to be reused
+    pub(crate) fn unregister_buffer(&mut self, slot: BufferSlot) {
         self.fixed_buffers.remove(slot);
     }
 
-    /// Attempt to get an io_uring file index
-    pub fn get_direct_slot(&mut self) -> Result<DirectSlot> {
+    /// Attempt to get an unused [DirectSlot] for use as an direct file descriptor.
+    pub(crate) fn get_direct_slot(&mut self) -> Result<DirectSlot> {
         self.direct_files
             .get()
             .ok_or(Error::other("No manual direct file slots available"))
     }
 
-    /// Unregister a buffer
-    pub fn release_direct_slot(&mut self, slot: DirectSlot) {
+    /// Release a direct file descriptor to be reused
+    pub(crate) fn release_direct_slot(&mut self, slot: DirectSlot) {
         self.direct_files.remove(slot);
     }
 
-    pub fn get_buffer_group(&mut self) -> Result<BufferGroupId> {
+    /// Attempt to get an unused [BufferGroupId]
+    pub(crate) fn get_buffer_group(&mut self) -> Result<BufferGroupId> {
         self.buffer_groups
             .get()
             .ok_or(Error::other("No manual buffer group slots available"))
     }
 
-    pub fn release_buffer_group(&mut self, slot: BufferGroupId) {
+    /// Release a buffer group to be reused
+    pub(crate) fn release_buffer_group(&mut self, slot: BufferGroupId) {
         self.buffer_groups.remove(slot);
     }
 }

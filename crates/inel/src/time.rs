@@ -8,7 +8,7 @@ use std::{
 use futures::{future::FusedFuture, FutureExt};
 use inel_reactor::{
     op::{self, OpExt},
-    Submission,
+    submission::Submission,
 };
 
 use crate::GlobalReactor;

@@ -16,7 +16,9 @@ use io_uring::{
     squeue::{Entry, Flags},
 };
 
-use crate::{ring::RingResult, Cancellation, Ring, RingReactor, Submission};
+use crate::{
+    cancellation::Cancellation, ring::Ring, ring::RingResult, submission::Submission, RingReactor,
+};
 
 pub use direct::*;
 pub use fs::*;
@@ -60,14 +62,15 @@ pub unsafe trait Op: Sized {
     }
 }
 
-/// Implements safe multishot operations over a [Ring] by wrapping an [io_uring::opcode]
+/// Marks an [Op] that can generate multiple completions
 pub trait MultiOp: Op {
     /// Produces a result without consuming self
     fn next(&self, res: RingResult) -> Self::Output;
 }
 
-/// Marks an Op that can be run without caring about the result
+/// Marks an [Op] that can be run detached, when the completion result is not relevant
 pub trait DetachOp: Op {
+    /// Submits an entry to the [Ring]
     fn run_detached<R>(mut self, reactor: &mut R)
     where
         R: inel_interface::Reactor<Handle = Ring>,
@@ -78,10 +81,12 @@ pub trait DetachOp: Op {
 }
 
 pub trait OpExt {
+    /// Wraps self into a [Chain] that will bind this [Op] with the next one submited
     fn chain(self) -> Chain<Self>
     where
         Self: Op + Sized;
 
+    /// Wraps self into a [Submission] to be used as a [std::future::Future]
     fn run_on<R>(self, reactor: R) -> Submission<Self, R>
     where
         R: inel_interface::Reactor<Handle = Ring>,
@@ -93,7 +98,6 @@ impl<O: Op> OpExt for O {
         Chain::new(self)
     }
 
-    /// Wraps self into a [crate::Submission]
     fn run_on<R>(self, reactor: R) -> Submission<Self, R>
     where
         R: inel_interface::Reactor<Handle = Ring>,
@@ -125,6 +129,8 @@ impl MultiOp for Nop {
 
 impl DetachOp for Nop {}
 
+/// Wraps an [Op] and adds the link flag to the generated entry.
+/// This will it to be linked to the next [Op] submitted to the [Ring].
 pub struct Chain<O> {
     inner: O,
 }

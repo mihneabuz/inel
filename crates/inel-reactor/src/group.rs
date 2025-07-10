@@ -6,7 +6,9 @@ use slab::Slab;
 
 use crate::{
     op::{ProvideBuffer, ReadGroup, ReleaseGroup},
-    AsSource, BufferGroupId, Ring, RingReactor,
+    ring::{BufferGroupId, Ring},
+    source::AsSource,
+    RingReactor,
 };
 
 pub struct ReadBufferGroup<R> {

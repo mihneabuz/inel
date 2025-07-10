@@ -7,7 +7,7 @@ edition = "2021"
 default = ["full"]
 sys = []
 compat = []
-hyper = ["dep:hyper", "compat"]
+hyper = ["dep:hyper", "dep:pin-project-lite", "compat"]
 full = ["hyper"]
 
 [dependencies]
@@ -17,8 +17,8 @@ inel-reactor = { path = "../inel-reactor" }
 inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
-pin-project-lite = { workspace = true }
 
+pin-project-lite = { workspace = true, optional = true }
 hyper = { version = "1.6", optional = true }
 
 [dev-dependencies]

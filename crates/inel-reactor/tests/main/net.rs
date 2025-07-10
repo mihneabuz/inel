@@ -16,8 +16,8 @@ use inel_interface::Reactor;
 use inel_reactor::{
     buffer::StableBuffer,
     op::{self, Op, OpExt},
+    source::{AsSource, DirectAutoFd, DirectFd},
     util::{getpeername, getsockname},
-    AsSource, DirectAutoFd, DirectFd,
 };
 
 fn make_addr(ip: &str, port: u16) -> SocketAddr {

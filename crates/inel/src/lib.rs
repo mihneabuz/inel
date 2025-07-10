@@ -1,9 +1,9 @@
 use core::{cell::RefCell, future::Future};
 
 use inel_executor::{Executor, JoinHandle};
-use inel_reactor::Ring;
+use inel_reactor::ring::Ring;
 
-pub use inel_reactor::RingOptions;
+pub use inel_reactor::ring::RingOptions;
 
 thread_local! {
     static EXECUTOR: RefCell<Executor> = RefCell::new(Executor::new());
@@ -76,7 +76,7 @@ pub fn is_done() -> bool {
 
 #[cfg(feature = "sys")]
 pub mod sys {
-    pub use inel_reactor::{buffer::*, op, Submission};
+    pub use inel_reactor::{buffer::*, op, submission::Submission};
 
     #[allow(private_interfaces)]
     pub const fn reactor() -> crate::GlobalReactor {

@@ -9,7 +9,8 @@ use pin_project_lite::pin_project;
 
 use crate::{
     op::{MultiOp, Op},
-    Key, Ring, RingReactor,
+    ring::{Key, Ring},
+    RingReactor,
 };
 
 pub enum SubmissionState {

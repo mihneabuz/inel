@@ -1,16 +1,11 @@
 pub mod buffer;
-mod cancellation;
+pub mod cancellation;
 pub mod group;
 pub mod op;
-mod reactor;
-mod ring;
-mod source;
-mod submission;
+pub mod ring;
+pub mod source;
+pub mod submission;
 pub mod util;
 
+mod reactor;
 pub(crate) use reactor::RingReactor;
-
-pub use cancellation::Cancellation;
-pub use ring::{BufferGroupId, BufferSlot, DirectSlot, Key, Ring, RingOptions};
-pub use source::{AsDirectSlot, AsSource, DirectAutoFd, DirectFd, Source};
-pub use submission::Submission;

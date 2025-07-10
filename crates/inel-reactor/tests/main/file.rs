@@ -365,7 +365,7 @@ fn stats_cancel() {
 }
 
 mod direct {
-    use inel_reactor::DirectFd;
+    use inel_reactor::source::DirectFd;
 
     use super::*;
 

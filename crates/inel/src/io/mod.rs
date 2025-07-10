@@ -13,7 +13,7 @@ pub(crate) trait WriteSource {
 }
 
 pub use buffered::*;
-use inel_reactor::{AsSource, Source};
+use inel_reactor::source::{AsSource, Source};
 pub use owned::{AsyncReadOwned, AsyncWriteOwned};
 pub use split::{ReadHandle, Split, WriteHandle};
 

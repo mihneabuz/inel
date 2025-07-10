@@ -7,7 +7,7 @@ use std::{
 
 use inel_interface::Reactor;
 
-use crate::{ring::BufferSlot, Cancellation, Ring, RingReactor};
+use crate::{cancellation::Cancellation, ring::BufferSlot, ring::Ring, RingReactor};
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
