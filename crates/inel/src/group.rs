@@ -7,7 +7,7 @@ use inel_reactor::{
 };
 
 use crate::{
-    io::{GroupBufReader, ReadSource},
+    io::{AsyncWriteOwned, GroupBufReader, GroupBufWriter, ReadSource, WriteSource},
     GlobalReactor,
 };
 
@@ -57,7 +57,7 @@ impl ReadBufferSet {
         op::ProvideBuffer::new(self.clone_private(), buffer).run_detached(&mut GlobalReactor);
     }
 
-    pub async fn read(&self, source: impl ReadSource) -> (Option<Box<[u8]>>, Result<usize>) {
+    pub async fn read(&self, source: &mut impl ReadSource) -> (Option<Box<[u8]>>, Result<usize>) {
         op::ReadGroup::new(source.read_source(), self.clone_private())
             .run_on(GlobalReactor)
             .await
@@ -127,6 +127,14 @@ impl WriteBufferSet {
 
     pub fn get(&self) -> Box<[u8]> {
         self.inner.borrow_mut().get()
+    }
+
+    pub async fn write(&self, sink: &mut impl WriteSource) -> (Box<[u8]>, Result<usize>) {
+        sink.write_owned(self.get()).await
+    }
+
+    pub fn supply_to<S>(&self, sink: S) -> GroupBufWriter<S> {
+        GroupBufWriter::new(sink, self.clone())
     }
 }
 
