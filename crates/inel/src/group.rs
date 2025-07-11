@@ -25,7 +25,7 @@ impl ReadBufferSet {
         })
     }
 
-    pub async fn new(count: u16, capacity: usize) -> Result<Self> {
+    pub async fn with_buffers(count: u16, capacity: usize) -> Result<Self> {
         let this = Self::empty()?;
 
         let mut provides = FuturesUnordered::new();
@@ -109,6 +109,8 @@ impl Drop for ReadBufferSetInner {
     }
 }
 
+const DEFAULT_WRITER_BUFFER_SIZE: usize = 4096;
+
 #[derive(Clone)]
 pub struct WriteBufferSet {
     inner: Rc<RefCell<WriteBufferSetInner>>,
@@ -116,8 +118,14 @@ pub struct WriteBufferSet {
 
 impl WriteBufferSet {
     pub fn empty() -> Self {
+        Self::with_buffer_capacity(DEFAULT_WRITER_BUFFER_SIZE)
+    }
+
+    pub fn with_buffer_capacity(capacity: usize) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(WriteBufferSetInner::empty())),
+            inner: Rc::new(RefCell::new(WriteBufferSetInner::with_buffer_capacity(
+                capacity,
+            ))),
         }
     }
 
@@ -129,8 +137,10 @@ impl WriteBufferSet {
         self.inner.borrow_mut().get()
     }
 
-    pub async fn write(&self, sink: &mut impl WriteSource) -> (Box<[u8]>, Result<usize>) {
-        sink.write_owned(self.get()).await
+    pub async fn write(&self, sink: &mut impl WriteSource, buffer: Box<[u8]>) -> Result<usize> {
+        let (buf, res) = sink.write_owned(buffer).await;
+        self.insert(buf);
+        res
     }
 
     pub fn supply_to<S>(&self, sink: S) -> GroupBufWriter<S> {
@@ -140,12 +150,14 @@ impl WriteBufferSet {
 
 struct WriteBufferSetInner {
     buffers: Vec<Box<[u8]>>,
+    capacity: usize,
 }
 
 impl WriteBufferSetInner {
-    pub fn empty() -> Self {
+    pub fn with_buffer_capacity(size: usize) -> Self {
         Self {
             buffers: Vec::with_capacity(32),
+            capacity: size,
         }
     }
 
@@ -156,6 +168,6 @@ impl WriteBufferSetInner {
     pub fn get(&mut self) -> Box<[u8]> {
         self.buffers
             .pop()
-            .unwrap_or(vec![0; 2048].into_boxed_slice())
+            .unwrap_or(vec![0; self.capacity].into_boxed_slice())
     }
 }

@@ -9,7 +9,7 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    let buffers = ReadBufferSet::new(16, 4096).await.unwrap();
+    let buffers = ReadBufferSet::with_buffers(16, 4096).await.unwrap();
 
     let mut incoming = TcpListener::bind_direct(("127.0.0.1", 3030))
         .await?
