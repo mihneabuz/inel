@@ -6,15 +6,19 @@ use crate::{cancellation::Cancellation, ring::RingResult};
 
 /// Identifies an operation submitted to the [Ring](crate::Ring)
 #[derive(Clone, Copy, Debug)]
-pub struct Key(usize);
+pub struct Key(u32);
 
 impl Key {
-    fn as_usize(&self) -> usize {
-        self.0
+    pub(crate) fn from_usize(value: usize) -> Self {
+        Self(value as u32)
+    }
+
+    pub(crate) fn as_usize(&self) -> usize {
+        self.0 as usize
     }
 
     pub(crate) fn from_u64(value: u64) -> Self {
-        Self(value as usize)
+        Self(value as u32)
     }
 
     pub(crate) fn as_u64(&self) -> u64 {
@@ -41,7 +45,7 @@ impl CompletionSet {
     }
 
     pub fn insert(&mut self, waker: Waker) -> Key {
-        Key(self.slab.insert(Completion::new(waker)))
+        Key::from_usize(self.slab.insert(Completion::new(waker)))
     }
 
     fn with_completion<T, F>(&mut self, key: Key, fun: F) -> T
@@ -292,7 +296,7 @@ mod test {
         let mut curr: Vec<Case> = vec![Case(vec![])];
         let mut next: Vec<Case> = vec![];
 
-        for _ in 0..14 {
+        for _ in 0..16 {
             for case in curr.drain(..) {
                 next.push(case.clone_extend(&[C::NotifyMulti]));
                 next.push(case.clone_extend(&[C::Result]));
