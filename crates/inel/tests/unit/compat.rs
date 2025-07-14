@@ -109,11 +109,8 @@ mod hyper {
             .unwrap())
     }
 
-    pin_project_lite::pin_project! {
-        struct FrameStream {
-            #[pin]
-            body: Incoming
-        }
+    struct FrameStream {
+        body: Incoming,
     }
 
     impl FrameStream {
@@ -126,7 +123,109 @@ mod hyper {
         type Item = Result<Frame<Bytes>, Error>;
 
         fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            self.project().body.poll_frame(cx)
+            Pin::new(&mut unsafe { self.get_unchecked_mut() }.body).poll_frame(cx)
         }
+    }
+}
+
+#[cfg(feature = "rustls")]
+mod rustls {
+    use std::io::{BufReader, Cursor};
+
+    use ::rustls::{pki_types::ServerName, ClientConfig, RootCertStore, ServerConfig};
+    use futures::{AsyncReadExt, AsyncWriteExt};
+    use inel::{
+        compat::stream::BufStream,
+        net::{TcpListener, TcpStream},
+    };
+    use rustls_pemfile::{certs, private_key};
+
+    use super::*;
+
+    const KEY: &[u8] = include_bytes!("../certs/end.rsa");
+    const CERT: &[u8] = include_bytes!("../certs/end.cert");
+    const CHAIN: &[u8] = include_bytes!("../certs/end.chain");
+
+    fn configs() -> (ServerConfig, ClientConfig, ServerName<'static>) {
+        let cert = certs(&mut BufReader::new(Cursor::new(CERT)))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let key = private_key(&mut BufReader::new(Cursor::new(KEY))).unwrap();
+        let server = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert, key.unwrap())
+            .unwrap();
+
+        let mut client_root_cert_store = RootCertStore::empty();
+        let mut chain = BufReader::new(Cursor::new(CHAIN));
+        let certs = certs(&mut chain).collect::<Result<Vec<_>, _>>().unwrap();
+        client_root_cert_store.add_parsable_certificates(certs);
+
+        let client = rustls::ClientConfig::builder()
+            .with_root_certificates(client_root_cert_store)
+            .with_no_client_auth();
+
+        let domain = ServerName::try_from("testserver.com").unwrap().to_owned();
+
+        (server, client, domain)
+    }
+
+    fn pair() -> (BufStream<TcpStream>, BufStream<TcpStream>) {
+        inel::block_on(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+
+            let port = listener.local_addr().unwrap().port();
+
+            let server =
+                inel::spawn(async move { BufStream::new(listener.accept().await.unwrap().0) });
+
+            let client = inel::spawn(async move {
+                BufStream::new(TcpStream::connect(("127.0.0.1", port)).await.unwrap())
+            });
+
+            (server.join().await.unwrap(), client.join().await.unwrap())
+        })
+    }
+
+    #[test]
+    fn simple() {
+        setup_tracing();
+
+        let (server, client, domain) = configs();
+        let acceptor = inel::compat::tls::TlsAcceptor::from(server);
+        let connector = inel::compat::tls::TlsConnector::from(client);
+
+        for _ in 0..4 {
+            let acceptor = acceptor.clone();
+            let connector = connector.clone();
+            let domain = domain.clone();
+
+            let (server, client) = pair();
+
+            inel::spawn(async move {
+                let mut server = acceptor.accept(server).await.unwrap();
+
+                let mut buffer = vec![0; CERT.len()];
+                server.read_exact(&mut buffer).await.unwrap();
+                assert_eq!(&buffer, CERT);
+
+                server.write_all(CHAIN).await.unwrap();
+                server.flush().await.unwrap();
+            });
+
+            inel::spawn(async move {
+                let mut client = connector.connect(domain, client).await.unwrap();
+
+                client.write_all(CERT).await.unwrap();
+                client.flush().await.unwrap();
+
+                let mut buffer = vec![0; CHAIN.len()];
+                client.read_exact(&mut buffer).await.unwrap();
+                assert_eq!(&buffer, CHAIN);
+            });
+        }
+
+        inel::run();
     }
 }
