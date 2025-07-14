@@ -5,7 +5,7 @@ use inel_reactor::buffer::{StableBuffer, StableBufferMut};
 #[test]
 fn staticref() {
     let s: &'static str = "Hello World!\n";
-    let b: &'static [u8] = "Hello World!\n".as_bytes();
+    let b: &'static [u8] = b"Hello World!\n";
 
     assert_eq!(StableBuffer::size(&s), 13);
     assert_eq!(StableBuffer::size(&b), 13);
@@ -21,22 +21,22 @@ fn string() {
 
     assert_eq!(StableBuffer::size(&s), 13);
 
-    s.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+    s.as_mut_slice().write(b"Overwritten!\n").unwrap();
 
-    assert_eq!(s.as_slice(), "Overwritten!\n".as_bytes());
+    assert_eq!(s.as_slice(), b"Overwritten!\n");
     assert_eq!(s, String::from("Overwritten!\n"));
 }
 
 #[test]
 fn vec() {
     let mut v = Vec::with_capacity(256);
-    v.extend_from_slice("Hello World!\n".as_bytes());
+    v.extend_from_slice(b"Hello World!\n");
 
     assert_eq!(StableBuffer::size(&v), 13);
 
-    v.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+    v.as_mut_slice().write(b"Overwritten!\n").unwrap();
 
-    assert_eq!(v.as_slice(), "Overwritten!\n".as_bytes());
+    assert_eq!(v.as_slice(), b"Overwritten!\n");
     assert_eq!(
         String::from_utf8(v).unwrap(),
         String::from("Overwritten!\n")
@@ -49,10 +49,18 @@ fn boxed() {
 
     assert_eq!(StableBuffer::size(&b), 256);
 
-    b.as_mut_slice().write("Overwritten!\n".as_bytes()).unwrap();
+    b.as_mut_slice().write(b"Overwritten!\n").unwrap();
 
-    assert_eq!(&b.as_slice()[0..13], "Overwritten!\n".as_bytes());
+    assert_eq!(&b.as_slice()[0..13], b"Overwritten!\n");
     assert_eq!(&b.as_slice()[13..], [0; 256 - 13]);
+}
+
+#[test]
+fn null() {
+    let mut b = None;
+    assert_eq!(StableBuffer::size(&b), 0);
+    assert_eq!(StableBuffer::as_slice(&b), &[]);
+    assert_eq!(StableBufferMut::as_mut_slice(&mut b), &mut []);
 }
 
 mod view {
@@ -172,6 +180,54 @@ mod view {
 
         view.inner_mut().truncate(0);
         assert_eq!(view.inner().len(), 0);
+    }
+
+    #[test]
+    fn cursor() {
+        let buf = vec![b'_'; 256];
+        let mut cursor = View::new(buf, ..10);
+
+        assert_eq!(cursor.buffer(), &[b'_'; 10]);
+        assert_eq!(cursor.is_empty(), false);
+
+        cursor.set_pos(5);
+
+        assert_eq!(cursor.buffer(), &[b'_'; 5]);
+        assert_eq!(cursor.is_empty(), false);
+
+        cursor.set_pos(0);
+
+        assert_eq!(cursor.buffer(), &[]);
+        assert_eq!(cursor.is_empty(), true);
+
+        cursor.set_pos(10);
+        *cursor.inner_mut() = vec![b'_'; 2];
+
+        assert_eq!(cursor.buffer(), &[])
+    }
+
+    #[test]
+    fn double_cursor() {
+        let buf = vec![b'_'; 256];
+        let mut cursor = View::new(buf, 10..20);
+
+        assert_eq!(cursor.buffer(), &[b'_'; 10]);
+        assert_eq!(cursor.is_empty(), false);
+
+        cursor.consume(5);
+
+        assert_eq!(cursor.buffer(), &[b'_'; 5]);
+        assert_eq!(cursor.is_empty(), false);
+
+        cursor.consume(5);
+
+        assert_eq!(cursor.buffer(), &[]);
+        assert_eq!(cursor.is_empty(), true);
+
+        let buf = None;
+        let cursor = View::new(buf, 10..20);
+
+        assert_eq!(cursor.buffer(), &[]);
     }
 }
 

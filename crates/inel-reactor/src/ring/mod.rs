@@ -41,11 +41,11 @@ impl RingResult {
     }
 
     pub fn has_more(&self) -> bool {
-        cqueue::more(self.flags)
+        cqueue::more(self.flags())
     }
 
     pub fn buffer_id(&self) -> Option<u16> {
-        cqueue::buffer_select(self.flags)
+        cqueue::buffer_select(self.flags())
     }
 }
 
