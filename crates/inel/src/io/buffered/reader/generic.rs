@@ -175,7 +175,7 @@ macro_rules! impl_bufreader {
             where
                 S: Unpin,
             {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0.source)
+                std::pin::Pin::new(&mut self.get_mut().0.source)
             }
         }
 
@@ -224,7 +224,7 @@ macro_rules! impl_bufreader {
                 cx: &mut std::task::Context<'_>,
                 buf: &mut [u8],
             ) -> std::task::Poll<Result<usize>> {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_read(cx, buf)
+                std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
             }
         }
 
@@ -236,11 +236,11 @@ macro_rules! impl_bufreader {
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<&[u8]>> {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_fill_buf(cx)
+                std::pin::Pin::new(&mut self.get_mut().0).poll_fill_buf(cx)
             }
 
             fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).consume(amt)
+                std::pin::Pin::new(&mut self.get_mut().0).consume(amt)
             }
         }
     };

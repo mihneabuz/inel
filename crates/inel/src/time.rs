@@ -33,7 +33,7 @@ impl Future for Timeout {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 
@@ -69,7 +69,7 @@ impl Future for Instant {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 

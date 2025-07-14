@@ -74,7 +74,7 @@ where
     S: Unpin + ReadSource + WriteSource,
 {
     fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut BufWriter<BufReader<S>>> {
-        Pin::new(&mut Pin::into_inner(self).0)
+        Pin::new(&mut self.get_mut().0)
     }
 }
 
@@ -93,7 +93,7 @@ where
     S: Unpin + ReadSource + WriteSource,
 {
     fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut FixedBufWriter<FixedBufReader<S>>> {
-        Pin::new(&mut Pin::into_inner(self).0)
+        Pin::new(&mut self.get_mut().0)
     }
 }
 
@@ -112,7 +112,7 @@ where
     S: Unpin + ReadSource + WriteSource,
 {
     fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut ShareBuffered<S>> {
-        Pin::new(&mut Pin::into_inner(self).0)
+        Pin::new(&mut self.get_mut().0)
     }
 }
 

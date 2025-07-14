@@ -33,7 +33,7 @@ impl<S> HyperStream<ShareBufStream<S>> {
 
 impl<S: Unpin> HyperStream<S> {
     fn project(self: Pin<&mut Self>) -> Pin<&mut S> {
-        Pin::new(&mut Pin::into_inner(self).0)
+        Pin::new(&mut self.get_mut().0)
     }
 }
 

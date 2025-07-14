@@ -101,7 +101,7 @@ where
     Adapter: BufWriterAdapter<S, B, F>,
 {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        let this = Pin::into_inner(self);
+        let this = self.get_mut();
 
         match &mut this.state {
             BufWriterState::Empty => unreachable!(),
@@ -194,7 +194,7 @@ macro_rules! impl_bufwriter {
             where
                 S: Unpin,
             {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0.sink)
+                std::pin::Pin::new(&mut self.get_mut().0.sink)
             }
         }
 
@@ -245,21 +245,21 @@ macro_rules! impl_bufwriter {
                 cx: &mut std::task::Context<'_>,
                 buf: &[u8],
             ) -> std::task::Poll<Result<usize>> {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_write(cx, buf)
+                std::pin::Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
             }
 
             fn poll_flush(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<()>> {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_flush(cx)
+                std::pin::Pin::new(&mut self.get_mut().0).poll_flush(cx)
             }
 
             fn poll_close(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<()>> {
-                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0).poll_close(cx)
+                std::pin::Pin::new(&mut self.get_mut().0).poll_close(cx)
             }
         }
     };

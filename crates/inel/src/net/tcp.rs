@@ -151,7 +151,7 @@ impl Stream for Incoming {
     type Item = Result<TcpStream>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::into_inner(self)
+        self.get_mut()
             .stream
             .poll_next_unpin(cx)
             .map(|next| next.map(|res| res.map(|sock| unsafe { TcpStream::from_raw_fd(sock) })))
@@ -178,14 +178,9 @@ impl Stream for DirectIncoming {
     type Item = Result<DirectTcpStream>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::into_inner(self)
-            .stream
-            .poll_next_unpin(cx)
-            .map(|next| {
-                next.map(|res| {
-                    res.map(|slot| DirectTcpStream::from_direct(OwnedDirect::auto(slot)))
-                })
-            })
+        self.get_mut().stream.poll_next_unpin(cx).map(|next| {
+            next.map(|res| res.map(|slot| DirectTcpStream::from_direct(OwnedDirect::auto(slot))))
+        })
     }
 }
 

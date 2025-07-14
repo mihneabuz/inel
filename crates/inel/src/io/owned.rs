@@ -127,7 +127,7 @@ impl<B: StableBufferMut> Future for ReadOwned<B> {
     type Output = (B, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 
@@ -145,7 +145,7 @@ impl<B: StableBuffer> Future for WriteOwned<B> {
     type Output = (B, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 
@@ -163,7 +163,7 @@ impl<B: FixedBuffer + StableBufferMut> Future for ReadFixed<B> {
     type Output = (B, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 
@@ -181,7 +181,7 @@ impl<B: FixedBuffer + StableBuffer> Future for WriteFixed<B> {
     type Output = (B, Result<usize>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::into_inner(self).sub.poll_unpin(cx)
+        self.get_mut().sub.poll_unpin(cx)
     }
 }
 
