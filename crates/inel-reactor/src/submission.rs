@@ -42,13 +42,8 @@ pin_project! {
         T: Op,
         R: Reactor<Handle = Ring>,
     {
-        fn drop(this: Pin<&mut Self>) {
-            if let SubmissionState::Submitted(key) = this.state {
-                let this = this.project();
-                let cancel = this.op.take().map(|op| op.cancel()).unwrap_or_default();
-                let entry = T::entry_cancel(key.as_u64());
-                unsafe { this.reactor.cancel(key, entry, cancel) };
-            }
+        fn drop(mut this: Pin<&mut Self>) {
+            this.cancel();
         }
     }
 }
@@ -65,6 +60,14 @@ where
             reactor,
         }
     }
+
+    pub fn cancel(&mut self) {
+        if let SubmissionState::Submitted(key) = self.state {
+            let cancel = self.op.take().map(|op| op.cancel()).unwrap_or_default();
+            let entry = T::entry_cancel(key.as_u64());
+            unsafe { self.reactor.cancel(key, entry, cancel) };
+        }
+    }
 }
 
 impl<T, R> Future for Submission<T, R>
@@ -74,22 +77,20 @@ where
 {
     type Output = T::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-
-        let (res, next_state) = match this.state.take() {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let (res, next_state) = match self.state.take() {
             SubmissionState::Initial => {
-                let entry = this.op.as_mut().unwrap().entry();
+                let entry = self.op.as_mut().unwrap().entry();
                 let waker = cx.waker().clone();
-                let key = unsafe { this.reactor.submit(entry, waker) };
+                let key = unsafe { self.reactor.submit(entry, waker) };
 
                 (Poll::Pending, SubmissionState::Submitted(key))
             }
 
-            SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
+            SubmissionState::Submitted(key) => match self.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(result) => {
-                    let op = this.op.take().unwrap();
+                    let op = self.op.take().unwrap();
                     let next = if result.has_more() {
                         SubmissionState::Submitted(key)
                     } else {
@@ -105,7 +106,7 @@ where
             }
         };
 
-        this.state.update(next_state);
+        self.state.update(next_state);
         res
     }
 }
@@ -127,22 +128,20 @@ where
 {
     type Item = T::Output;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-
-        let (res, next_state) = match this.state.take() {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let (res, next_state) = match self.state.take() {
             SubmissionState::Initial => {
-                let entry = this.op.as_mut().unwrap().entry();
+                let entry = self.op.as_mut().unwrap().entry();
                 let waker = cx.waker().clone();
-                let key = unsafe { this.reactor.submit(entry, waker) };
+                let key = unsafe { self.reactor.submit(entry, waker) };
 
                 (Poll::Pending, SubmissionState::Submitted(key))
             }
 
-            SubmissionState::Submitted(key) => match this.reactor.check_result(key) {
+            SubmissionState::Submitted(key) => match self.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(result) => {
-                    let op = this.op.as_ref();
+                    let op = self.op.as_ref();
                     let next = if result.has_more() {
                         SubmissionState::Submitted(key)
                     } else {
@@ -156,7 +155,7 @@ where
             SubmissionState::Completed => (Poll::Ready(None), SubmissionState::Completed),
         };
 
-        this.state.update(next_state);
+        self.state.update(next_state);
         res
     }
 }
