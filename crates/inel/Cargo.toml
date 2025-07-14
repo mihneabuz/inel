@@ -7,8 +7,9 @@ edition = "2021"
 default = ["full"]
 sys = []
 compat = []
+rustls = ["dep:rustls", "dep:futures-rustls", "compat"]
 hyper = ["dep:hyper", "dep:pin-project-lite", "compat"]
-full = ["hyper"]
+full = ["hyper", "rustls"]
 
 [dependencies]
 inel-interface = { path = "../inel-interface" }
@@ -20,6 +21,8 @@ libc = { workspace = true }
 
 pin-project-lite = { workspace = true, optional = true }
 hyper = { version = "1.6", optional = true }
+rustls = { version = "0.23", optional = true }
+futures-rustls = { version = "0.26", optional = true }
 
 [dev-dependencies]
 tracing = { workspace = true }
