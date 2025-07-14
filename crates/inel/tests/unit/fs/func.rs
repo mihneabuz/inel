@@ -57,3 +57,14 @@ fn exists() {
 
     std::fs::remove_file(&good_clone).unwrap();
 }
+
+#[test]
+fn error() {
+    setup_tracing();
+    let name = temp_file();
+
+    inel::block_on(async move {
+        let (_, res) = inel::fs::read(name, Box::new([0; 256])).await;
+        assert!(res.is_err());
+    });
+}

@@ -4,6 +4,7 @@ use std::os::fd::AsRawFd;
 
 mod bufreader;
 mod bufwriter;
+mod group;
 mod read;
 mod write;
 
