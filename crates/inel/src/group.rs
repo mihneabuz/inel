@@ -1,7 +1,14 @@
-use std::{cell::RefCell, io::Result, mem::ManuallyDrop, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    io::Result,
+    mem::ManuallyDrop,
+    ops::{Deref, RangeBounds},
+    rc::Rc,
+};
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use inel_reactor::{
+    buffer::View,
     group::ReadBufferGroup,
     op::{self, DetachOp, OpExt},
 };
@@ -61,10 +68,24 @@ impl ReadBufferSet {
         op::ProvideBuffer::new(self.clone_private(), buffer).run_detached(&mut GlobalReactor);
     }
 
-    pub async fn read(&self, source: &mut impl ReadSource) -> (Option<Box<[u8]>>, Result<usize>) {
-        op::ReadGroup::new(source.read_source(), self.clone_private())
+    pub async fn read<S>(&self, source: &mut S) -> Result<(Box<[u8]>, usize)>
+    where
+        S: ReadSource,
+    {
+        let (buf, res) = op::ReadGroup::new(source.read_source(), self.clone_private())
             .run_on(GlobalReactor)
-            .await
+            .await;
+
+        match res {
+            Ok(read) => Ok((buf.unwrap(), read)),
+            Err(err) => {
+                if let Some(buf) = buf {
+                    self.insert(buf);
+                }
+
+                Err(err)
+            }
+        }
     }
 
     pub fn supply_to<S>(&self, source: S) -> GroupBufReader<S> {
@@ -139,9 +160,13 @@ impl WriteBufferSet {
         self.inner.borrow_mut().get()
     }
 
-    pub async fn write(&self, sink: &mut impl WriteSource, buffer: Box<[u8]>) -> Result<usize> {
+    pub async fn write<S, R>(&self, sink: &mut S, buffer: View<Box<[u8]>, R>) -> Result<usize>
+    where
+        S: WriteSource,
+        R: RangeBounds<usize>,
+    {
         let (buf, res) = sink.write_owned(buffer).await;
-        self.insert(buf);
+        self.insert(buf.unview());
         res
     }
 
@@ -240,6 +265,25 @@ impl BufferShareGroup {
 
     pub fn insert_write_buffer(&self, buffer: Box<[u8]>) {
         self.write.insert(buffer);
+    }
+
+    pub fn get_write_buffer(&self) -> Box<[u8]> {
+        self.write.get()
+    }
+
+    pub async fn read<S>(&self, source: &mut S) -> Result<(Box<[u8]>, usize)>
+    where
+        S: ReadSource,
+    {
+        self.read.read(source).await
+    }
+
+    pub async fn write<S, R>(&self, sink: &mut S, buffer: View<Box<[u8]>, R>) -> Result<usize>
+    where
+        S: WriteSource,
+        R: RangeBounds<usize>,
+    {
+        self.write.write(sink, buffer).await
     }
 
     pub fn supply_to<S>(&self, source: S) -> ShareBuffered<S> {

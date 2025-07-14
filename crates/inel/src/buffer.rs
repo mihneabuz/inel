@@ -54,13 +54,13 @@ impl Deref for Fixed {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.0.deref()
+        self.as_ref()
     }
 }
 
 impl DerefMut for Fixed {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.deref_mut()
+        self.as_mut()
     }
 }
 
