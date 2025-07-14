@@ -7,11 +7,15 @@ use inel_reactor::{
 };
 
 use crate::{
-    io::{AsyncWriteOwned, GroupBufReader, GroupBufWriter, ReadSource, WriteSource},
+    io::{
+        AsyncWriteOwned, GroupBufReader, GroupBufWriter, ReadHandle, ReadSource, Split,
+        WriteHandle, WriteSource,
+    },
     GlobalReactor,
 };
 
 const PROVIDE_BATCH_SIZE: usize = 32;
+const DEFAULT_BUFFER_SIZE: usize = 4096;
 
 #[derive(Clone)]
 pub struct ReadBufferSet {
@@ -109,8 +113,6 @@ impl Drop for ReadBufferSetInner {
     }
 }
 
-const DEFAULT_WRITER_BUFFER_SIZE: usize = 4096;
-
 #[derive(Clone)]
 pub struct WriteBufferSet {
     inner: Rc<RefCell<WriteBufferSetInner>>,
@@ -118,13 +120,13 @@ pub struct WriteBufferSet {
 
 impl WriteBufferSet {
     pub fn empty() -> Self {
-        Self::with_buffer_capacity(DEFAULT_WRITER_BUFFER_SIZE)
+        Self::with_buffers(0, DEFAULT_BUFFER_SIZE)
     }
 
-    pub fn with_buffer_capacity(capacity: usize) -> Self {
+    pub fn with_buffers(count: u16, capacity: usize) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(WriteBufferSetInner::with_buffer_capacity(
-                capacity,
+            inner: Rc::new(RefCell::new(WriteBufferSetInner::with_buffers(
+                count, capacity,
             ))),
         }
     }
@@ -154,10 +156,12 @@ struct WriteBufferSetInner {
 }
 
 impl WriteBufferSetInner {
-    pub fn with_buffer_capacity(size: usize) -> Self {
+    pub fn with_buffers(count: u16, capacity: usize) -> Self {
         Self {
-            buffers: Vec::with_capacity(32),
-            capacity: size,
+            buffers: (0..count)
+                .map(|_| vec![0; capacity].into_boxed_slice())
+                .collect(),
+            capacity,
         }
     }
 
@@ -169,5 +173,86 @@ impl WriteBufferSetInner {
         self.buffers
             .pop()
             .unwrap_or(vec![0; self.capacity].into_boxed_slice())
+    }
+}
+
+pub struct BufferShareGroupOptions {
+    buffer_capacity: usize,
+    initial_read_count: u16,
+    initial_write_count: u16,
+}
+
+impl Default for BufferShareGroupOptions {
+    fn default() -> Self {
+        Self {
+            buffer_capacity: DEFAULT_BUFFER_SIZE,
+            initial_read_count: 128,
+            initial_write_count: 16,
+        }
+    }
+}
+
+impl BufferShareGroupOptions {
+    pub fn buffer_capacity(mut self, capacity: usize) -> Self {
+        self.buffer_capacity = capacity;
+        self
+    }
+
+    pub fn initial_read_buffers(mut self, count: u16) -> Self {
+        self.initial_read_count = count;
+        self
+    }
+
+    pub fn initial_write_buffers(mut self, count: u16) -> Self {
+        self.initial_write_count = count;
+        self
+    }
+
+    pub async fn build(self) -> Result<BufferShareGroup> {
+        let read =
+            ReadBufferSet::with_buffers(self.initial_read_count, self.buffer_capacity).await?;
+        let write = WriteBufferSet::with_buffers(self.initial_write_count, self.buffer_capacity);
+        Ok(BufferShareGroup { read, write })
+    }
+}
+
+pub struct BufferShareGroup {
+    read: ReadBufferSet,
+    write: WriteBufferSet,
+}
+
+pub type ShareBufReader<T> = GroupBufReader<ReadHandle<T>>;
+pub type ShareBufWriter<T> = GroupBufWriter<WriteHandle<T>>;
+pub type ShareBuffered<T> = GroupBufWriter<GroupBufReader<T>>;
+
+impl BufferShareGroup {
+    pub fn options() -> BufferShareGroupOptions {
+        BufferShareGroupOptions::default()
+    }
+
+    pub async fn new() -> Result<Self> {
+        Self::options().build().await
+    }
+
+    pub fn insert_read_buffer(&self, buffer: Box<[u8]>) {
+        self.read.insert(buffer);
+    }
+
+    pub fn insert_write_buffer(&self, buffer: Box<[u8]>) {
+        self.write.insert(buffer);
+    }
+
+    pub fn supply_to<S>(&self, source: S) -> ShareBuffered<S> {
+        self.write.supply_to(self.read.supply_to(source))
+    }
+
+    pub fn supply_to_split<S>(&self, source: S) -> (ShareBufReader<S>, ShareBufWriter<S>)
+    where
+        S: ReadSource + WriteSource,
+    {
+        let (read_handle, write_handle) = source.split();
+        let reader = self.read.supply_to(read_handle);
+        let writer = self.write.supply_to(write_handle);
+        (reader, writer)
     }
 }

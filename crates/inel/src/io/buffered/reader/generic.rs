@@ -22,8 +22,8 @@ pub(crate) enum BufReaderState<B, F> {
 }
 
 pub(crate) struct BufReaderInner<S, B, F, A> {
+    pub(crate) source: S,
     state: BufReaderState<B, F>,
-    source: S,
     adapter: A,
 }
 
@@ -56,18 +56,6 @@ where
 
     pub(crate) fn capacity(&self) -> Option<usize> {
         self.ready().map(|buf| buf.inner().size())
-    }
-
-    pub(crate) fn inner(&self) -> &S {
-        &self.source
-    }
-
-    pub(crate) fn inner_mut(&mut self) -> &mut S {
-        &mut self.source
-    }
-
-    pub(crate) fn into_inner(self) -> S {
-        self.source
     }
 
     pub(crate) fn into_raw_parts(self) -> (S, Option<(B, usize, usize)>) {
@@ -172,21 +160,64 @@ macro_rules! impl_bufreader {
             }
 
             pub fn inner(&self) -> &S {
-                self.0.inner()
+                &self.0.source
             }
 
             pub fn inner_mut(&mut self) -> &mut S {
-                self.0.inner_mut()
+                &mut self.0.source
             }
 
             pub fn into_inner(self) -> S {
-                self.0.into_inner()
+                self.0.source
+            }
+
+            fn source(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut S>
+            where
+                S: Unpin,
+            {
+                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0.source)
+            }
+        }
+
+        impl<S> futures::AsyncWrite for $bufreader<S>
+        where
+            S: futures::AsyncWrite + Unpin,
+        {
+            fn poll_write(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &[u8],
+            ) -> std::task::Poll<Result<usize>> {
+                self.source().poll_write(cx, buf)
+            }
+
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<()>> {
+                self.source().poll_flush(cx)
+            }
+
+            fn poll_close(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<()>> {
+                self.source().poll_close(cx)
+            }
+        }
+
+        impl<S> crate::io::WriteSource for $bufreader<S>
+        where
+            S: crate::io::WriteSource,
+        {
+            fn write_source(&self) -> inel_reactor::source::Source {
+                self.inner().write_source()
             }
         }
 
         impl<S> futures::AsyncRead for $bufreader<S>
         where
-            S: ReadSource + Unpin,
+            S: crate::io::ReadSource + Unpin,
         {
             fn poll_read(
                 self: std::pin::Pin<&mut Self>,
@@ -199,7 +230,7 @@ macro_rules! impl_bufreader {
 
         impl<S> futures::AsyncBufRead for $bufreader<S>
         where
-            S: ReadSource + Unpin,
+            S: crate::io::ReadSource + Unpin,
         {
             fn poll_fill_buf(
                 self: std::pin::Pin<&mut Self>,

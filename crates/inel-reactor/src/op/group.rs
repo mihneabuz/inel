@@ -122,10 +122,6 @@ where
         let read = util::expect_positive(&res);
         (buffer, read)
     }
-
-    fn entry_cancel(_key: u64) -> Option<Entry> {
-        None
-    }
 }
 
 pub struct ReadGroupMulti<G, R> {

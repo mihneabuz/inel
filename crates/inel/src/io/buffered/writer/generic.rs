@@ -23,7 +23,7 @@ pub(crate) enum BufWriterState<B, F> {
 
 pub(crate) struct BufWriterInner<S, B, F, A> {
     state: BufWriterState<B, F>,
-    sink: S,
+    pub(crate) sink: S,
     adapter: A,
 }
 
@@ -56,18 +56,6 @@ where
 
     pub(crate) fn capacity(&self) -> Option<usize> {
         self.ready().map(|buf| buf.inner().size())
-    }
-
-    pub(crate) fn inner(&self) -> &S {
-        &self.sink
-    }
-
-    pub(crate) fn inner_mut(&mut self) -> &mut S {
-        &mut self.sink
-    }
-
-    pub(crate) fn into_inner(self) -> S {
-        self.sink
     }
 
     pub(crate) fn into_raw_parts(self) -> (S, Option<(B, usize)>) {
@@ -191,15 +179,60 @@ macro_rules! impl_bufwriter {
             }
 
             pub fn inner(&self) -> &S {
-                self.0.inner()
+                &self.0.sink
             }
 
             pub fn inner_mut(&mut self) -> &mut S {
-                self.0.inner_mut()
+                &mut self.0.sink
             }
 
             pub fn into_inner(self) -> S {
-                self.0.into_inner()
+                self.0.sink
+            }
+
+            fn sink(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut S>
+            where
+                S: Unpin,
+            {
+                std::pin::Pin::new(&mut std::pin::Pin::into_inner(self).0.sink)
+            }
+        }
+
+        impl<S> futures::AsyncRead for $bufwriter<S>
+        where
+            S: futures::AsyncRead + Unpin,
+        {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut [u8],
+            ) -> std::task::Poll<Result<usize>> {
+                self.sink().poll_read(cx, buf)
+            }
+        }
+
+        impl<S> futures::AsyncBufRead for $bufwriter<S>
+        where
+            S: futures::AsyncBufRead + Unpin,
+        {
+            fn poll_fill_buf(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<&[u8]>> {
+                self.sink().poll_fill_buf(cx)
+            }
+
+            fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
+                self.sink().consume(amt)
+            }
+        }
+
+        impl<S> crate::io::ReadSource for $bufwriter<S>
+        where
+            S: crate::io::ReadSource,
+        {
+            fn read_source(&self) -> inel_reactor::source::Source {
+                self.inner().read_source()
             }
         }
 

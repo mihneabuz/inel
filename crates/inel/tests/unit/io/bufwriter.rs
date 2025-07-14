@@ -361,7 +361,7 @@ mod group {
         let expect = line.repeat(lines);
 
         inel::block_on(async move {
-            let group = WriteBufferSet::with_buffer_capacity(256);
+            let group = WriteBufferSet::with_buffers(10, 256);
 
             let file = inel::fs::File::create(name_clone).await.unwrap();
             let mut writer = group.supply_to(file);
