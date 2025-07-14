@@ -7,28 +7,27 @@ use std::{
 use futures::{AsyncBufRead, AsyncWrite};
 
 use crate::{
-    compat::stream::{BufTcpStream, FixedBufTcpStream, ShareTcpStream},
+    compat::stream::{BufStream, FixedBufStream, ShareBufStream},
     group::BufferShareGroup,
-    net::TcpStream,
 };
 
-pub struct HyperStream<S>(S);
+pub struct HyperStream<Stream>(Stream);
 
-impl HyperStream<BufTcpStream> {
-    pub fn new(stream: TcpStream) -> Self {
-        Self(BufTcpStream::new(stream))
+impl<S> HyperStream<BufStream<S>> {
+    pub fn new(stream: S) -> Self {
+        Self(BufStream::new(stream))
     }
 }
 
-impl HyperStream<FixedBufTcpStream> {
-    pub fn new_fixed(stream: TcpStream) -> Result<Self> {
-        FixedBufTcpStream::new(stream).map(Self)
+impl<S> HyperStream<FixedBufStream<S>> {
+    pub fn new_fixed(stream: S) -> Result<Self> {
+        FixedBufStream::new(stream).map(Self)
     }
 }
 
-impl HyperStream<ShareTcpStream> {
-    pub fn with_shared_buffers(stream: TcpStream, group: &BufferShareGroup) -> Self {
-        Self(ShareTcpStream::new(stream, group))
+impl<S> HyperStream<ShareBufStream<S>> {
+    pub fn with_shared_buffers(stream: S, group: &BufferShareGroup) -> Self {
+        Self(ShareBufStream::new(stream, group))
     }
 }
 

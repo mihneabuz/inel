@@ -56,8 +56,9 @@ mod hyper {
 
             let wrap1 = Rc::clone(&wrap);
             inel::spawn(async move {
+                let mut incoming = listener.incoming();
                 for _ in 0..connections {
-                    let (stream, _) = listener.accept().await.unwrap();
+                    let stream = incoming.next().await.unwrap().unwrap();
                     let hyper = wrap1(stream);
 
                     let res = server::conn::http1::Builder::new()

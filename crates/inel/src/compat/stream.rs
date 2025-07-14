@@ -6,166 +6,114 @@ use std::{
 
 use crate::{
     group::{BufferShareGroup, ShareBuffered},
-    io::{BufReader, BufWriter, FixedBufReader, FixedBufWriter, ReadHandle, Split, WriteHandle},
-    net::TcpStream,
+    io::{BufReader, BufWriter, FixedBufReader, FixedBufWriter, ReadSource, WriteSource},
 };
 use futures::{AsyncBufRead, AsyncRead, AsyncWrite};
 
-pub struct BufTcpStream {
-    reader: BufReader<ReadHandle<TcpStream>>,
-    writer: BufWriter<WriteHandle<TcpStream>>,
-}
-
-impl BufTcpStream {
-    pub fn new(stream: TcpStream) -> Self {
-        let (reader, writer) = stream.split_buffered();
-        Self { reader, writer }
-    }
-
-    fn pinned_reader(self: Pin<&mut Self>) -> Pin<&mut BufReader<ReadHandle<TcpStream>>> {
-        Pin::new(&mut Pin::into_inner(self).reader)
-    }
-
-    fn pinned_writer(self: Pin<&mut Self>) -> Pin<&mut BufWriter<WriteHandle<TcpStream>>> {
-        Pin::new(&mut Pin::into_inner(self).writer)
-    }
-}
-
-impl AsyncRead for BufTcpStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize>> {
-        self.pinned_reader().poll_read(cx, buf)
-    }
-}
-
-impl AsyncBufRead for BufTcpStream {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        self.pinned_reader().poll_fill_buf(cx)
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.pinned_reader().consume(amt)
-    }
-}
-
-impl AsyncWrite for BufTcpStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        self.pinned_writer().poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_writer().poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_writer().poll_close(cx)
-    }
-}
-
-pub struct FixedBufTcpStream {
-    reader: FixedBufReader<ReadHandle<TcpStream>>,
-    writer: FixedBufWriter<WriteHandle<TcpStream>>,
-}
-
-impl FixedBufTcpStream {
-    pub fn new(stream: TcpStream) -> Result<Self> {
-        let (reader, writer) = stream.split_buffered();
-        let (reader, writer) = (reader.fix()?, writer.fix()?);
-        Ok(Self { reader, writer })
-    }
-
-    fn pinned_reader(self: Pin<&mut Self>) -> Pin<&mut FixedBufReader<ReadHandle<TcpStream>>> {
-        Pin::new(&mut Pin::into_inner(self).reader)
-    }
-
-    fn pinned_writer(self: Pin<&mut Self>) -> Pin<&mut FixedBufWriter<WriteHandle<TcpStream>>> {
-        Pin::new(&mut Pin::into_inner(self).writer)
-    }
-}
-
-impl AsyncRead for FixedBufTcpStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize>> {
-        self.pinned_reader().poll_read(cx, buf)
-    }
-}
-
-impl AsyncBufRead for FixedBufTcpStream {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        self.pinned_reader().poll_fill_buf(cx)
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.pinned_reader().consume(amt)
-    }
-}
-
-impl AsyncWrite for FixedBufTcpStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        self.pinned_writer().poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_writer().poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_writer().poll_close(cx)
-    }
-}
-
-pub struct ShareTcpStream {
-    inner: ShareBuffered<TcpStream>,
-}
-
-impl ShareTcpStream {
-    pub fn new(stream: TcpStream, group: &BufferShareGroup) -> Self {
-        Self {
-            inner: group.supply_to(stream),
+macro_rules! impl_stream {
+    ($stream:ident) => {
+        impl<S> AsyncRead for $stream<S>
+        where
+            S: Unpin + ReadSource + WriteSource,
+        {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &mut [u8],
+            ) -> Poll<Result<usize>> {
+                self.pinned_inner().poll_read(cx, buf)
+            }
         }
-    }
 
-    fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut ShareBuffered<TcpStream>> {
-        Pin::new(&mut Pin::into_inner(self).inner)
+        impl<S> AsyncBufRead for $stream<S>
+        where
+            S: Unpin + ReadSource + WriteSource,
+        {
+            fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
+                self.pinned_inner().poll_fill_buf(cx)
+            }
+
+            fn consume(self: Pin<&mut Self>, amt: usize) {
+                self.pinned_inner().consume(amt)
+            }
+        }
+
+        impl<S> AsyncWrite for $stream<S>
+        where
+            S: Unpin + ReadSource + WriteSource,
+        {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &[u8],
+            ) -> Poll<Result<usize>> {
+                self.pinned_inner().poll_write(cx, buf)
+            }
+
+            fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+                self.pinned_inner().poll_flush(cx)
+            }
+
+            fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+                self.pinned_inner().poll_close(cx)
+            }
+        }
+    };
+}
+
+pub struct BufStream<S>(BufWriter<BufReader<S>>);
+
+impl<S> BufStream<S> {
+    pub fn new(stream: S) -> Self {
+        Self(BufWriter::new(BufReader::new(stream)))
     }
 }
 
-impl AsyncRead for ShareTcpStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize>> {
-        self.pinned_inner().poll_read(cx, buf)
+impl<S> BufStream<S>
+where
+    S: Unpin + ReadSource + WriteSource,
+{
+    fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut BufWriter<BufReader<S>>> {
+        Pin::new(&mut Pin::into_inner(self).0)
     }
 }
 
-impl AsyncBufRead for ShareTcpStream {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        self.pinned_inner().poll_fill_buf(cx)
-    }
+impl_stream!(BufStream);
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.pinned_inner().consume(amt)
+pub struct FixedBufStream<S>(FixedBufWriter<FixedBufReader<S>>);
+
+impl<S> FixedBufStream<S> {
+    pub fn new(stream: S) -> Result<Self> {
+        Ok(Self(BufWriter::new(BufReader::new(stream).fix()?).fix()?))
     }
 }
 
-impl AsyncWrite for ShareTcpStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        self.pinned_inner().poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_inner().poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.pinned_inner().poll_close(cx)
+impl<S> FixedBufStream<S>
+where
+    S: Unpin + ReadSource + WriteSource,
+{
+    fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut FixedBufWriter<FixedBufReader<S>>> {
+        Pin::new(&mut Pin::into_inner(self).0)
     }
 }
+
+impl_stream!(FixedBufStream);
+
+pub struct ShareBufStream<S>(ShareBuffered<S>);
+
+impl<S> ShareBufStream<S> {
+    pub fn new(stream: S, group: &BufferShareGroup) -> Self {
+        Self(group.supply_to(stream))
+    }
+}
+
+impl<S> ShareBufStream<S>
+where
+    S: Unpin + ReadSource + WriteSource,
+{
+    fn pinned_inner(self: Pin<&mut Self>) -> Pin<&mut ShareBuffered<S>> {
+        Pin::new(&mut Pin::into_inner(self).0)
+    }
+}
+
+impl_stream!(ShareBufStream);
