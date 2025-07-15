@@ -1,23 +1,17 @@
 use std::convert::Infallible;
 
-use futures::StreamExt;
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::{
     Error, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    server::conn::http1,
     service::service_fn,
 };
 
-use inel::compat::hyper::HyperStream;
+use inel::compat::stream::BufStream;
 use inel::io::AsyncWriteOwned;
 
-fn main() {
-    inel::block_on(async { run().await.unwrap() })
-}
-
-async fn print(message: String) {
-    let _ = inel::io::stdout().write_owned(message).await;
+fn main() -> std::io::Result<()> {
+    inel::block_on(run())
 }
 
 async fn run() -> std::io::Result<()> {
@@ -26,19 +20,13 @@ async fn run() -> std::io::Result<()> {
 
     print("Started server\n".to_string()).await;
 
-    let mut incoming = listener.incoming();
-    while let Some(Ok(stream)) = incoming.next().await {
-        print("Received connection\n".to_string()).await;
+    while let Ok((stream, peer)) = listener.accept().await {
+        print(format!("Received connection from {peer}")).await;
 
         inel::spawn(async move {
-            let hyper = HyperStream::new_buffered(stream);
-
-            let res = http1::Builder::new()
-                .serve_connection(hyper, service_fn(service))
-                .await;
-
-            if let Err(e) = res {
-                print(format!("Error: {e:?}")).await;
+            let stream = BufStream::new(stream);
+            if let Err(err) = inel::compat::hyper::serve_http1(stream, service_fn(service)).await {
+                print(format!("Error: {err:?}")).await;
             }
         });
     }
@@ -64,4 +52,8 @@ async fn service(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error
             Ok(not_found)
         }
     }
+}
+
+async fn print(message: String) {
+    let _ = inel::io::stdout().write_owned(message).await;
 }

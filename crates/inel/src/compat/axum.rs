@@ -166,18 +166,22 @@ impl Serve {
     }
 }
 
-async fn handle_http1<S>(stream: S, app: Router) -> Result<()>
+async fn handle_http1<S>(stream: S, app: Router)
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let service = hyper::service::service_fn(|request| app.clone().call(request));
-    compat::hyper::serve_http1(stream, service).await
+    if let Err(err) = compat::hyper::serve_http1(stream, service).await {
+        tracing::error!(?err);
+    }
 }
 
-async fn handle_http2<S>(stream: S, app: Router) -> Result<()>
+async fn handle_http2<S>(stream: S, app: Router)
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let service = hyper::service::service_fn(|request| app.clone().call(request));
-    compat::hyper::serve_http2(stream, service).await
+    if let Err(err) = compat::hyper::serve_http2(stream, service).await {
+        tracing::error!(?err);
+    }
 }

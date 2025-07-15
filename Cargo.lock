@@ -662,7 +662,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc2fdfdbff08affe55bb779f33b053aa1fe5dd5b54c257343c17edfa55711bdb"
 dependencies = [
  "bytes",
- "futures-channel",
  "futures-core",
  "http",
  "http-body",
@@ -670,7 +669,6 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -721,9 +719,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "hyper",
- "hyper-util",
  "inel",
- "tower",
 ]
 
 [[package]]

@@ -22,9 +22,7 @@ path = "src/groups.rs"
 [dependencies]
 inel = { path = "../inel", features = ["full"] }
 
-futures = { workspace = true }
-hyper = "1.6"
-http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["client"] }
 axum = "0.8"
-tower = "0.5"
+futures = { workspace = true }
+http-body-util = "0.1"
+hyper = "1.6"
