@@ -9,7 +9,8 @@ sys = []
 compat = []
 rustls = ["compat", "dep:rustls", "dep:futures-rustls"]
 hyper = ["compat", "dep:hyper"]
-full = ["hyper", "rustls"]
+axum = ["hyper", "dep:axum", "dep:tower"]
+full = ["axum", "hyper", "rustls"]
 
 [dependencies]
 inel-interface = { path = "../inel-interface" }
@@ -19,9 +20,13 @@ inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
 
-hyper = { version = "1.6", optional = true }
+hyper = { version = "1.6", optional = true, features = ["server", "http2"] }
+
 rustls = { version = "0.23", optional = true }
 futures-rustls = { version = "0.26", optional = true }
+
+axum = { version = "0.8", optional = true }
+tower = { version = "0.5", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.6", features = ["client", "server", "http1"] }

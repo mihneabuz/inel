@@ -226,8 +226,8 @@ mod rustls {
         setup_tracing();
 
         let (server, client, domain) = tls_configs();
-        let acceptor = inel::compat::tls::TlsAcceptor::from(server);
-        let connector = inel::compat::tls::TlsConnector::from(client);
+        let acceptor = inel::compat::rustls::TlsAcceptor::from(server);
+        let connector = inel::compat::rustls::TlsConnector::from(client);
 
         for _ in 0..connections {
             let acceptor = acceptor.clone();

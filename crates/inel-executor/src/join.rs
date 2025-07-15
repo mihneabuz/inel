@@ -16,4 +16,6 @@ impl<T> JoinHandle<T> {
     pub async fn join(self) -> Option<T> {
         self.receiver.await.ok()
     }
+
+    pub fn detach(self) {}
 }

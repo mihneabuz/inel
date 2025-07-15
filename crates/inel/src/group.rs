@@ -241,6 +241,7 @@ impl BufferShareGroupOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct BufferShareGroup {
     read: ReadBufferSet,
     write: WriteBufferSet,

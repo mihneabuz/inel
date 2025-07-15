@@ -4,4 +4,7 @@ pub mod stream;
 pub mod hyper;
 
 #[cfg(feature = "rustls")]
-pub mod tls;
+pub mod rustls;
+
+#[cfg(feature = "axum")]
+pub mod axum;

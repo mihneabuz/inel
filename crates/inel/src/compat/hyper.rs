@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     io::Result,
     pin::Pin,
     task::{ready, Context, Poll},
@@ -10,6 +11,19 @@ use crate::{
     compat::stream::{BufStream, FixedBufStream, ShareBufStream},
     group::BufferShareGroup,
 };
+
+#[derive(Copy, Clone)]
+pub struct Executor;
+
+impl<F> hyper::rt::Executor<F> for Executor
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        crate::spawn(fut).detach();
+    }
+}
 
 pub struct HyperStream<Stream>(Stream);
 
