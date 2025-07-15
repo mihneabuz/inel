@@ -31,7 +31,7 @@ async fn run() -> std::io::Result<()> {
         print("Received connection\n".to_string()).await;
 
         inel::spawn(async move {
-            let hyper = HyperStream::new(stream);
+            let hyper = HyperStream::new_buffered(stream);
 
             let res = http1::Builder::new()
                 .serve_connection(hyper, service_fn(service))

@@ -35,7 +35,7 @@ async fn run(app: Router) -> std::io::Result<()> {
         let tower_service = app.clone();
 
         inel::spawn(async move {
-            let hyper = HyperStream::new(stream);
+            let hyper = HyperStream::new_buffered_fixed(stream).unwrap();
 
             let hyper_service =
                 hyper::service::service_fn(move |request| tower_service.clone().call(request));

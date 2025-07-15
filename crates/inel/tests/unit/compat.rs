@@ -17,21 +17,20 @@ mod hyper {
         Error, Request, Response, StatusCode,
     };
     use futures::{Stream, StreamExt};
-    use inel::group::BufferShareGroup;
 
     #[test]
     fn simple() {
-        run_server(|stream| inel::compat::hyper::HyperStream::new(stream));
+        run_server(|stream| inel::compat::hyper::HyperStream::new_buffered(stream));
     }
 
     #[test]
     fn fixed() {
-        run_server(|stream| inel::compat::hyper::HyperStream::new_fixed(stream).unwrap());
+        run_server(|stream| inel::compat::hyper::HyperStream::new_buffered_fixed(stream).unwrap());
     }
 
     #[test]
     fn shared() {
-        let group = inel::block_on(BufferShareGroup::new()).unwrap();
+        let group = inel::block_on(inel::group::BufferShareGroup::new()).unwrap();
         run_server(move |stream| {
             inel::compat::hyper::HyperStream::with_shared_buffers(stream, &group)
         });
@@ -130,23 +129,24 @@ mod hyper {
 
 #[cfg(feature = "rustls")]
 mod rustls {
+    use super::*;
+
     use std::io::{BufReader, Cursor};
 
     use ::rustls::{pki_types::ServerName, ClientConfig, RootCertStore, ServerConfig};
-    use futures::{AsyncReadExt, AsyncWriteExt};
-    use inel::{
-        compat::stream::BufStream,
-        net::{TcpListener, TcpStream},
-    };
+    use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
     use rustls_pemfile::{certs, private_key};
 
-    use super::*;
+    use inel::{
+        compat::stream::{BufStream, FixedBufStream},
+        net::{DirectTcpStream, TcpListener, TcpStream},
+    };
 
     const KEY: &[u8] = include_bytes!("../certs/end.rsa");
     const CERT: &[u8] = include_bytes!("../certs/end.cert");
     const CHAIN: &[u8] = include_bytes!("../certs/end.chain");
 
-    fn configs() -> (ServerConfig, ClientConfig, ServerName<'static>) {
+    fn tls_configs() -> (ServerConfig, ClientConfig, ServerName<'static>) {
         let cert = certs(&mut BufReader::new(Cursor::new(CERT)))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -171,7 +171,7 @@ mod rustls {
         (server, client, domain)
     }
 
-    fn pair() -> (BufStream<TcpStream>, BufStream<TcpStream>) {
+    fn simple_pair() -> (BufStream<TcpStream>, BufStream<TcpStream>) {
         inel::block_on(async {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
 
@@ -188,20 +188,53 @@ mod rustls {
         })
     }
 
-    #[test]
-    fn simple() {
+    fn direct_pair() -> (
+        FixedBufStream<DirectTcpStream>,
+        FixedBufStream<DirectTcpStream>,
+    ) {
+        inel::block_on(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::mem::drop(listener);
+
+            inel::time::Instant::new().await;
+
+            let listener = TcpListener::bind_direct(("127.0.0.1", port)).await.unwrap();
+
+            let server = inel::spawn(async move {
+                FixedBufStream::new(listener.accept().await.unwrap().0).unwrap()
+            });
+
+            let client = inel::spawn(async move {
+                FixedBufStream::new(
+                    TcpStream::connect_direct(("127.0.0.1", port))
+                        .await
+                        .unwrap(),
+                )
+                .unwrap()
+            });
+
+            (server.join().await.unwrap(), client.join().await.unwrap())
+        })
+    }
+
+    fn run<T, F>(connections: usize, f: F)
+    where
+        T: AsyncRead + AsyncWrite + Unpin + 'static,
+        F: Fn() -> (T, T),
+    {
         setup_tracing();
 
-        let (server, client, domain) = configs();
+        let (server, client, domain) = tls_configs();
         let acceptor = inel::compat::tls::TlsAcceptor::from(server);
         let connector = inel::compat::tls::TlsConnector::from(client);
 
-        for _ in 0..4 {
+        for _ in 0..connections {
             let acceptor = acceptor.clone();
             let connector = connector.clone();
             let domain = domain.clone();
 
-            let (server, client) = pair();
+            let (server, client) = f();
 
             inel::spawn(async move {
                 let mut server = acceptor.accept(server).await.unwrap();
@@ -212,6 +245,10 @@ mod rustls {
 
                 server.write_all(CHAIN).await.unwrap();
                 server.flush().await.unwrap();
+
+                let mut buffer = vec![0; KEY.len()];
+                server.read_exact(&mut buffer).await.unwrap();
+                assert_eq!(&buffer, KEY);
             });
 
             inel::spawn(async move {
@@ -223,9 +260,22 @@ mod rustls {
                 let mut buffer = vec![0; CHAIN.len()];
                 client.read_exact(&mut buffer).await.unwrap();
                 assert_eq!(&buffer, CHAIN);
+
+                client.write_all(KEY).await.unwrap();
+                client.flush().await.unwrap();
             });
         }
 
         inel::run();
+    }
+
+    #[test]
+    fn simple() {
+        run(20, simple_pair);
+    }
+
+    #[test]
+    fn direct() {
+        run(20, direct_pair);
     }
 }
