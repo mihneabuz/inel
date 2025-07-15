@@ -6,6 +6,11 @@ use std::{
 };
 
 use futures::{AsyncRead, AsyncWrite};
+use hyper::{
+    body::{Body, Incoming},
+    service::HttpService,
+    Response,
+};
 
 use crate::{
     compat::stream::{BufStream, FixedBufStream, ShareBufStream},
@@ -90,4 +95,38 @@ where
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.project().poll_close(cx)
     }
+}
+
+pub async fn serve_http1<IO, S, B, E>(stream: IO, service: S) -> Result<()>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+    S: HttpService<Incoming, ResBody = B, Error = E>,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B: Body + 'static,
+    <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let hyper = HyperStream::new(stream);
+
+    hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper, service)
+        .await
+        .map_err(std::io::Error::other)
+}
+
+pub async fn serve_http2<IO, S, B, E, F>(stream: IO, service: S) -> Result<()>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+    S: HttpService<Incoming, ResBody = B, Error = E, Future = F>,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    F: Future<Output = std::result::Result<Response<B>, E>> + Send + 'static,
+    B: Body + Send + 'static,
+    <B as Body>::Data: Send,
+    <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let hyper = HyperStream::new(stream);
+
+    hyper::server::conn::http2::Builder::new(Executor)
+        .serve_connection(hyper, service)
+        .await
+        .map_err(std::io::Error::other)
 }

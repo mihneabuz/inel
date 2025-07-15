@@ -6,12 +6,7 @@ use rustls::ServerConfig;
 use tower::Service;
 
 use crate::{
-    compat::{
-        self,
-        hyper::HyperStream,
-        rustls::TlsAcceptor,
-        stream::{BufStream, FixedBufStream},
-    },
+    compat,
     group::BufferShareGroup,
     io::{ReadSource, WriteSource},
     net::TcpListener,
@@ -40,7 +35,7 @@ enum Buffering {
 #[derive(Clone)]
 enum Tls {
     None,
-    Rustls(TlsAcceptor),
+    Rustls(compat::rustls::TlsAcceptor),
 }
 
 #[derive(Clone)]
@@ -88,7 +83,7 @@ impl Serve {
     }
 
     pub fn with_tls(mut self, config: ServerConfig) -> Self {
-        self.security = Tls::Rustls(TlsAcceptor::from(config));
+        self.security = Tls::Rustls(compat::rustls::TlsAcceptor::from(config));
         self
     }
 
@@ -127,18 +122,18 @@ impl Serve {
 
                 match &self.buffering {
                     Buffering::Simple => {
-                        let stream = BufStream::new(stream);
+                        let stream = compat::stream::BufStream::new(stream);
                         self.with_raw_stream(stream, app).await;
                     }
 
                     Buffering::Fixed => {
-                        if let Ok(stream) = FixedBufStream::new(stream) {
+                        if let Ok(stream) = compat::stream::FixedBufStream::new(stream) {
                             self.with_raw_stream(stream, app).await;
                         }
                     }
 
                     Buffering::Group(share) => {
-                        let stream = share.supply_to(stream);
+                        let stream = compat::stream::ShareBufStream::new(stream, share);
                         self.with_raw_stream(stream, app).await;
                     }
                 }
@@ -175,24 +170,14 @@ async fn handle_http1<S>(stream: S, app: Router) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let hyper = HyperStream::new(stream);
     let service = hyper::service::service_fn(|request| app.clone().call(request));
-
-    hyper::server::conn::http1::Builder::new()
-        .serve_connection(hyper, service)
-        .await
-        .map_err(std::io::Error::other)
+    compat::hyper::serve_http1(stream, service).await
 }
 
 async fn handle_http2<S>(stream: S, app: Router) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let hyper = HyperStream::new(stream);
     let service = hyper::service::service_fn(|request| app.clone().call(request));
-
-    hyper::server::conn::http2::Builder::new(compat::hyper::Executor)
-        .serve_connection(hyper, service)
-        .await
-        .map_err(std::io::Error::other)
+    compat::hyper::serve_http2(stream, service).await
 }
