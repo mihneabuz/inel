@@ -282,11 +282,15 @@ impl Ring {
             return;
         }
 
-        let want = if self.active == self.canceled {
+        let mut want = if self.active == self.canceled {
             2 * self.canceled
         } else {
             1 + 2 * self.canceled
         };
+
+        if want == 0 && self.detached > 0 {
+            want = self.detached;
+        }
 
         debug!(
             active =? self.active,
