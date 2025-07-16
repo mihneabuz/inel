@@ -20,7 +20,7 @@ inel-macro = { path = "../inel-macro" }
 futures = { workspace = true }
 libc = { workspace = true }
 
-hyper = { version = "1.6", optional = true, features = ["server", "http2"] }
+hyper = { version = "1.6", optional = true, features = ["server", "client", "http2"] }
 
 rustls = { version = "0.23", optional = true }
 futures-rustls = { version = "0.26", optional = true }

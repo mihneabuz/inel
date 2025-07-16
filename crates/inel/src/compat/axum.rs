@@ -48,8 +48,8 @@ enum Tls {
 
 #[derive(Clone)]
 enum HttpProto {
-    HTTP1,
-    HTTP2,
+    Http1,
+    Http2,
 }
 
 pub struct Serve {
@@ -65,7 +65,7 @@ impl Default for Serve {
             descriptors: Descriptors::Raw,
             buffering: Buffering::Simple,
             security: Tls::None,
-            http: HttpProto::HTTP1,
+            http: HttpProto::Http1,
         }
     }
 }
@@ -97,7 +97,7 @@ impl Serve {
     }
 
     pub fn with_http2(mut self) -> Self {
-        self.http = HttpProto::HTTP2;
+        self.http = HttpProto::Http2;
         self
     }
 
@@ -170,8 +170,8 @@ impl Serve {
         S: AsyncRead + AsyncWrite + Unpin + 'static,
     {
         match self.http {
-            HttpProto::HTTP1 => crate::spawn(handle_http1(stream, app)).detach(),
-            HttpProto::HTTP2 => crate::spawn(handle_http2(stream, app)).detach(),
+            HttpProto::Http1 => crate::spawn(handle_http1(stream, app)).detach(),
+            HttpProto::Http2 => crate::spawn(handle_http2(stream, app)).detach(),
         }
     }
 }

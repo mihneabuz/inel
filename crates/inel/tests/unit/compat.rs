@@ -1,5 +1,19 @@
 use crate::helpers::setup_tracing;
 
+pub async fn find_open_port() -> u16 {
+    let listener = inel::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+
+    let port = listener.local_addr().unwrap().port();
+
+    std::mem::drop(listener);
+
+    inel::time::Instant::new().await;
+
+    port
+}
+
 #[cfg(feature = "hyper")]
 mod hyper {
     use super::*;
@@ -12,34 +26,31 @@ mod hyper {
 
     use ::hyper::{
         body::{Body, Bytes, Frame, Incoming},
-        client, rt, server,
         service::service_fn,
         Error, Request, Response, StatusCode,
     };
-    use futures::{Stream, StreamExt};
+    use futures::{AsyncRead, AsyncWrite, Stream, StreamExt};
 
     #[test]
     fn simple() {
-        run_server(|stream| inel::compat::hyper::HyperStream::new_buffered(stream));
+        run_server(|stream| inel::compat::stream::BufStream::new(stream));
     }
 
     #[test]
     fn fixed() {
-        run_server(|stream| inel::compat::hyper::HyperStream::new_buffered_fixed(stream).unwrap());
+        run_server(|stream| inel::compat::stream::FixedBufStream::new(stream).unwrap());
     }
 
     #[test]
     fn shared() {
         let group = inel::block_on(inel::group::BufferShareGroup::new()).unwrap();
-        run_server(move |stream| {
-            inel::compat::hyper::HyperStream::with_shared_buffers(stream, &group)
-        });
+        run_server(move |stream| inel::compat::stream::ShareBufStream::new(stream, &group));
     }
 
     fn run_server<F, S>(wrap: F)
     where
         F: Fn(inel::net::TcpStream) -> S + 'static,
-        S: rt::Read + rt::Write + Unpin + 'static,
+        S: AsyncRead + AsyncWrite + Unpin + 'static,
     {
         setup_tracing();
 
@@ -57,13 +68,8 @@ mod hyper {
             inel::spawn(async move {
                 let mut incoming = listener.incoming();
                 for _ in 0..connections {
-                    let stream = incoming.next().await.unwrap().unwrap();
-                    let hyper = wrap1(stream);
-
-                    let res = server::conn::http1::Builder::new()
-                        .serve_connection(hyper, service_fn(echo))
-                        .await;
-
+                    let stream = wrap1(incoming.next().await.unwrap().unwrap());
+                    let res = inel::compat::hyper::serve_http1(stream, service_fn(echo)).await;
                     assert!(res.is_ok());
                 }
             });
@@ -71,22 +77,22 @@ mod hyper {
             for _ in 0..connections {
                 let wrap2 = Rc::clone(&wrap);
                 inel::spawn(async move {
-                    let stream = inel::net::TcpStream::connect(("127.0.0.1", port))
+                    let stream = wrap2(
+                        inel::net::TcpStream::connect(("127.0.0.1", port))
+                            .await
+                            .unwrap(),
+                    );
+
+                    let mut client = inel::compat::hyper::HyperClient::handshake_http1(stream)
                         .await
                         .unwrap();
-                    let hyper = wrap2(stream);
-                    let (mut sender, conn) = client::conn::http1::handshake(hyper).await.unwrap();
-
-                    inel::spawn(async move {
-                        assert!(conn.await.is_ok());
-                    });
 
                     let req = Request::builder()
                         .uri("127.0.0.1")
                         .body("hello world!".repeat(10000))
                         .unwrap();
 
-                    let res = sender.send_request(req).await;
+                    let res = client.send_request(req).await;
                     assert!(res.is_ok());
 
                     let body = res.unwrap().into_body();
@@ -193,11 +199,7 @@ mod rustls {
         FixedBufStream<DirectTcpStream>,
     ) {
         inel::block_on(async {
-            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            std::mem::drop(listener);
-
-            inel::time::Instant::new().await;
+            let port = find_open_port().await;
 
             let listener = TcpListener::bind_direct(("127.0.0.1", port)).await.unwrap();
 
@@ -277,5 +279,91 @@ mod rustls {
     #[test]
     fn direct() {
         run(20, direct_pair);
+    }
+}
+
+#[cfg(feature = "axum")]
+mod axum {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use axum::{routing::get, Router};
+    use futures::{FutureExt, Stream, StreamExt};
+    use hyper::{
+        body::{Body, Bytes, Frame, Incoming},
+        Error, Request,
+    };
+    use inel::compat::stream::BufStream;
+
+    use crate::compat::find_open_port;
+
+    #[test]
+    fn simple() {
+        const MESSAGE: &str = "Hello World!";
+
+        let app = Router::new().route("/hello", get(|| async { MESSAGE }));
+        let port = inel::block_on(find_open_port());
+
+        let (send, mut recv) = futures::channel::oneshot::channel();
+
+        inel::spawn(async move {
+            futures::select! {
+                res = inel::compat::axum::serve(("127.0.0.1", port), app).fuse() => res.unwrap(),
+                res = recv => res.unwrap()
+            };
+        })
+        .detach();
+
+        inel::spawn(async move {
+            inel::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            for _ in 0..10 {
+                let stream = inel::net::TcpStream::connect_direct(("127.0.0.1", port))
+                    .await
+                    .unwrap();
+
+                let stream = BufStream::new(stream);
+
+                let mut client = inel::compat::hyper::HyperClient::handshake_http1(stream)
+                    .await
+                    .unwrap();
+
+                let req = Request::builder()
+                    .uri("/hello")
+                    .body(axum::body::Body::empty())
+                    .unwrap();
+
+                let res = client.send_request(req).await.unwrap();
+
+                let mut stream = FrameStream::new(res.into_body());
+                let frame = stream.next().await.unwrap();
+                let data = frame.unwrap().into_data().unwrap();
+                assert_eq!(data, MESSAGE.as_bytes());
+            }
+
+            send.send(()).unwrap();
+        });
+
+        inel::run();
+    }
+
+    struct FrameStream {
+        body: Incoming,
+    }
+
+    impl FrameStream {
+        pub fn new(body: Incoming) -> Self {
+            Self { body }
+        }
+    }
+
+    impl Stream for FrameStream {
+        type Item = Result<Frame<Bytes>, Error>;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Pin::new(&mut unsafe { self.get_unchecked_mut() }.body).poll_frame(cx)
+        }
     }
 }

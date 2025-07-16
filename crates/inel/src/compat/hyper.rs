@@ -9,12 +9,7 @@ use futures::{AsyncRead, AsyncWrite};
 use hyper::{
     body::{Body, Incoming},
     service::HttpService,
-    Response,
-};
-
-use crate::{
-    compat::stream::{BufStream, FixedBufStream, ShareBufStream},
-    group::BufferShareGroup,
+    Request, Response,
 };
 
 #[derive(Copy, Clone)]
@@ -22,8 +17,8 @@ pub struct Executor;
 
 impl<F> hyper::rt::Executor<F> for Executor
 where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
+    F: Future + 'static,
+    F::Output: 'static,
 {
     fn execute(&self, fut: F) {
         crate::spawn(fut).detach();
@@ -35,24 +30,6 @@ pub struct HyperStream<Stream>(Stream);
 impl<S> HyperStream<S> {
     pub fn new(stream: S) -> Self {
         Self(stream)
-    }
-}
-
-impl<S> HyperStream<BufStream<S>> {
-    pub fn new_buffered(stream: S) -> Self {
-        Self(BufStream::new(stream))
-    }
-}
-
-impl<S> HyperStream<FixedBufStream<S>> {
-    pub fn new_buffered_fixed(stream: S) -> Result<Self> {
-        FixedBufStream::new(stream).map(Self)
-    }
-}
-
-impl<S> HyperStream<ShareBufStream<S>> {
-    pub fn with_shared_buffers(stream: S, group: &BufferShareGroup) -> Self {
-        Self(ShareBufStream::new(stream, group))
     }
 }
 
@@ -97,26 +74,81 @@ where
     }
 }
 
-pub async fn serve_http1<IO, S, B, E>(stream: IO, service: S) -> Result<()>
+pub enum HyperClient<B> {
+    Http1(hyper::client::conn::http1::SendRequest<B>),
+    Http2(hyper::client::conn::http2::SendRequest<B>),
+}
+
+impl<B> HyperClient<B>
 where
-    IO: AsyncRead + AsyncWrite + Unpin,
-    S: HttpService<Incoming, ResBody = B, Error = E>,
+    B: Body + 'static,
+    <B as Body>::Data: Send,
+    <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    pub async fn handshake_http1<S>(stream: S) -> hyper::Result<Self>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + 'static,
+    {
+        let hyper = HyperStream::new(stream);
+
+        let (sender, connection) = hyper::client::conn::http1::Builder::new()
+            .handshake::<_, B>(hyper)
+            .await?;
+
+        crate::spawn(connection);
+
+        Ok(Self::Http1(sender))
+    }
+
+    pub async fn handshake_http2<S>(stream: S) -> hyper::Result<Self>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + 'static,
+        B: Unpin,
+    {
+        let hyper = HyperStream::new(stream);
+
+        let (sender, connection) = hyper::client::conn::http2::Builder::new(Executor)
+            .handshake::<_, B>(hyper)
+            .await?;
+
+        crate::spawn(connection);
+
+        Ok(Self::Http2(sender))
+    }
+
+    pub async fn send_request(&mut self, req: Request<B>) -> hyper::Result<Response<Incoming>> {
+        match self {
+            HyperClient::Http1(sender) => sender.send_request(req).await,
+            HyperClient::Http2(sender) => sender.send_request(req).await,
+        }
+    }
+
+    pub fn is_ready(&mut self) -> bool {
+        match self {
+            HyperClient::Http1(sender) => sender.is_ready(),
+            HyperClient::Http2(sender) => sender.is_ready(),
+        }
+    }
+}
+
+pub async fn serve_http1<S, A, B, E>(stream: S, app: A) -> hyper::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    A: HttpService<Incoming, ResBody = B, Error = E>,
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
     B: Body + 'static,
     <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let hyper = HyperStream::new(stream);
-
     hyper::server::conn::http1::Builder::new()
-        .serve_connection(hyper, service)
+        .serve_connection(hyper, app)
         .await
-        .map_err(std::io::Error::other)
 }
 
-pub async fn serve_http2<IO, S, B, E, F>(stream: IO, service: S) -> Result<()>
+pub async fn serve_http2<S, A, B, E, F>(stream: S, app: A) -> hyper::Result<()>
 where
-    IO: AsyncRead + AsyncWrite + Unpin,
-    S: HttpService<Incoming, ResBody = B, Error = E, Future = F>,
+    S: AsyncRead + AsyncWrite + Unpin,
+    A: HttpService<Incoming, ResBody = B, Error = E, Future = F>,
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
     F: Future<Output = std::result::Result<Response<B>, E>> + Send + 'static,
     B: Body + Send + 'static,
@@ -124,9 +156,7 @@ where
     <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let hyper = HyperStream::new(stream);
-
     hyper::server::conn::http2::Builder::new(Executor)
-        .serve_connection(hyper, service)
+        .serve_connection(hyper, app)
         .await
-        .map_err(std::io::Error::other)
 }
