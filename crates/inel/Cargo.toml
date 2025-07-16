@@ -9,7 +9,7 @@ sys = []
 compat = []
 rustls = ["compat", "dep:rustls", "dep:futures-rustls"]
 hyper = ["compat", "dep:hyper"]
-axum = ["hyper", "dep:axum", "dep:tower", "dep:tracing"]
+axum = ["compat", "hyper", "dep:axum", "dep:tower", "dep:tracing"]
 full = ["axum", "hyper", "rustls"]
 
 [dependencies]

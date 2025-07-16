@@ -2,7 +2,6 @@ use std::{io::Result, net::ToSocketAddrs};
 
 use axum::Router;
 use futures::{AsyncRead, AsyncWrite, Stream, StreamExt};
-use rustls::ServerConfig;
 use tower::Service;
 
 use crate::{
@@ -17,6 +16,14 @@ where
     A: ToSocketAddrs,
 {
     Serve::builder().serve(addr, app).await
+}
+
+#[cfg(feature = "rustls")]
+pub async fn serve_tls<A>(addr: A, config: rustls::ServerConfig, app: Router) -> Result<()>
+where
+    A: ToSocketAddrs,
+{
+    Serve::builder().with_tls(config).serve(addr, app).await
 }
 
 #[derive(Clone)]
@@ -35,6 +42,7 @@ enum Buffering {
 #[derive(Clone)]
 enum Tls {
     None,
+    #[cfg(feature = "rustls")]
     Rustls(compat::rustls::TlsAcceptor),
 }
 
@@ -82,7 +90,8 @@ impl Serve {
         self
     }
 
-    pub fn with_tls(mut self, config: ServerConfig) -> Self {
+    #[cfg(feature = "rustls")]
+    pub fn with_tls(mut self, config: rustls::ServerConfig) -> Self {
         self.security = Tls::Rustls(compat::rustls::TlsAcceptor::from(config));
         self
     }
@@ -147,6 +156,7 @@ impl Serve {
     {
         match &self.security {
             Tls::None => self.with_stream(stream, app).await,
+            #[cfg(feature = "rustls")]
             Tls::Rustls(acceptor) => {
                 if let Ok(tls_stream) = acceptor.accept(stream).await {
                     self.with_stream(tls_stream, app).await;
