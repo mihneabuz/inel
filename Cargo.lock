@@ -720,6 +720,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "inel",
+ "rustls",
+ "rustls-pemfile",
 ]
 
 [[package]]
