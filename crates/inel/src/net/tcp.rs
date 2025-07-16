@@ -204,6 +204,10 @@ impl WriteSource for TcpStream {
     fn write_source(&self) -> Source {
         self.sock.as_source()
     }
+
+    fn need_shutdown(&self) -> bool {
+        true
+    }
 }
 
 impl TcpStream {
@@ -325,6 +329,10 @@ impl ReadSource for DirectTcpStream {
 impl WriteSource for DirectTcpStream {
     fn write_source(&self) -> Source {
         self.direct.as_source()
+    }
+
+    fn need_shutdown(&self) -> bool {
+        true
     }
 }
 

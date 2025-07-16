@@ -10,6 +10,7 @@ pub trait ReadSource {
 
 pub trait WriteSource {
     fn write_source(&self) -> Source;
+    fn need_shutdown(&self) -> bool;
 }
 
 pub use buffered::*;
@@ -49,5 +50,9 @@ impl ReadSource for Stdin {
 impl WriteSource for Stdout {
     fn write_source(&self) -> Source {
         self.as_raw_fd().as_source()
+    }
+
+    fn need_shutdown(&self) -> bool {
+        false
     }
 }
