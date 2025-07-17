@@ -7,15 +7,10 @@ use std::{
 };
 
 use futures::{AsyncWrite, FutureExt};
-use inel_reactor::{
-    op::{OpExt, Shutdown},
-    submission::Submission,
-};
 
 use crate::{
     buffer::{StableBufferExt, StableBufferMut, View},
     io::WriteSource,
-    GlobalReactor,
 };
 
 #[derive(Default)]
@@ -30,7 +25,6 @@ pub(crate) struct BufWriterInner<S, B, F, A> {
     state: BufWriterState<B, F>,
     pub(crate) sink: S,
     adapter: A,
-    shutdown: Option<Submission<Shutdown, GlobalReactor>>,
 }
 
 impl<S, B, F, A> BufWriterInner<S, B, F, A>
@@ -46,7 +40,6 @@ where
             state: BufWriterState::Ready(buffer.view(..pos)),
             sink,
             adapter,
-            shutdown: None,
         }
     }
 
@@ -169,19 +162,8 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        if !self.sink.need_shutdown() {
-            return Poll::Ready(Ok(()));
-        }
-
-        if self.shutdown.is_none() {
-            self.shutdown = Some(
-                Shutdown::new(&self.sink.write_source(), std::net::Shutdown::Write)
-                    .run_on(GlobalReactor),
-            );
-        }
-
-        Pin::new(self.shutdown.as_mut().unwrap()).poll(cx)
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 

@@ -244,10 +244,6 @@ impl WriteSource for File {
     fn write_source(&self) -> Source {
         self.fd.as_source()
     }
-
-    fn need_shutdown(&self) -> bool {
-        false
-    }
 }
 
 pub struct DirectFile {
@@ -286,9 +282,5 @@ impl ReadSource for DirectFile {
 impl WriteSource for DirectFile {
     fn write_source(&self) -> Source {
         self.direct.as_source()
-    }
-
-    fn need_shutdown(&self) -> bool {
-        false
     }
 }

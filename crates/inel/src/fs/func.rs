@@ -25,7 +25,6 @@ where
     let direct = OwnedDirect::reserve().unwrap();
     op::OpenAt::new(path, libc::O_WRONLY)
         .fixed(&direct)
-        .chain()
         .run_on(GlobalReactor)
         .await
         .is_ok()

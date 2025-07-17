@@ -204,10 +204,6 @@ impl WriteSource for TcpStream {
     fn write_source(&self) -> Source {
         self.sock.as_source()
     }
-
-    fn need_shutdown(&self) -> bool {
-        true
-    }
 }
 
 impl TcpStream {
@@ -234,14 +230,16 @@ impl TcpStream {
         A: ToSocketAddrs,
     {
         for_each_addr(addr, |addr| async move {
-            let direct = OwnedDirect::reserve().unwrap();
+            let slot = op::Socket::stream_from_addr(&addr)
+                .direct()
+                .run_on(GlobalReactor)
+                .await?;
 
-            let socket = op::Socket::stream_from_addr(&addr)
-                .fixed(&direct)
-                .run_on(GlobalReactor);
-            let connect = op::Connect::new(&direct, addr).run_on(GlobalReactor);
+            let direct = OwnedDirect::auto(slot);
 
-            crate::util::chain(socket, connect).await?;
+            op::Connect::new(&direct, addr)
+                .run_on(GlobalReactor)
+                .await?;
 
             Ok(DirectTcpStream::from_direct(direct))
         })
@@ -329,10 +327,6 @@ impl ReadSource for DirectTcpStream {
 impl WriteSource for DirectTcpStream {
     fn write_source(&self) -> Source {
         self.direct.as_source()
-    }
-
-    fn need_shutdown(&self) -> bool {
-        true
     }
 }
 

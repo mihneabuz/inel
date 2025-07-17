@@ -213,10 +213,6 @@ macro_rules! impl_bufreader {
             fn write_source(&self) -> inel_reactor::source::Source {
                 self.inner().write_source()
             }
-
-            fn need_shutdown(&self) -> bool {
-                self.inner().need_shutdown()
-            }
         }
 
         impl<S> futures::AsyncRead for $bufreader<S>

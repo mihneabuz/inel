@@ -76,10 +76,6 @@ where
     fn write_source(&self) -> Source {
         self.inner.write_source()
     }
-
-    fn need_shutdown(&self) -> bool {
-        self.inner.need_shutdown()
-    }
 }
 
 impl<T> Deref for ReadHandle<T> {
