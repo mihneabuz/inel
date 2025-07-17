@@ -1,4 +1,5 @@
 use std::{
+    mem::ManuallyDrop,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -32,7 +33,7 @@ impl SubmissionState {
 pin_project! {
     /// State machine that drives an [Op] to completion.
     pub struct Submission<T: Op, R: Reactor<Handle = Ring>> {
-        op: Option<T>,
+        op: ManuallyDrop<T>,
         state: SubmissionState,
         reactor: R,
     }
@@ -55,15 +56,16 @@ where
 {
     pub fn new(reactor: R, op: T) -> Self {
         Self {
-            op: Some(op),
+            op: ManuallyDrop::new(op),
             state: SubmissionState::Initial,
             reactor,
         }
     }
 
-    pub fn cancel(&mut self) {
+    fn cancel(&mut self) {
         if let SubmissionState::Submitted(key) = self.state {
-            let cancel = self.op.take().map(|op| op.cancel()).unwrap_or_default();
+            let op = unsafe { ManuallyDrop::take(&mut self.op) };
+            let cancel = op.cancel();
             let entry = T::entry_cancel(key.as_u64());
             unsafe { self.reactor.cancel(key, entry, cancel) };
         }
@@ -80,7 +82,7 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (res, next_state) = match self.state.take() {
             SubmissionState::Initial => {
-                let entry = self.op.as_mut().unwrap().entry();
+                let entry = self.op.entry();
                 let waker = cx.waker().clone();
                 let key = unsafe { self.reactor.submit(entry, waker) };
 
@@ -90,7 +92,7 @@ where
             SubmissionState::Submitted(key) => match self.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(result) => {
-                    let op = self.op.take().unwrap();
+                    let op = unsafe { ManuallyDrop::take(&mut self.op) };
                     let next = if result.has_more() {
                         SubmissionState::Submitted(key)
                     } else {
@@ -131,7 +133,7 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let (res, next_state) = match self.state.take() {
             SubmissionState::Initial => {
-                let entry = self.op.as_mut().unwrap().entry();
+                let entry = self.op.entry();
                 let waker = cx.waker().clone();
                 let key = unsafe { self.reactor.submit(entry, waker) };
 
@@ -141,14 +143,13 @@ where
             SubmissionState::Submitted(key) => match self.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(result) => {
-                    let op = self.op.as_ref();
                     let next = if result.has_more() {
                         SubmissionState::Submitted(key)
                     } else {
                         SubmissionState::Completed
                     };
 
-                    (Poll::Ready(op.map(|op| op.next(result))), next)
+                    (Poll::Ready(Some(self.op.next(result))), next)
                 }
             },
 
