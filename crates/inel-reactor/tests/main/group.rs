@@ -1,4 +1,4 @@
-use std::{io::Write, os::fd::AsRawFd, pin::pin};
+use std::{io::Write, os::fd::AsRawFd, pin::pin, rc::Rc};
 
 use futures::StreamExt;
 use inel_interface::Reactor;
@@ -15,8 +15,8 @@ use crate::{
 
 #[test]
 fn provide() {
-    let (reactor, notifier) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
+    let (mut reactor, notifier) = runtime();
+    let group = Rc::new(ReadBufferGroup::register(&mut reactor).unwrap());
 
     {
         let p1 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
@@ -36,22 +36,27 @@ fn provide() {
         }
     }
 
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
+    assert_eq!(group.present(), 3);
+
+    let group = Rc::into_inner(group).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
     assert!(reactor.is_done());
 }
 
 #[test]
 fn release_empty() {
-    let (reactor, _) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
+    let (mut reactor, _) = runtime();
+    let group = ReadBufferGroup::register(&mut reactor).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
     assert!(reactor.is_done());
 }
 
 #[test]
 fn provide_detach() {
     let (mut reactor, notifier) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
+    let group = Rc::new(ReadBufferGroup::register(&mut reactor).unwrap());
 
     op::ProvideBuffer::new(&group, Box::new([0; 128])).run_detached(&mut reactor);
     op::ProvideBuffer::new(&group, Box::new([0; 256])).run_detached(&mut reactor);
@@ -60,14 +65,18 @@ fn provide_detach() {
     reactor.wait();
     assert!(notifier.try_recv().is_none());
 
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
+    assert_eq!(group.present(), 3);
+
+    let group = Rc::into_inner(group).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
     assert!(reactor.is_done());
 }
 
 #[test]
 fn read() {
-    let (reactor, _) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
+    let (mut reactor, _) = runtime();
+    let group = Rc::new(ReadBufferGroup::register(&mut reactor).unwrap());
 
     let p1 = op::ProvideBuffer::new(&group, Box::new([0; 64])).run_on(reactor.clone());
     let p2 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
@@ -107,40 +116,16 @@ fn read() {
     let (_buf1, read1) = reactor.block_on(read1);
     assert_eq!(read1.unwrap(), 64);
 
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
-    assert!(reactor.is_done());
-}
-
-#[test]
-fn cancel() {
-    let (reactor, notifier) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
-
-    {
-        let mut p1 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
-        let mut p2 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
-        let mut p3 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
-
-        let mut futures = [pin!(&mut p1), pin!(&mut p2), pin!(&mut p3)];
-        for fut in &mut futures {
-            assert!(poll!(fut, notifier).is_pending());
-        }
-
-        std::mem::drop(p1);
-        std::mem::drop(p2);
-        std::mem::drop(p3);
-
-        reactor.wait();
-    }
-
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
+    let group = Rc::into_inner(group).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
     assert!(reactor.is_done());
 }
 
 #[test]
 fn read_multi() {
     let (mut reactor, _) = runtime();
-    let group = ReadBufferGroup::new(reactor.clone()).unwrap();
+    let group = Rc::new(ReadBufferGroup::register(&mut reactor).unwrap());
 
     let (pipe_reader, mut pipe_writer) = std::io::pipe().unwrap();
     let fd = pipe_reader.as_raw_fd();
@@ -176,6 +161,96 @@ fn read_multi() {
         op::ProvideBuffer::new(&group, buf2).run_detached(&mut reactor);
     }
 
-    reactor.block_on(op::ReleaseGroup::new(group).run_on(reactor.clone()));
+    let group = Rc::into_inner(group).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
+    assert!(reactor.is_done());
+}
+
+#[test]
+fn cancel() {
+    let (mut reactor, notifier) = runtime();
+    let group = Rc::new(ReadBufferGroup::register(&mut reactor).unwrap());
+
+    {
+        let mut p1 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
+        let mut p2 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
+        let mut p3 = op::ProvideBuffer::new(&group, Box::new([0; 128])).run_on(reactor.clone());
+
+        let mut futures = [pin!(&mut p1), pin!(&mut p2), pin!(&mut p3)];
+        for fut in &mut futures {
+            assert!(poll!(fut, notifier).is_pending());
+        }
+
+        reactor.wait();
+
+        std::mem::drop(p1);
+        std::mem::drop(p2);
+        std::mem::drop(p3);
+    }
+
+    assert_eq!(group.present(), 3);
+
+    let file = TempFile::with_content(MESSAGE);
+
+    {
+        let mut read1 = op::ReadGroup::new(file.fd(), &group).run_on(reactor.clone());
+        let mut read2 = op::ReadGroup::new(file.fd(), &group).run_on(reactor.clone());
+        let mut read3 = op::ReadGroup::new(file.fd(), &group).run_on(reactor.clone());
+
+        let mut futures = [pin!(&mut read1), pin!(&mut read2), pin!(&mut read3)];
+        for fut in &mut futures {
+            assert!(poll!(fut, notifier).is_pending());
+        }
+
+        reactor.wait();
+
+        std::mem::drop(read1);
+        std::mem::drop(read2);
+        std::mem::drop(read3);
+    }
+
+    assert_eq!(group.present(), 0);
+
+    let mut cancelled = Vec::new();
+    while let Some(buffer) = group.get_cancelled() {
+        cancelled.push(buffer);
+    }
+
+    assert_eq!(cancelled.len(), 3);
+
+    for buffer in cancelled {
+        reactor
+            .block_on(op::ProvideBuffer::new(&group, buffer).run_on(reactor.clone()))
+            .unwrap();
+    }
+
+    assert_eq!(group.present(), 3);
+
+    let (pipe_reader, mut pipe_writer) = std::io::pipe().unwrap();
+    let fd = pipe_reader.as_raw_fd();
+    pipe_writer.write(MESSAGE.as_bytes()).unwrap();
+
+    {
+        let mut read = op::ReadGroupMulti::new(fd, &group).run_on(reactor.clone());
+        assert!(poll!(pin!(&mut read), notifier).is_pending());
+
+        reactor.wait();
+
+        std::mem::drop(read);
+    }
+
+    assert_eq!(group.present(), 0);
+
+    let mut cancelled = Vec::new();
+    while let Some(buffer) = group.get_cancelled() {
+        cancelled.push(buffer);
+    }
+
+    assert_eq!(cancelled.len(), 3);
+
+    let group = Rc::into_inner(group).unwrap();
+    let group = reactor.block_on(op::RemoveBuffers::new(group).run_on(reactor.clone()));
+    group.release(&mut reactor);
     assert!(reactor.is_done());
 }

@@ -3,40 +3,36 @@ use std::io::Result;
 use super::generic::*;
 use crate::{
     buffer::View,
-    group::{ReadBufferSet, ReadBufferSetPrivate},
+    group::{ReadBufferSet, ReadBufferSetInner},
     io::ReadSource,
     GlobalReactor,
 };
 
 use inel_reactor::{
-    op::{self, DetachOp, OpExt, ReadGroup},
+    op::{self, OpExt, ReadGroup},
     submission::Submission,
 };
 
 type GroupBuffer = Option<Box<[u8]>>;
-type GroupFuture = Submission<ReadGroup<ReadBufferSetPrivate, GlobalReactor>, GlobalReactor>;
+type GroupFuture = Submission<ReadGroup<ReadBufferSetInner>, GlobalReactor>;
 
 struct GroupAdapter(ReadBufferSet);
-
-impl GroupAdapter {
-    fn recycle(&self, buffer: Box<[u8]>) {
-        op::ProvideBuffer::new(self.0.clone_private(), buffer).run_detached(&mut GlobalReactor);
-    }
-}
 
 impl<S: ReadSource> BufReaderAdapter<S, GroupBuffer, GroupFuture> for GroupAdapter {
     fn create_future(&self, source: &mut S, buffer: GroupBuffer) -> GroupFuture {
         if let Some(buffer) = buffer {
-            self.recycle(buffer);
+            self.0.insert(buffer);
         }
 
-        op::ReadGroup::new(source.read_source(), self.0.clone_private()).run_on(GlobalReactor)
+        self.0.recycle();
+
+        op::ReadGroup::new(source.read_source(), self.0.inner()).run_on(GlobalReactor)
     }
 
     fn post_consume(&self, view: &mut View<GroupBuffer, std::ops::Range<usize>>) {
         if view.is_empty() {
             if let Some(buffer) = view.inner_mut().take() {
-                self.recycle(buffer);
+                self.0.insert(buffer);
             }
         }
     }
