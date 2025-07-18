@@ -1,15 +1,9 @@
-use std::{
-    cell::RefCell,
-    io::Result,
-    mem::ManuallyDrop,
-    ops::{Deref, RangeBounds},
-    rc::Rc,
-};
+use std::{cell::RefCell, io::Result, mem::ManuallyDrop, ops::RangeBounds, rc::Rc};
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use inel_reactor::{
     buffer::View,
-    group::ReadBufferGroup,
+    group::{AsBufferGroup, ReadBufferGroup},
     op::{self, DetachOp, OpExt},
 };
 
@@ -21,7 +15,7 @@ use crate::{
     GlobalReactor,
 };
 
-const PROVIDE_BATCH_SIZE: usize = 32;
+const PROVIDE_BATCH_SIZE: usize = 16;
 const DEFAULT_BUFFER_SIZE: usize = 4096;
 
 #[derive(Clone)]
@@ -39,40 +33,37 @@ impl ReadBufferSet {
     pub async fn with_buffers(count: u16, capacity: usize) -> Result<Self> {
         let this = Self::empty()?;
 
-        let mut provides = FuturesUnordered::new();
+        let provides = (0..count)
+            .map(|_| {
+                op::ProvideBuffer::new(this.inner(), vec![0; capacity].into_boxed_slice())
+                    .run_on(GlobalReactor)
+            })
+            .collect::<FuturesUnordered<_>>();
 
-        for _ in 0..count {
-            let fut =
-                op::ProvideBuffer::new(this.clone_private(), vec![0; capacity].into_boxed_slice())
-                    .run_on(GlobalReactor);
-
-            provides.push(fut);
-
-            if provides.len() >= PROVIDE_BATCH_SIZE {
-                while let Some(provide) = provides.next().await {
-                    debug_assert!(provide.is_ok());
-                }
-            }
-        }
-
-        while let Some(provide) = provides.next().await {
-            debug_assert!(provide.is_ok());
-        }
-
-        std::mem::drop(provides);
+        provides
+            .for_each_concurrent(PROVIDE_BATCH_SIZE, async |_| {})
+            .await;
 
         Ok(this)
     }
 
     pub fn insert(&self, buffer: Box<[u8]>) {
-        op::ProvideBuffer::new(self.clone_private(), buffer).run_detached(&mut GlobalReactor);
+        op::ProvideBuffer::new(self.inner(), buffer).run_detached(&mut GlobalReactor);
+    }
+
+    pub fn recycle(&self) {
+        while let Some(buffer) = self.inner.group.get_cancelled() {
+            self.insert(buffer);
+        }
     }
 
     pub async fn read<S>(&self, source: &mut S) -> Result<(Box<[u8]>, usize)>
     where
         S: ReadSource,
     {
-        let (buf, res) = op::ReadGroup::new(source.read_source(), self.clone_private())
+        self.recycle();
+
+        let (buf, res) = op::ReadGroup::new(source.read_source(), self.inner())
             .run_on(GlobalReactor)
             .await;
 
@@ -92,37 +83,29 @@ impl ReadBufferSet {
         GroupBufReader::new(source, self.clone())
     }
 
-    pub(crate) fn clone_private(&self) -> ReadBufferSetPrivate {
-        ReadBufferSetPrivate {
-            inner: self.inner.clone(),
-        }
+    pub(crate) fn inner(&self) -> &Rc<ReadBufferSetInner> {
+        &self.inner
     }
 }
 
-pub(crate) struct ReadBufferSetPrivate {
-    inner: Rc<ReadBufferSetInner>,
-}
-
-impl Deref for ReadBufferSetPrivate {
-    type Target = ReadBufferGroup<GlobalReactor>;
-
-    fn deref(&self) -> &Self::Target {
-        self.inner.group()
+impl AsBufferGroup for ReadBufferSetInner {
+    fn as_group(&self) -> &ReadBufferGroup {
+        self.group()
     }
 }
 
-struct ReadBufferSetInner {
-    group: ManuallyDrop<ReadBufferGroup<GlobalReactor>>,
+pub(crate) struct ReadBufferSetInner {
+    group: ManuallyDrop<ReadBufferGroup>,
 }
 
 impl ReadBufferSetInner {
     fn new() -> Result<Self> {
-        ReadBufferGroup::new(GlobalReactor).map(|group| Self {
+        ReadBufferGroup::register(&mut GlobalReactor).map(|group| Self {
             group: ManuallyDrop::new(group),
         })
     }
 
-    fn group(&self) -> &ReadBufferGroup<GlobalReactor> {
+    fn group(&self) -> &ReadBufferGroup {
         &self.group
     }
 }
@@ -130,7 +113,12 @@ impl ReadBufferSetInner {
 impl Drop for ReadBufferSetInner {
     fn drop(&mut self) {
         let group = unsafe { ManuallyDrop::take(&mut self.group) };
-        crate::spawn(op::ReleaseGroup::new(group).run_on(GlobalReactor));
+        crate::spawn(async move {
+            op::RemoveBuffers::new(group)
+                .run_on(GlobalReactor)
+                .await
+                .release(&mut GlobalReactor);
+        });
     }
 }
 

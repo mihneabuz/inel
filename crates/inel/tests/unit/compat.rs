@@ -33,21 +33,40 @@ mod hyper {
 
     #[test]
     fn simple() {
-        run_server(|stream| inel::compat::stream::BufStream::new(stream));
+        run_server_http1(|stream| inel::compat::stream::BufStream::new(stream));
+        run_server_http2(|stream| inel::compat::stream::BufStream::new(stream));
+        assert!(inel::is_done());
     }
 
     #[test]
     fn fixed() {
-        run_server(|stream| inel::compat::stream::FixedBufStream::new(stream).unwrap());
+        run_server_http1(|stream| inel::compat::stream::FixedBufStream::new(stream).unwrap());
+        run_server_http2(|stream| inel::compat::stream::FixedBufStream::new(stream).unwrap());
+        assert!(inel::is_done());
     }
 
     #[test]
     fn shared() {
-        let group = inel::block_on(inel::group::BufferShareGroup::new()).unwrap();
-        run_server(move |stream| inel::compat::stream::ShareBufStream::new(stream, &group));
+        let group = inel::block_on(
+            inel::group::BufferShareGroup::options()
+                .buffer_capacity(512)
+                .initial_read_buffers(4)
+                .initial_write_buffers(0)
+                .build(),
+        )
+        .unwrap();
+
+        let group_clone = group.clone();
+
+        run_server_http1(move |stream| inel::compat::stream::ShareBufStream::new(stream, &group));
+        run_server_http2(move |stream| {
+            inel::compat::stream::ShareBufStream::new(stream, &group_clone)
+        });
+
+        assert!(inel::is_done());
     }
 
-    fn run_server<F, S>(wrap: F)
+    fn run_server_http1<F, S>(wrap: F)
     where
         F: Fn(inel::net::TcpStream) -> S + 'static,
         S: AsyncRead + AsyncWrite + Unpin + 'static,
@@ -88,14 +107,13 @@ mod hyper {
                         .unwrap();
 
                     let req = Request::builder()
-                        .uri("127.0.0.1")
-                        .body("hello world!".repeat(10000))
+                        .uri("/")
+                        .method("POST")
+                        .body("hello world!".repeat(1000))
                         .unwrap();
 
-                    let res = client.send_request(req).await;
-                    assert!(res.is_ok());
-
-                    let body = res.unwrap().into_body();
+                    let res = client.send_request(req).await.unwrap();
+                    let body = res.into_body();
                     let mut stream = FrameStream::new(body);
                     while let Some(frame) = stream.next().await {
                         assert!(frame.is_ok());
@@ -103,8 +121,63 @@ mod hyper {
                 });
             }
         });
+    }
 
-        assert!(inel::is_done());
+    fn run_server_http2<F, S>(wrap: F)
+    where
+        F: Fn(inel::net::TcpStream) -> S + 'static,
+        S: AsyncRead + AsyncWrite + Unpin + 'static,
+    {
+        setup_tracing();
+
+        let wrap = Rc::new(wrap);
+        let connections = 10;
+
+        inel::block_on(async move {
+            let listener = inel::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+
+            let port = listener.local_addr().unwrap().port();
+
+            let wrap1 = Rc::clone(&wrap);
+            inel::spawn(async move {
+                let mut incoming = listener.incoming();
+                for _ in 0..connections {
+                    let stream = wrap1(incoming.next().await.unwrap().unwrap());
+                    let res = inel::compat::hyper::serve_http2(stream, service_fn(echo)).await;
+                    assert!(res.is_ok());
+                }
+            });
+
+            for _ in 0..connections {
+                let wrap2 = Rc::clone(&wrap);
+                inel::spawn(async move {
+                    let stream = wrap2(
+                        inel::net::TcpStream::connect(("127.0.0.1", port))
+                            .await
+                            .unwrap(),
+                    );
+
+                    let mut client = inel::compat::hyper::HyperClient::handshake_http2(stream)
+                        .await
+                        .unwrap();
+
+                    let req = Request::builder()
+                        .uri("/")
+                        .method("POST")
+                        .body("hello world!".repeat(1000))
+                        .unwrap();
+
+                    let res = client.send_request(req).await.unwrap();
+                    let body = res.into_body();
+                    let mut stream = FrameStream::new(body);
+                    while let Some(frame) = stream.next().await {
+                        assert!(frame.is_ok());
+                    }
+                });
+            }
+        });
     }
 
     async fn echo(req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
