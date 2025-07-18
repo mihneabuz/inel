@@ -368,12 +368,32 @@ mod axum {
         body::{Body, Bytes, Frame, Incoming},
         Error, Request,
     };
-    use inel::compat::stream::BufStream;
+    use inel::compat::{axum::Serve, stream::BufStream};
 
     use crate::compat::find_open_port;
 
     #[test]
-    fn simple() {
+    fn default() {
+        run_server(Serve::default());
+    }
+
+    #[test]
+    fn direct() {
+        run_server(Serve::builder().with_direct_descriptors());
+    }
+
+    #[test]
+    fn fixed() {
+        run_server(Serve::builder().with_fixed_buffers());
+    }
+
+    #[test]
+    fn shared() {
+        let group = inel::block_on(inel::group::BufferShareGroup::new()).unwrap();
+        run_server(Serve::builder().with_shared_buffers(group));
+    }
+
+    pub fn run_server(options: Serve) {
         const MESSAGE: &str = "Hello World!";
 
         let app = Router::new().route("/hello", get(|| async { MESSAGE }));
@@ -383,7 +403,7 @@ mod axum {
 
         inel::spawn(async move {
             futures::select! {
-                res = inel::compat::axum::serve(("127.0.0.1", port), app).fuse() => res.unwrap(),
+                res = options.serve(("127.0.0.1", port), app).fuse() => res.unwrap(),
                 res = recv => res.unwrap()
             };
         })
