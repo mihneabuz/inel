@@ -248,7 +248,9 @@ impl Completion {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::VecDeque, iter::repeat, task::Waker};
+    use std::{cell::RefCell, collections::VecDeque, iter::repeat, rc::Rc, task::Waker};
+
+    use crate::cancellation::consuming;
 
     use super::*;
 
@@ -256,8 +258,27 @@ mod test {
         Waker::noop().clone()
     }
 
-    fn cancel() -> Cancellation {
-        Cancellation::empty()
+    struct Lost {
+        inner: Rc<RefCell<VecDeque<RingResult>>>,
+    }
+
+    impl Lost {
+        fn pop(&self) -> Option<RingResult> {
+            self.inner.borrow_mut().pop_front()
+        }
+    }
+
+    fn cancel() -> (Cancellation, Lost) {
+        let inner = Rc::new(RefCell::new(VecDeque::new()));
+        let cancel = consuming!(
+            RefCell<VecDeque<RingResult>>,
+            inner.clone(),
+            |inner, result| {
+                inner.borrow_mut().push_back(result);
+            }
+        );
+        let lost = Lost { inner };
+        (cancel, lost)
     }
 
     fn result() -> RingResult {
@@ -346,9 +367,14 @@ mod test {
                     }
 
                     C::Cancel => {
-                        assert_eq!(set.cancel(key, cancel()), !completed);
+                        let (cancel, lost) = cancel();
+                        assert_eq!(set.cancel(key, cancel), !completed);
 
-                        queue.clear();
+                        while let Some(lost) = lost.pop() {
+                            assert_eq!(queue.pop_front(), Some(lost.ret()));
+                        }
+
+                        assert!(queue.is_empty());
                     }
 
                     C::Result => {
