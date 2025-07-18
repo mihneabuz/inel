@@ -1,54 +1,88 @@
 use std::{cell::RefCell, io::Result};
 
-use inel_interface::Reactor;
-
 use slab::Slab;
+
+use inel_interface::Reactor;
 
 use crate::{
     ring::{BufferGroupId, Ring},
     RingReactor,
 };
 
-pub struct ReadBufferGroup<R> {
+pub trait AsBufferGroup {
+    fn as_group(&self) -> &ReadBufferGroup;
+}
+
+impl AsBufferGroup for ReadBufferGroup {
+    fn as_group(&self) -> &ReadBufferGroup {
+        self
+    }
+}
+
+pub struct ReadBufferGroup {
     id: BufferGroupId,
-    buffers: RefCell<Slab<Box<[u8]>>>,
-    reactor: R,
+    storage: RefCell<BufferStorage>,
 }
 
-impl<R> ReadBufferGroup<R>
-where
-    R: Reactor<Handle = Ring>,
-{
-    pub fn new(mut reactor: R) -> Result<Self> {
+struct BufferStorage {
+    buffers: Slab<Box<[u8]>>,
+    cancelled: Vec<Box<[u8]>>,
+}
+
+impl ReadBufferGroup {
+    pub fn register<R>(reactor: &mut R) -> Result<Self>
+    where
+        R: Reactor<Handle = Ring>,
+    {
         let id = reactor.get_buffer_group()?;
-        let buffers = RefCell::new(Slab::with_capacity(128));
+        let storage = RefCell::new(BufferStorage {
+            buffers: Slab::with_capacity(128),
+            cancelled: Vec::with_capacity(16),
+        });
 
-        Ok(Self {
-            id,
-            buffers,
-            reactor,
-        })
+        Ok(Self { id, storage })
     }
 
-    pub(crate) unsafe fn release_id(mut self) {
-        self.reactor.release_buffer_group(self.id);
+    pub fn release<R>(self, reactor: &mut R)
+    where
+        R: Reactor<Handle = Ring>,
+    {
+        if self.present() > 0 {
+            panic!("");
+        }
+
+        reactor.release_buffer_group(self.id);
     }
 }
 
-impl<R> ReadBufferGroup<R> {
+impl ReadBufferGroup {
     pub(crate) fn id(&self) -> &BufferGroupId {
         &self.id
     }
 
     pub(crate) fn take(&self, id: u16) -> Box<[u8]> {
-        self.buffers.borrow_mut().remove(id as usize)
+        self.storage.borrow_mut().buffers.remove(id as usize)
     }
 
     pub(crate) fn put(&self, buffer: Box<[u8]>) -> u16 {
-        self.buffers.borrow_mut().insert(buffer) as u16
+        self.storage.borrow_mut().buffers.insert(buffer) as u16
     }
 
-    pub(crate) fn present(&self) -> usize {
-        self.buffers.borrow().len()
+    pub(crate) fn clear(&self) {
+        self.storage.borrow_mut().buffers.clear();
+    }
+
+    pub fn present(&self) -> usize {
+        self.storage.borrow().buffers.len()
+    }
+
+    pub(crate) fn mark_cancelled(&self, id: u16) {
+        let mut guard = self.storage.borrow_mut();
+        let buffer = guard.buffers.remove(id as usize);
+        guard.cancelled.push(buffer)
+    }
+
+    pub fn get_cancelled(&self) -> Option<Box<[u8]>> {
+        self.storage.borrow_mut().cancelled.pop()
     }
 }
