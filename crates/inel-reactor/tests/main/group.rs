@@ -208,6 +208,8 @@ fn cancel() {
         std::mem::drop(read1);
         std::mem::drop(read2);
         std::mem::drop(read3);
+
+        reactor.wait();
     }
 
     assert_eq!(group.present(), 0);
