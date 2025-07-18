@@ -150,25 +150,37 @@ impl Completion {
     }
 
     fn try_cancel(&mut self, queues: &mut ResultQueues, cancel: Cancellation) -> bool {
-        let already_completed = match self {
-            Completion::Vacant { .. } => false,
-            Completion::Single { .. } => true,
+        match self {
+            Completion::Vacant { .. } => {
+                *self = Completion::Cancelled { cancel };
+                true
+            }
+            Completion::Single { result } => {
+                cancel.consume(*result);
+                cancel.drop_raw();
+
+                *self = Completion::Finished;
+                false
+            }
             Completion::Multiple { handle, more, .. } => {
+                for result in queues.get(*handle) {
+                    cancel.consume(*result);
+                }
+
                 queues.release(*handle);
-                !*more
+
+                if *more {
+                    *self = Completion::Cancelled { cancel };
+                    true
+                } else {
+                    cancel.drop_raw();
+                    *self = Completion::Finished;
+                    false
+                }
             }
             _ => {
                 unreachable!("Completion already cancelled");
             }
-        };
-
-        if already_completed {
-            *self = Completion::Finished;
-            cancel.drop_raw();
-            false
-        } else {
-            *self = Completion::Cancelled { cancel };
-            true
         }
     }
 
@@ -202,6 +214,7 @@ impl Completion {
             }
 
             Completion::Cancelled { cancel } => {
+                cancel.consume(result);
                 cancel.drop_raw();
             }
 

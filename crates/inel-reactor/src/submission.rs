@@ -63,11 +63,17 @@ where
     }
 
     fn cancel(&mut self) {
-        if let SubmissionState::Submitted(key) = self.state {
-            let op = unsafe { ManuallyDrop::take(&mut self.op) };
-            let cancel = op.cancel();
-            let entry = T::entry_cancel(key.as_u64());
-            unsafe { self.reactor.cancel(key, entry, cancel) };
+        match self.state {
+            SubmissionState::Initial => unsafe {
+                ManuallyDrop::drop(&mut self.op);
+            },
+            SubmissionState::Submitted(key) => {
+                let op = unsafe { ManuallyDrop::take(&mut self.op) };
+                let cancel = op.cancel();
+                let entry = T::entry_cancel(key.as_u64());
+                unsafe { self.reactor.cancel(key, entry, cancel) };
+            }
+            SubmissionState::Completed => {}
         }
     }
 }
@@ -143,13 +149,17 @@ where
             SubmissionState::Submitted(key) => match self.reactor.check_result(key) {
                 None => (Poll::Pending, SubmissionState::Submitted(key)),
                 Some(result) => {
-                    let next = if result.has_more() {
+                    let has_more = result.has_more();
+                    let value = self.op.next(result);
+
+                    let next = if has_more {
                         SubmissionState::Submitted(key)
                     } else {
+                        unsafe { ManuallyDrop::drop(&mut self.op) };
                         SubmissionState::Completed
                     };
 
-                    (Poll::Ready(Some(self.op.next(result))), next)
+                    (Poll::Ready(Some(value)), next)
                 }
             },
 
