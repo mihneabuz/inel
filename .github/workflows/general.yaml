@@ -3,6 +3,18 @@ name: Rust
 on: [push, pull_request]
 
 jobs:
+  env:
+    name: Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check OS
+        run: cat /etc/os-release
+
+      - name: Check kernel
+        run: uname -srv
+
+      - name: Check libc
+        run: ldd --version
 
   fmt:
     name: Format
