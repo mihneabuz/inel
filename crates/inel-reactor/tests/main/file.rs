@@ -261,7 +261,6 @@ fn close_detach() {
     op::Close::new(&1338).run_detached(&mut reactor);
 
     assert_eq!(reactor.active(), 0);
-    assert!(!reactor.is_done());
 
     reactor.wait();
     assert_eq!(notifier.try_recv(), None);

@@ -196,7 +196,7 @@ impl Ring {
     ///  - all fixed buffers have been unregistered
     ///  - all buffer groups have been unregistered
     pub fn is_done(&self) -> bool {
-        self.active + self.detached == 0
+        self.active == 0
             && self.completions.is_empty()
             && self.direct_files.is_full()
             && self.fixed_buffers.is_full()
@@ -282,15 +282,11 @@ impl Ring {
             return;
         }
 
-        let mut want = if self.active == self.canceled {
+        let want = if self.active == self.canceled {
             2 * self.canceled
         } else {
             1 + 2 * self.canceled
         };
-
-        if want == 0 && self.detached > 0 {
-            want = self.detached;
-        }
 
         debug!(
             active =? self.active,
