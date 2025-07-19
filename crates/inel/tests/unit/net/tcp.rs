@@ -650,7 +650,5 @@ mod direct {
 
             let _ = server.join().await;
         });
-
-        assert!(inel::is_done());
     }
 }

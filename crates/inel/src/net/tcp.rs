@@ -10,7 +10,7 @@ use std::{
 
 use futures::{Stream, StreamExt};
 use inel_reactor::{
-    op::{self, AcceptMulti, AcceptMultiAuto, OpExt},
+    op::{self, AcceptMulti, AcceptMultiAuto, DetachOp, OpExt},
     source::{AsSource, Source},
     submission::Submission,
     util,
@@ -339,5 +339,13 @@ impl DirectTcpStream {
         op::Shutdown::new(&self.direct, how)
             .run_on(GlobalReactor)
             .await
+    }
+}
+
+impl Drop for DirectTcpStream {
+    fn drop(&mut self) {
+        op::Shutdown::new(&self.direct, Shutdown::Both)
+            .chain()
+            .run_detached(&mut GlobalReactor);
     }
 }
