@@ -33,11 +33,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Linting
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --no-default-features && cargo clippy --workspace --all-features -- --deny warnings
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -54,6 +55,7 @@ jobs:
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -70,6 +72,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
