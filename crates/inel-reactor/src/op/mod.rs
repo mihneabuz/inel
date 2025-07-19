@@ -164,6 +164,8 @@ where
     }
 }
 
+impl<O> DetachOp for Chain<O> where O: DetachOp {}
+
 pub(crate) mod util {
     use super::*;
 

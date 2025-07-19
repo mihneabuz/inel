@@ -10,7 +10,7 @@ use io_uring::{opcode, squeue::Entry, types::DestinationSlot};
 
 use crate::{
     cancellation::Cancellation,
-    op::{util, MultiOp, Op},
+    op::{util, DetachOp, MultiOp, Op},
     ring::{DirectSlot, RingResult},
     source::{AsDirectSlot, AsSource, DirectAutoFd, Source},
     util::{from_raw_addr, into_raw_addr, SocketAddrCRepr},
@@ -374,6 +374,8 @@ unsafe impl Op for Shutdown {
         None
     }
 }
+
+impl DetachOp for Shutdown {}
 
 pub struct AcceptMulti {
     src: Source,
