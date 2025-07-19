@@ -343,6 +343,8 @@ impl DirectTcpStream {
 }
 
 impl Drop for DirectTcpStream {
+    // NOTE: this is needed on kernel 6.11 to properly close the connection
+    //       on kernel 6.15, a close is sufficient
     fn drop(&mut self) {
         op::Shutdown::new(&self.direct, Shutdown::Both)
             .chain()
