@@ -30,6 +30,7 @@ mod hyper {
         Error, Request, Response, StatusCode,
     };
     use futures::{AsyncRead, AsyncWrite, Stream, StreamExt};
+    use tracing::info;
 
     #[test]
     fn simple() {
@@ -86,14 +87,16 @@ mod hyper {
             let wrap1 = Rc::clone(&wrap);
             inel::spawn(async move {
                 let mut incoming = listener.incoming();
-                for _ in 0..connections {
+                for i in 0..connections {
                     let stream = wrap1(incoming.next().await.unwrap().unwrap());
+                    info!(conn = i, "Start serving");
                     let res = inel::compat::hyper::serve_http1(stream, service_fn(echo)).await;
                     assert!(res.is_ok());
+                    info!(conn = i, "Done serving");
                 }
             });
 
-            for _ in 0..connections {
+            for i in 0..connections {
                 let wrap2 = Rc::clone(&wrap);
                 inel::spawn(async move {
                     let stream = wrap2(
@@ -102,9 +105,13 @@ mod hyper {
                             .unwrap(),
                     );
 
+                    info!(conn = i, "Start handshake");
+
                     let mut client = inel::compat::hyper::HyperClient::handshake_http1(stream)
                         .await
                         .unwrap();
+
+                    info!(conn = i, "Done handshake");
 
                     let req = Request::builder()
                         .uri("/")
@@ -112,12 +119,16 @@ mod hyper {
                         .body("hello world!".repeat(1000))
                         .unwrap();
 
+                    info!(conn = i, "Send request");
+
                     let res = client.send_request(req).await.unwrap();
                     let body = res.into_body();
                     let mut stream = FrameStream::new(body);
                     while let Some(frame) = stream.next().await {
                         assert!(frame.is_ok());
                     }
+
+                    info!(conn = i, "Finished response");
                 });
             }
         });
@@ -143,14 +154,16 @@ mod hyper {
             let wrap1 = Rc::clone(&wrap);
             inel::spawn(async move {
                 let mut incoming = listener.incoming();
-                for _ in 0..connections {
+                for i in 0..connections {
                     let stream = wrap1(incoming.next().await.unwrap().unwrap());
+                    info!(conn = i, "Start serving");
                     let res = inel::compat::hyper::serve_http2(stream, service_fn(echo)).await;
+                    info!(conn = i, "Done serving");
                     assert!(res.is_ok());
                 }
             });
 
-            for _ in 0..connections {
+            for i in 0..connections {
                 let wrap2 = Rc::clone(&wrap);
                 inel::spawn(async move {
                     let stream = wrap2(
@@ -159,9 +172,13 @@ mod hyper {
                             .unwrap(),
                     );
 
+                    info!(conn = i, "Start handshake");
+
                     let mut client = inel::compat::hyper::HyperClient::handshake_http2(stream)
                         .await
                         .unwrap();
+
+                    info!(conn = i, "Done handshake");
 
                     let req = Request::builder()
                         .uri("/")
@@ -169,12 +186,16 @@ mod hyper {
                         .body("hello world!".repeat(1000))
                         .unwrap();
 
+                    info!(conn = i, "Send request");
+
                     let res = client.send_request(req).await.unwrap();
                     let body = res.into_body();
                     let mut stream = FrameStream::new(body);
                     while let Some(frame) = stream.next().await {
                         assert!(frame.is_ok());
                     }
+
+                    info!(conn = i, "Finished response");
                 });
             }
         });
@@ -215,6 +236,7 @@ mod rustls {
     use ::rustls::{pki_types::ServerName, ClientConfig, RootCertStore, ServerConfig};
     use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
     use rustls_pemfile::{certs, private_key};
+    use tracing::info;
 
     use inel::{
         compat::stream::{BufStream, FixedBufStream},
@@ -304,7 +326,7 @@ mod rustls {
         let acceptor = inel::compat::rustls::TlsAcceptor::from(server);
         let connector = inel::compat::rustls::TlsConnector::from(client);
 
-        for _ in 0..connections {
+        for i in 0..connections {
             let acceptor = acceptor.clone();
             let connector = connector.clone();
             let domain = domain.clone();
@@ -312,7 +334,9 @@ mod rustls {
             let (server, client) = f();
 
             inel::spawn(async move {
+                info!(server = i, "Start accepting");
                 let mut server = acceptor.accept(server).await.unwrap();
+                info!(server = i, "Done accepting");
 
                 let mut buffer = vec![0; CERT.len()];
                 server.read_exact(&mut buffer).await.unwrap();
@@ -324,10 +348,14 @@ mod rustls {
                 let mut buffer = vec![0; KEY.len()];
                 server.read_exact(&mut buffer).await.unwrap();
                 assert_eq!(&buffer, KEY);
+
+                info!(server = i, "Finished");
             });
 
             inel::spawn(async move {
+                info!(client = i, "Start conneting");
                 let mut client = connector.connect(domain, client).await.unwrap();
+                info!(client = i, "Done conneting");
 
                 client.write_all(CERT).await.unwrap();
                 client.flush().await.unwrap();
@@ -338,6 +366,8 @@ mod rustls {
 
                 client.write_all(KEY).await.unwrap();
                 client.flush().await.unwrap();
+
+                info!(client = i, "Finished");
             });
         }
 
@@ -357,20 +387,21 @@ mod rustls {
 
 #[cfg(feature = "axum")]
 mod axum {
+    use super::*;
+
     use std::{
         pin::Pin,
         task::{Context, Poll},
     };
 
-    use axum::{routing::get, Router};
-    use futures::{FutureExt, Stream, StreamExt};
-    use hyper::{
+    use ::axum::{routing::get, Router};
+    use ::hyper::{
         body::{Body, Bytes, Frame, Incoming},
         Error, Request,
     };
+    use futures::{FutureExt, Stream, StreamExt};
     use inel::compat::{axum::Serve, stream::BufStream};
-
-    use crate::compat::find_open_port;
+    use tracing::info;
 
     #[test]
     fn default() {
@@ -396,26 +427,34 @@ mod axum {
     pub fn run_server(options: Serve) {
         const MESSAGE: &str = "Hello World!";
 
+        setup_tracing();
+
         let app = Router::new().route("/hello", get(|| async { MESSAGE }));
         let port = inel::block_on(find_open_port());
 
         let (send, mut recv) = futures::channel::oneshot::channel();
 
         inel::spawn(async move {
+            info!("Starting server");
             futures::select! {
                 res = options.serve(("127.0.0.1", port), app).fuse() => res.unwrap(),
                 res = recv => res.unwrap()
             };
+            info!("Stopped server");
         })
         .detach();
 
         inel::spawn(async move {
             inel::time::sleep(std::time::Duration::from_millis(10)).await;
 
-            for _ in 0..10 {
+            for i in 0..10 {
+                info!(client = i, "Starting");
+
                 let stream = inel::net::TcpStream::connect_direct(("127.0.0.1", port))
                     .await
                     .unwrap();
+
+                info!(client = i, "Connected");
 
                 let stream = BufStream::new(stream);
 
@@ -423,18 +462,26 @@ mod axum {
                     .await
                     .unwrap();
 
+                info!(client = i, "Handshake done");
+
                 let req = Request::builder()
                     .uri("/hello")
-                    .body(axum::body::Body::empty())
+                    .body(::axum::body::Body::empty())
                     .unwrap();
 
                 let res = client.send_request(req).await.unwrap();
+
+                info!(client = i, "Request sent");
 
                 let mut stream = FrameStream::new(res.into_body());
                 let frame = stream.next().await.unwrap();
                 let data = frame.unwrap().into_data().unwrap();
                 assert_eq!(data, MESSAGE.as_bytes());
+
+                info!(client = i, "Finished");
             }
+
+            info!("Clients done, signaling server");
 
             send.send(()).unwrap();
         });
