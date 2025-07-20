@@ -7,6 +7,7 @@ use inel_reactor::{
 };
 
 use crate::{
+    fs::{File, Metadata},
     io::{BufReader, BufWriter},
     source::OwnedDirect,
     GlobalReactor,
@@ -88,7 +89,7 @@ pub async fn read<P>(path: P) -> Result<Vec<u8>>
 where
     P: AsRef<Path>,
 {
-    let file = crate::fs::File::open(path).await?;
+    let file = File::open(path).await?;
     let mut reader = BufReader::new(file);
     let mut data = Vec::new();
     reader.read_to_end(&mut data).await?;
@@ -99,7 +100,11 @@ pub async fn read_to_string<P>(path: P) -> Result<String>
 where
     P: AsRef<Path>,
 {
-    let file = crate::fs::File::open(path).await?;
+    let file = File::options()
+        .direct(true)
+        .readable(true)
+        .open(path)
+        .await?;
     let mut reader = BufReader::new(file);
     let mut data = String::new();
     reader.read_to_string(&mut data).await?;
@@ -111,9 +116,22 @@ where
     P: AsRef<Path>,
     C: AsRef<[u8]>,
 {
-    let file = crate::fs::File::create(path).await?;
+    let file = File::options()
+        .direct(true)
+        .writable(true)
+        .create(true)
+        .open(path)
+        .await?;
     let mut writer = BufWriter::new(file);
     writer.write_all(contents.as_ref()).await?;
     writer.flush().await?;
     Ok(())
+}
+
+pub async fn metadata<P>(path: P) -> Result<Metadata>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(path).await?;
+    file.metadata().await
 }

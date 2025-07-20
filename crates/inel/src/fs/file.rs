@@ -1,8 +1,9 @@
 use std::{
     fmt::{self, Debug, Formatter},
-    io::Result,
+    io::{Error, Result},
     os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use inel_reactor::{
@@ -130,7 +131,6 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    // TODO: add more stats
     pub fn is_dir(&self) -> bool {
         (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFDIR
     }
@@ -143,12 +143,47 @@ impl Metadata {
         (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFLNK
     }
 
+    pub fn user_id(&self) -> u16 {
+        self.raw.stx_uid as u16
+    }
+
+    pub fn group_id(&self) -> u16 {
+        self.raw.stx_gid as u16
+    }
+
+    pub fn accessed(&self) -> Result<SystemTime> {
+        Self::convert_timestamp(&self.raw.stx_atime)
+    }
+
+    pub fn created(&self) -> Result<SystemTime> {
+        Self::convert_timestamp(&self.raw.stx_btime)
+    }
+
+    pub fn modified(&self) -> Result<SystemTime> {
+        Self::convert_timestamp(&self.raw.stx_mtime)
+    }
+
+    // TODO: file permissions
+
     pub fn len(&self) -> u64 {
         self.raw.stx_size
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    fn convert_timestamp(raw: &libc::statx_timestamp) -> Result<SystemTime> {
+        let (sec, nsec) = (raw.tv_sec, raw.tv_nsec);
+        if sec >= 0 {
+            UNIX_EPOCH
+                .checked_add(Duration::new(sec as u64, nsec))
+                .ok_or(Error::other("Overflow"))
+        } else {
+            UNIX_EPOCH
+                .checked_sub(Duration::new((-sec) as u64, nsec))
+                .ok_or(Error::other("Underflow"))
+        }
     }
 }
 
@@ -195,7 +230,7 @@ impl File {
 
     pub async fn metadata(&self) -> Result<Metadata> {
         let statx = op::Statx::from_fd(self.fd.as_raw())
-            .mask(libc::STATX_TYPE | libc::STATX_SIZE)
+            .mask(libc::STATX_BASIC_STATS | libc::STATX_BTIME)
             .run_on(GlobalReactor)
             .await?;
 

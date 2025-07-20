@@ -131,6 +131,11 @@ fn metadata() {
         assert_eq!(stats.is_symlink(), false);
         assert_eq!(stats.len() as usize, data.len());
         assert_eq!(stats.is_empty(), false);
+        assert!(stats.user_id() > 0);
+        assert!(stats.group_id() > 0);
+        assert!(!stats.accessed().unwrap().elapsed().unwrap().is_zero());
+        assert!(!stats.created().unwrap().elapsed().unwrap().is_zero());
+        assert!(!stats.modified().unwrap().elapsed().unwrap().is_zero());
 
         assert!(format!("{:?}", stats).len() > 0);
     });
@@ -142,6 +147,11 @@ fn metadata() {
         assert_eq!(stats.is_file(), false);
         assert_eq!(stats.is_dir(), true);
         assert_eq!(stats.is_symlink(), false);
+        assert!(stats.user_id() > 0);
+        assert!(stats.group_id() > 0);
+        assert!(!stats.accessed().unwrap().elapsed().unwrap().is_zero());
+        assert!(!stats.created().unwrap().elapsed().unwrap().is_zero());
+        assert!(!stats.modified().unwrap().elapsed().unwrap().is_zero());
     });
 
     inel::run();

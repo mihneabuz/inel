@@ -121,3 +121,29 @@ fn error() {
         assert!(res.is_err());
     });
 }
+
+#[test]
+fn metadata() {
+    setup_tracing();
+    let name = temp_file();
+    let name_clone = name.clone();
+
+    std::fs::write(&name_clone, "hello file metadata!").unwrap();
+
+    inel::block_on(async move {
+        let meta = inel::fs::metadata(name).await.unwrap();
+
+        assert_eq!(meta.is_file(), true);
+        assert_eq!(meta.is_dir(), false);
+        assert_eq!(meta.is_symlink(), false);
+
+        assert!(meta.user_id() > 0);
+        assert!(meta.group_id() > 0);
+
+        meta.accessed().unwrap();
+        meta.created().unwrap();
+        meta.modified().unwrap();
+    });
+
+    std::fs::remove_file(&name_clone).unwrap();
+}
