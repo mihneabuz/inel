@@ -7,7 +7,7 @@ use inel_reactor::{
 };
 
 use crate::{
-    fs::{File, Metadata},
+    fs::{DirBuilder, File, Metadata},
     io::{BufReader, BufWriter},
     source::OwnedDirect,
     GlobalReactor,
@@ -100,11 +100,7 @@ pub async fn read_to_string<P>(path: P) -> Result<String>
 where
     P: AsRef<Path>,
 {
-    let file = File::options()
-        .direct(true)
-        .readable(true)
-        .open(path)
-        .await?;
+    let file = File::open(path).await?;
     let mut reader = BufReader::new(file);
     let mut data = String::new();
     reader.read_to_string(&mut data).await?;
@@ -116,12 +112,7 @@ where
     P: AsRef<Path>,
     C: AsRef<[u8]>,
 {
-    let file = File::options()
-        .direct(true)
-        .writable(true)
-        .create(true)
-        .open(path)
-        .await?;
+    let file = File::create(path).await?;
     let mut writer = BufWriter::new(file);
     writer.write_all(contents.as_ref()).await?;
     writer.flush().await?;
@@ -134,4 +125,26 @@ where
 {
     let file = File::open(path).await?;
     file.metadata().await
+}
+
+pub async fn create_file<P>(path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let _ = File::create(path).await?;
+    Ok(())
+}
+
+pub async fn create_dir<P>(path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    DirBuilder::new().create(path).await
+}
+
+pub async fn create_dir_all<P>(path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    DirBuilder::new().recursive(true).create(path).await
 }

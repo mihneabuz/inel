@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Debug, Formatter},
     io::{Error, Result},
+    ops::{BitAnd, BitOr},
     os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -25,6 +26,7 @@ pub struct OpenOptions {
     create: bool,
     truncate: bool,
     direct: bool,
+    permissions: Permissions,
 }
 
 impl OpenOptions {
@@ -37,40 +39,46 @@ impl OpenOptions {
             create: false,
             truncate: false,
             direct: false,
+            permissions: Permissions::READ | Permissions::WRITE,
         }
     }
 
-    pub fn readable(&mut self, read: bool) -> &mut Self {
+    pub const fn readable(&mut self, read: bool) -> &mut Self {
         self.read = read;
         self
     }
 
-    pub fn writable(&mut self, write: bool) -> &mut Self {
+    pub const fn writable(&mut self, write: bool) -> &mut Self {
         self.write = write;
         self
     }
 
-    pub fn append(&mut self, append: bool) -> &mut Self {
+    pub const fn append(&mut self, append: bool) -> &mut Self {
         self.append = append;
         self
     }
 
-    pub fn create(&mut self, create: bool) -> &mut Self {
+    pub const fn create(&mut self, create: bool) -> &mut Self {
         self.create = create;
         self
     }
 
-    pub fn truncate(&mut self, truncate: bool) -> &mut Self {
+    pub const fn truncate(&mut self, truncate: bool) -> &mut Self {
         self.truncate = truncate;
         self
     }
 
-    pub fn direct(&mut self, direct: bool) -> &mut Self {
+    pub const fn permissions(&mut self, perms: Permissions) -> &mut Self {
+        self.permissions = perms;
+        self
+    }
+
+    pub const fn direct(&mut self, direct: bool) -> &mut Self {
         self.direct = direct;
         self
     }
 
-    fn raw_opts(&self) -> (libc::c_int, libc::mode_t) {
+    const fn raw_opts(&self) -> (libc::c_int, libc::mode_t) {
         let mut flags = 0;
 
         flags |= match (self.read, self.write) {
@@ -96,7 +104,7 @@ impl OpenOptions {
             flags |= libc::O_DIRECT;
         }
 
-        (flags, 0o666)
+        (flags, self.permissions.as_raw())
     }
 
     pub async fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
@@ -131,23 +139,39 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn is_dir(&self) -> bool {
+    pub const fn is_dir(&self) -> bool {
         (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFDIR
     }
 
-    pub fn is_file(&self) -> bool {
+    pub const fn is_file(&self) -> bool {
         (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFREG
     }
 
-    pub fn is_symlink(&self) -> bool {
+    pub const fn is_symlink(&self) -> bool {
         (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFLNK
     }
 
-    pub fn user_id(&self) -> u16 {
+    pub const fn is_block_device(&self) -> bool {
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFBLK
+    }
+
+    pub const fn is_char_device(&self) -> bool {
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFCHR
+    }
+
+    pub const fn is_fifo(&self) -> bool {
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFIFO
+    }
+
+    pub const fn is_socket(&self) -> bool {
+        (self.raw.stx_mode as u32 & libc::S_IFMT) == libc::S_IFSOCK
+    }
+
+    pub const fn user_id(&self) -> u16 {
         self.raw.stx_uid as u16
     }
 
-    pub fn group_id(&self) -> u16 {
+    pub const fn group_id(&self) -> u16 {
         self.raw.stx_gid as u16
     }
 
@@ -163,13 +187,17 @@ impl Metadata {
         Self::convert_timestamp(&self.raw.stx_mtime)
     }
 
-    // TODO: file permissions
+    pub const fn permissions(&self) -> Permissions {
+        Permissions {
+            raw: self.raw.stx_mode as libc::mode_t,
+        }
+    }
 
-    pub fn len(&self) -> u64 {
+    pub const fn len(&self) -> u64 {
         self.raw.stx_size
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -190,6 +218,95 @@ impl Metadata {
 impl Debug for Metadata {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Metadata").finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Permissions {
+    raw: libc::mode_t,
+}
+
+#[derive(Clone)]
+pub enum Permission {
+    UserRead,
+    UserWrite,
+    UserExecute,
+    GroupRead,
+    GroupWrite,
+    GroupExecute,
+    OtherRead,
+    OtherWrite,
+    OtherExecute,
+}
+
+impl Permission {
+    const fn raw_flag(&self) -> libc::mode_t {
+        match self {
+            Permission::UserRead => libc::S_IRUSR,
+            Permission::UserWrite => libc::S_IWUSR,
+            Permission::UserExecute => libc::S_IXUSR,
+            Permission::GroupRead => libc::S_IRGRP,
+            Permission::GroupWrite => libc::S_IWGRP,
+            Permission::GroupExecute => libc::S_IXGRP,
+            Permission::OtherRead => libc::S_IROTH,
+            Permission::OtherWrite => libc::S_IWOTH,
+            Permission::OtherExecute => libc::S_IXOTH,
+        }
+    }
+}
+
+impl Permissions {
+    pub const EMPTY: Self = Self { raw: 0 };
+    pub const READ: Self = Self { raw: 0o444 };
+    pub const WRITE: Self = Self { raw: 0o222 };
+    pub const EXECUTE: Self = Self { raw: 0o111 };
+
+    const fn as_raw(&self) -> libc::mode_t {
+        self.raw
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.raw == 0
+    }
+
+    pub const fn get(&self, which: Permission) -> bool {
+        (self.raw & which.raw_flag()) != 0
+    }
+
+    pub const fn set(mut self, which: Permission) -> Self {
+        self.raw |= which.raw_flag();
+        self
+    }
+
+    pub const fn unset(mut self, which: Permission) -> Self {
+        self.raw &= !which.raw_flag();
+        self
+    }
+}
+
+impl BitAnd for Permissions {
+    type Output = Permissions;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self {
+            raw: self.raw & rhs.raw,
+        }
+    }
+}
+
+impl BitOr for Permissions {
+    type Output = Permissions;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self {
+            raw: self.raw | rhs.raw,
+        }
+    }
+}
+
+impl Debug for Permissions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Permissions").finish()
     }
 }
 
