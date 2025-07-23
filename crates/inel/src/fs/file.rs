@@ -364,6 +364,14 @@ impl File {
             .run_on(GlobalReactor)
             .await
     }
+
+    pub async fn make_direct(&self) -> Result<DirectFile> {
+        let slot = op::RegisterFile::new(self.fd.as_raw())
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(DirectFile::from_direct(OwnedDirect::Auto(slot)))
+    }
 }
 
 impl FromRawFd for File {
@@ -422,6 +430,14 @@ impl DirectFile {
             .sync_meta()
             .run_on(GlobalReactor)
             .await
+    }
+
+    pub async fn make_regular(&self) -> Result<File> {
+        let fd = op::InstallSlot::new(&self.direct)
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
 
