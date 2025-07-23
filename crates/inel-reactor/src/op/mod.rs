@@ -1,6 +1,7 @@
 mod direct;
 mod file;
 mod group;
+mod link;
 mod net;
 mod read;
 mod time;
@@ -23,6 +24,7 @@ use crate::{
 pub use direct::*;
 pub use file::*;
 pub use group::*;
+pub use link::*;
 pub use net::*;
 pub use read::*;
 pub use time::*;
