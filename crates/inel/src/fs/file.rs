@@ -310,6 +310,22 @@ impl Debug for Permissions {
     }
 }
 
+pub enum Advice {
+    Normal,
+    Sequential,
+    Random,
+}
+
+impl Advice {
+    fn as_raw(&self) -> i32 {
+        match self {
+            Advice::Normal => libc::POSIX_FADV_NORMAL,
+            Advice::Sequential => libc::POSIX_FADV_SEQUENTIAL,
+            Advice::Random => libc::POSIX_FADV_RANDOM,
+        }
+    }
+}
+
 pub struct File {
     fd: OwnedFd,
 }
@@ -361,6 +377,18 @@ impl File {
     pub async fn sync_all(&self) -> Result<()> {
         op::FSync::new(&self.fd)
             .sync_meta()
+            .run_on(GlobalReactor)
+            .await
+    }
+
+    pub async fn truncate(&self, len: usize) -> Result<()> {
+        op::FTruncate::new(&self.fd, len)
+            .run_on(GlobalReactor)
+            .await
+    }
+
+    pub async fn advise(&self, advice: Advice) -> Result<()> {
+        op::FAdvise::new(&self.fd, advice.as_raw())
             .run_on(GlobalReactor)
             .await
     }
@@ -428,6 +456,18 @@ impl DirectFile {
     pub async fn sync_all(&self) -> Result<()> {
         op::FSync::new(&self.direct)
             .sync_meta()
+            .run_on(GlobalReactor)
+            .await
+    }
+
+    pub async fn truncate(&self, len: usize) -> Result<()> {
+        op::FTruncate::new(&self.direct, len)
+            .run_on(GlobalReactor)
+            .await
+    }
+
+    pub async fn advise(&self, advice: Advice) -> Result<()> {
+        op::FAdvise::new(&self.direct, advice.as_raw())
             .run_on(GlobalReactor)
             .await
     }

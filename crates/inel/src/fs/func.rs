@@ -7,7 +7,7 @@ use inel_reactor::{
 };
 
 use crate::{
-    fs::{DirBuilder, File, Metadata},
+    fs::{file::Advice, DirBuilder, File, Metadata},
     io::{BufReader, BufWriter},
     source::OwnedDirect,
     GlobalReactor,
@@ -90,6 +90,7 @@ where
     P: AsRef<Path>,
 {
     let file = File::open(path).await?;
+    file.advise(Advice::Sequential).await?;
     let mut reader = BufReader::new(file);
     let mut data = Vec::new();
     reader.read_to_end(&mut data).await?;
@@ -101,6 +102,7 @@ where
     P: AsRef<Path>,
 {
     let file = File::open(path).await?;
+    file.advise(Advice::Sequential).await?;
     let mut reader = BufReader::new(file);
     let mut data = String::new();
     reader.read_to_string(&mut data).await?;
