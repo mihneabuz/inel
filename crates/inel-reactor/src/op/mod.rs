@@ -1,5 +1,5 @@
 mod direct;
-mod fs;
+mod file;
 mod group;
 mod net;
 mod read;
@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub use direct::*;
-pub use fs::*;
+pub use file::*;
 pub use group::*;
 pub use net::*;
 pub use read::*;

@@ -2,6 +2,7 @@ use std::{
     ffi::{CStr, CString},
     io::Result,
     mem::MaybeUninit,
+    ops::{RangeBounds, RangeFull},
     os::{fd::RawFd, unix::ffi::OsStrExt},
     path::Path,
 };
@@ -294,12 +295,12 @@ unsafe impl Op for Close {
 
 impl DetachOp for Close {}
 
-pub struct Fsync {
+pub struct FSync {
     src: Source,
     meta: bool,
 }
 
-impl Fsync {
+impl FSync {
     pub fn new(source: &impl AsSource) -> Self {
         Self {
             src: source.as_source(),
@@ -313,7 +314,7 @@ impl Fsync {
     }
 }
 
-unsafe impl Op for Fsync {
+unsafe impl Op for FSync {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -459,5 +460,124 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
 
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
+    }
+}
+
+pub struct FTruncate {
+    src: Source,
+    len: usize,
+}
+
+impl FTruncate {
+    pub fn new(src: &impl AsSource, len: usize) -> Self {
+        Self {
+            src: src.as_source(),
+            len,
+        }
+    }
+}
+
+unsafe impl Op for FTruncate {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::Ftruncate::new(self.src.as_raw(), self.len as u64).build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+}
+
+pub struct FAdvise<R> {
+    src: Source,
+    advice: i32,
+    range: R,
+}
+
+impl FAdvise<RangeFull> {
+    pub fn new(src: &impl AsSource, advice: i32) -> Self {
+        Self {
+            src: src.as_source(),
+            advice,
+            range: (..),
+        }
+    }
+
+    pub fn range<R>(self, range: R) -> FAdvise<R> {
+        let Self { src, advice, .. } = self;
+        FAdvise { src, advice, range }
+    }
+}
+
+unsafe impl<R> Op for FAdvise<R>
+where
+    R: RangeBounds<usize>,
+{
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        let offset = match self.range.start_bound() {
+            std::ops::Bound::Included(i) => *i,
+            std::ops::Bound::Excluded(i) => *i + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+
+        let len = match self.range.end_bound() {
+            std::ops::Bound::Included(i) => *i + 1,
+            std::ops::Bound::Excluded(i) => *i,
+            std::ops::Bound::Unbounded => 0,
+        };
+
+        opcode::Fadvise::new(self.src.as_raw(), len as i64, self.advice)
+            .offset(offset as u64)
+            .build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
+    }
+}
+
+pub struct FAllocate {
+    src: Source,
+    size: usize,
+    offset: usize,
+}
+
+impl FAllocate {
+    pub fn new(src: &impl AsSource, size: usize) -> Self {
+        Self {
+            src: src.as_source(),
+            size,
+            offset: 0,
+        }
+    }
+
+    pub fn offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+}
+
+unsafe impl Op for FAllocate {
+    type Output = Result<()>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::Fallocate::new(self.src.as_raw(), self.size as u64)
+            .offset(self.offset as u64)
+            .build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        util::expect_zero(&res)
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
     }
 }

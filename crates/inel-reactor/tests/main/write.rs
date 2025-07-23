@@ -441,7 +441,7 @@ fn sync() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert!(matches!(assert_ready!(poll!(fut, notifier)), (_, Ok(_))));
 
-    let mut sync = op::Fsync::new(&file.fd()).run_on(reactor.clone());
+    let mut sync = op::FSync::new(&file.fd()).run_on(reactor.clone());
     let mut fut = pin!(&mut sync);
 
     assert!(poll!(fut, notifier).is_pending());
@@ -451,7 +451,7 @@ fn sync() {
     assert_eq!(notifier.try_recv(), Some(()));
     assert!(matches!(assert_ready!(poll!(fut, notifier)), Ok(())));
 
-    let mut sync_all = op::Fsync::new(&file.fd())
+    let mut sync_all = op::FSync::new(&file.fd())
         .sync_meta()
         .run_on(reactor.clone());
     let mut fut = pin!(&mut sync_all);

@@ -355,11 +355,11 @@ impl File {
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(&self.fd).run_on(GlobalReactor).await
+        op::FSync::new(&self.fd).run_on(GlobalReactor).await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(&self.fd)
+        op::FSync::new(&self.fd)
             .sync_meta()
             .run_on(GlobalReactor)
             .await
@@ -422,11 +422,11 @@ impl DirectFile {
     }
 
     pub async fn sync_data(&self) -> Result<()> {
-        op::Fsync::new(&self.direct).run_on(GlobalReactor).await
+        op::FSync::new(&self.direct).run_on(GlobalReactor).await
     }
 
     pub async fn sync_all(&self) -> Result<()> {
-        op::Fsync::new(&self.direct)
+        op::FSync::new(&self.direct)
             .sync_meta()
             .run_on(GlobalReactor)
             .await
