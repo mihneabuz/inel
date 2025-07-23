@@ -123,7 +123,7 @@ impl OpenOptions {
 
         let slot = op::OpenAt::new(path, flags)
             .mode(mode)
-            .direct()
+            .auto()
             .run_on(GlobalReactor)
             .await?;
 
@@ -362,10 +362,12 @@ impl File {
     }
 
     pub async fn metadata(&self) -> Result<Metadata> {
-        let statx = op::Statx::from_fd(self.fd.as_raw())
-            .mask(libc::STATX_BASIC_STATS | libc::STATX_BTIME)
-            .run_on(GlobalReactor)
-            .await?;
+        let statx = op::Statx::new(
+            self.fd.as_raw(),
+            libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+        )
+        .run_on(GlobalReactor)
+        .await?;
 
         Ok(Metadata { raw: statx })
     }

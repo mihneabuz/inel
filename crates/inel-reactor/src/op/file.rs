@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString},
+    ffi::CString,
     io::Result,
     mem::MaybeUninit,
     ops::{RangeBounds, RangeFull},
@@ -10,7 +10,7 @@ use std::{
 use io_uring::{
     opcode,
     squeue::Entry,
-    types::{DestinationSlot, Fd, FsyncFlags, OpenHow},
+    types::{DestinationSlot, Fd, FsyncFlags},
 };
 
 use crate::{
@@ -20,14 +20,14 @@ use crate::{
     source::{AsDirectSlot, AsSource, DirectAutoFd, Source},
 };
 
-pub struct OpenAt<S> {
+pub struct OpenAt {
     dir: RawFd,
-    path: S,
+    path: CString,
     flags: libc::c_int,
     mode: libc::mode_t,
 }
 
-impl OpenAt<CString> {
+impl OpenAt {
     pub fn new<P: AsRef<Path>>(path: P, flags: libc::c_int) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path, flags)
@@ -48,10 +48,8 @@ impl OpenAt<CString> {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
         Self::from_raw(dir, path, flags, 0)
     }
-}
 
-impl<S: AsRef<CStr>> OpenAt<S> {
-    pub fn from_raw(dir: RawFd, path: S, flags: libc::c_int, mode: libc::mode_t) -> Self {
+    pub fn from_raw(dir: RawFd, path: CString, flags: libc::c_int, mode: libc::mode_t) -> Self {
         Self {
             dir,
             path,
@@ -65,11 +63,11 @@ impl<S: AsRef<CStr>> OpenAt<S> {
         self
     }
 
-    pub fn fixed(self, direct: &impl AsDirectSlot) -> OpenAtFixed<S> {
-        OpenAtFixed::from_raw(self, direct.as_slot())
+    pub fn direct(self, direct: &impl AsDirectSlot) -> OpenAtDirect {
+        OpenAtDirect::from_raw(self, direct.as_slot())
     }
 
-    pub fn direct(self) -> OpenAtAuto<S> {
+    pub fn auto(self) -> OpenAtAuto {
         OpenAtAuto::from_raw(self)
     }
 
@@ -80,7 +78,7 @@ impl<S: AsRef<CStr>> OpenAt<S> {
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
+unsafe impl Op for OpenAt {
     type Output = Result<RawFd>;
 
     fn entry(&mut self) -> Entry {
@@ -90,15 +88,19 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAt<S> {
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_fd(&res)
     }
+
+    fn cancel(self) -> Cancellation {
+        self.path.into()
+    }
 }
 
-pub struct OpenAtFixed<S> {
-    inner: OpenAt<S>,
+pub struct OpenAtDirect {
+    inner: OpenAt,
     slot: DestinationSlot,
 }
 
-impl<S: AsRef<CStr>> OpenAtFixed<S> {
-    fn from_raw(inner: OpenAt<S>, slot: &DirectSlot) -> Self {
+impl OpenAtDirect {
+    fn from_raw(inner: OpenAt, slot: &DirectSlot) -> Self {
         Self {
             inner,
             slot: slot.as_destination_slot(),
@@ -106,7 +108,7 @@ impl<S: AsRef<CStr>> OpenAtFixed<S> {
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
+unsafe impl Op for OpenAtDirect {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -116,19 +118,23 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtFixed<S> {
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
     }
+
+    fn cancel(self) -> Cancellation {
+        self.inner.cancel()
+    }
 }
 
-pub struct OpenAtAuto<S> {
-    inner: OpenAt<S>,
+pub struct OpenAtAuto {
+    inner: OpenAt,
 }
 
-impl<S: AsRef<CStr>> OpenAtAuto<S> {
-    pub fn from_raw(inner: OpenAt<S>) -> Self {
+impl OpenAtAuto {
+    pub fn from_raw(inner: OpenAt) -> Self {
         Self { inner }
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for OpenAtAuto<S> {
+unsafe impl Op for OpenAtAuto {
     type Output = Result<DirectAutoFd>;
 
     fn entry(&mut self) -> Entry {
@@ -141,127 +147,9 @@ unsafe impl<S: AsRef<CStr>> Op for OpenAtAuto<S> {
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_direct(&res)
     }
-}
 
-pub struct OpenAt2<S> {
-    dir: RawFd,
-    path: S,
-    how: OpenHow,
-}
-
-impl OpenAt2<CString> {
-    pub fn new<P: AsRef<Path>>(path: P, flags: u64) -> Self {
-        if path.as_ref().is_absolute() {
-            Self::absolute(path, flags)
-        } else {
-            Self::relative(path, flags)
-        }
-    }
-
-    pub fn relative<P: AsRef<Path>>(path: P, flags: u64) -> Self {
-        Self::relative_to(libc::AT_FDCWD, path, flags)
-    }
-
-    pub fn absolute<P: AsRef<Path>>(path: P, flags: u64) -> Self {
-        Self::relative_to(RawFd::from(-1), path, flags)
-    }
-
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P, flags: u64) -> Self {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-        Self::from_raw(dir, path, flags, 0, 0)
-    }
-}
-
-impl<S: AsRef<CStr>> OpenAt2<S> {
-    pub fn from_raw(dir: RawFd, path: S, flags: u64, mode: u64, resolve: u64) -> Self {
-        let how = OpenHow::new().flags(flags).mode(mode).resolve(resolve);
-
-        Self { dir, path, how }
-    }
-
-    pub fn mode(mut self, mode: u64) -> Self {
-        self.how = self.how.mode(mode);
-        self
-    }
-
-    pub fn resolve(mut self, resolve: u64) -> Self {
-        self.how = self.how.resolve(resolve);
-        self
-    }
-
-    pub fn fixed(self, direct: &impl AsDirectSlot) -> OpenAt2Fixed<S> {
-        OpenAt2Fixed::from_raw(self, direct.as_slot())
-    }
-
-    pub fn direct(self) -> OpenAt2Auto<S> {
-        OpenAt2Auto::from_raw(self)
-    }
-
-    fn raw_entry(&self) -> opcode::OpenAt2 {
-        opcode::OpenAt2::new(Fd(self.dir), self.path.as_ref().as_ptr(), &self.how)
-    }
-}
-
-unsafe impl<S: AsRef<CStr>> Op for OpenAt2<S> {
-    type Output = Result<RawFd>;
-
-    fn entry(&mut self) -> Entry {
-        self.raw_entry().build()
-    }
-
-    fn result(self, res: RingResult) -> Self::Output {
-        util::expect_fd(&res)
-    }
-}
-
-pub struct OpenAt2Fixed<S> {
-    inner: OpenAt2<S>,
-    slot: DestinationSlot,
-}
-
-impl<S: AsRef<CStr>> OpenAt2Fixed<S> {
-    fn from_raw(inner: OpenAt2<S>, slot: &DirectSlot) -> Self {
-        Self {
-            inner,
-            slot: slot.as_destination_slot(),
-        }
-    }
-}
-
-unsafe impl<S: AsRef<CStr>> Op for OpenAt2Fixed<S> {
-    type Output = Result<()>;
-
-    fn entry(&mut self) -> Entry {
-        self.inner.raw_entry().file_index(Some(self.slot)).build()
-    }
-
-    fn result(self, res: RingResult) -> Self::Output {
-        util::expect_zero(&res)
-    }
-}
-
-pub struct OpenAt2Auto<S> {
-    inner: OpenAt2<S>,
-}
-
-impl<S: AsRef<CStr>> OpenAt2Auto<S> {
-    pub fn from_raw(inner: OpenAt2<S>) -> Self {
-        Self { inner }
-    }
-}
-
-unsafe impl<S: AsRef<CStr>> Op for OpenAt2Auto<S> {
-    type Output = Result<DirectAutoFd>;
-
-    fn entry(&mut self) -> Entry {
-        self.inner
-            .raw_entry()
-            .file_index(Some(DestinationSlot::auto_target()))
-            .build()
-    }
-
-    fn result(self, res: RingResult) -> Self::Output {
-        util::expect_direct(&res)
+    fn cancel(self) -> Cancellation {
+        self.inner.cancel()
     }
 }
 
@@ -332,70 +220,29 @@ unsafe impl Op for FSync {
     }
 }
 
-pub struct Statx<P> {
+pub struct Statx {
     dir: RawFd,
-    path: P,
-    flags: libc::c_int,
     mask: libc::c_uint,
     stats: Box<MaybeUninit<libc::statx>>,
 }
 
-impl Statx<&CStr> {
-    pub fn from_fd(fd: RawFd) -> Self {
+impl Statx {
+    pub fn new(fd: RawFd, mask: libc::c_uint) -> Self {
         Self {
             dir: fd,
-            path: unsafe { CStr::from_ptr("\0".as_ptr() as *const _) },
-            flags: libc::AT_EMPTY_PATH,
-            mask: 0,
+            mask,
             stats: Box::new_uninit(),
         }
     }
 }
 
-impl Statx<CString> {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        if path.as_ref().is_absolute() {
-            Self::absolute(path)
-        } else {
-            Self::relative(path)
-        }
-    }
-
-    pub fn relative<P: AsRef<Path>>(path: P) -> Self {
-        Self::relative_to(libc::AT_FDCWD, path)
-    }
-
-    pub fn absolute<P: AsRef<Path>>(path: P) -> Self {
-        Self::relative_to(RawFd::from(-1), path)
-    }
-
-    pub fn relative_to<P: AsRef<Path>>(dir: RawFd, path: P) -> Self {
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-
-        Self {
-            dir,
-            path,
-            flags: libc::AT_EMPTY_PATH,
-            mask: 0,
-            stats: Box::new_uninit(),
-        }
-    }
-}
-
-impl<P: AsRef<CStr>> Statx<P> {
-    pub fn mask(mut self, mask: libc::c_uint) -> Self {
-        self.mask = mask;
-        self
-    }
-}
-
-unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
+unsafe impl Op for Statx {
     type Output = Result<Box<libc::statx>>;
 
     fn entry(&mut self) -> Entry {
         let output = self.stats.as_mut().as_mut_ptr();
-        opcode::Statx::new(Fd(self.dir), self.path.as_ref().as_ptr(), output as *mut _)
-            .flags(self.flags)
+        opcode::Statx::new(Fd(self.dir), c"".as_ptr(), output as *mut _)
+            .flags(libc::AT_EMPTY_PATH)
             .mask(self.mask)
             .build()
     }
@@ -409,13 +256,13 @@ unsafe impl<P: AsRef<CStr>> Op for Statx<P> {
     }
 }
 
-pub struct MkDirAt<S> {
+pub struct MkDirAt {
     dir: RawFd,
-    path: S,
+    path: CString,
     mode: libc::mode_t,
 }
 
-impl MkDirAt<CString> {
+impl MkDirAt {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path)
@@ -436,10 +283,8 @@ impl MkDirAt<CString> {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
         Self { dir, path, mode: 0 }
     }
-}
 
-impl<S: AsRef<CStr>> MkDirAt<S> {
-    pub fn from_raw(dir: RawFd, path: S, mode: libc::mode_t) -> Self {
+    pub fn from_raw(dir: RawFd, path: CString, mode: libc::mode_t) -> Self {
         Self { dir, path, mode }
     }
 
@@ -449,7 +294,7 @@ impl<S: AsRef<CStr>> MkDirAt<S> {
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
+unsafe impl Op for MkDirAt {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -460,6 +305,10 @@ unsafe impl<S: AsRef<CStr>> Op for MkDirAt<S> {
 
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
+    }
+
+    fn cancel(self) -> Cancellation {
+        self.path.into()
     }
 }
 

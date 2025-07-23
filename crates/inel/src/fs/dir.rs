@@ -1,5 +1,5 @@
 use std::{
-    ffi::CStr,
+    ffi::CString,
     io::{ErrorKind, Result},
     os::unix::ffi::OsStrExt,
     path::Path,
@@ -46,9 +46,9 @@ impl DirBuilder {
 
         for item in path.as_ref().iter() {
             buf.extend_from_slice(item.as_bytes());
-            buf.push(0);
 
-            let cpath = unsafe { CStr::from_ptr(buf.as_ptr() as *const _) };
+            // TODO: make this more efficient
+            let cpath = unsafe { CString::from_vec_unchecked(buf.clone()) };
             let res = op::MkDirAt::from_raw(libc::AT_FDCWD, cpath, 0)
                 .mode(0o777)
                 .run_on(GlobalReactor)
@@ -61,7 +61,7 @@ impl DirBuilder {
                 return res;
             }
 
-            *buf.last_mut().unwrap() = std::path::MAIN_SEPARATOR as u8;
+            buf.push(std::path::MAIN_SEPARATOR as u8);
         }
 
         Ok(())

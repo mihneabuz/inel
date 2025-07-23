@@ -14,15 +14,14 @@ fn create() {
     let filename2 = TempFile::new_name();
     let filename3 = TempFile::new_name();
 
-    let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
+    let mut creat1 =
+        op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT).run_on(reactor.clone());
+    let mut creat2 =
+        op::OpenAt::new(&filename2, libc::O_RDWR | libc::O_CREAT).run_on(reactor.clone());
+    let mut creat3 = op::OpenAt::new(&filename3, libc::O_WRONLY | libc::O_CREAT)
         .mode(0)
         .run_on(reactor.clone());
-    let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-        .mode(0)
-        .resolve(0)
-        .run_on(reactor.clone());
-    let mut creat3 = op::OpenAt2::new(&filename3, (libc::O_WRONLY | libc::O_CREAT) as u64)
-        .run_on(reactor.clone());
+
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
     let mut fut3 = pin!(&mut creat3);
@@ -72,8 +71,7 @@ fn relative() {
     let file3 = TempFile::with_content(MESSAGE);
 
     let mut open1 = op::OpenAt::new(file1.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
-    let mut open2 =
-        op::OpenAt2::new(file2.relative_path(), libc::O_RDONLY as u64).run_on(reactor.clone());
+    let mut open2 = op::OpenAt::new(file2.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
     let mut open3 = op::OpenAt::new(file3.relative_path(), libc::O_RDONLY).run_on(reactor.clone());
 
     let mut fut1 = pin!(&mut open1);
@@ -119,8 +117,8 @@ fn error() {
     let path3 = file3.name() + "nopnop";
 
     let mut open1 = op::OpenAt::new(path1, libc::O_RDONLY).run_on(reactor.clone());
-    let mut open2 = op::OpenAt2::new(path2, libc::O_RDONLY as u64).run_on(reactor.clone());
-    let mut open3 = op::OpenAt2::new(path3, libc::O_RDONLY as u64).run_on(reactor.clone());
+    let mut open2 = op::OpenAt::new(path2, libc::O_RDONLY).run_on(reactor.clone());
+    let mut open3 = op::OpenAt::new(path3, libc::O_RDONLY).run_on(reactor.clone());
     let mut fut1 = pin!(&mut open1);
     let mut fut2 = pin!(&mut open2);
     let mut fut3 = pin!(&mut open3);
@@ -174,9 +172,9 @@ fn cancel() {
     path4.push("cancel");
 
     let mut creat1 = op::OpenAt::new(&path1, libc::O_CREAT).run_on(reactor.clone());
-    let mut creat2 = op::OpenAt2::new(&path2, libc::O_CREAT as u64).run_on(reactor.clone());
+    let mut creat2 = op::OpenAt::new(&path2, libc::O_CREAT).run_on(reactor.clone());
     let mut creat3 = op::OpenAt::new(&path3, libc::O_CREAT).run_on(reactor.clone());
-    let mut creat4 = op::OpenAt2::new(&path3, libc::O_CREAT as u64).run_on(reactor.clone());
+    let mut creat4 = op::OpenAt::new(&path3, libc::O_CREAT).run_on(reactor.clone());
     let mut fut1 = pin!(&mut creat1);
     let mut fut2 = pin!(&mut creat2);
     let mut fut3 = pin!(&mut creat3);
@@ -190,15 +188,15 @@ fn cancel() {
     assert!(poll!(nop, notifier).is_pending());
     assert_eq!(reactor.active(), 5);
 
-    reactor.wait();
-
-    assert_eq!(notifier.try_recv(), Some(()));
-    assert!(poll!(nop, notifier).is_ready());
-
     drop(creat1);
     drop(creat2);
     drop(creat3);
     drop(creat4);
+
+    reactor.wait();
+
+    assert_eq!(notifier.try_recv(), Some(()));
+    assert!(poll!(nop, notifier).is_ready());
 
     let mut i = 0;
     while !reactor.is_done() {
@@ -284,16 +282,15 @@ fn stats() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let fd = assert_ready!(poll!(fut, notifier));
-    assert!(fd.as_ref().is_ok_and(|&fd| fd > 0));
+    let fd = assert_ready!(poll!(fut, notifier)).unwrap();
 
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
 
     assert!(std::fs::exists(&file.name()).is_ok_and(|exists| exists));
 
-    let mut stat1 = op::Statx::from_fd(fd.unwrap()).run_on(reactor.clone());
-    let mut stat2 = op::Statx::new(file.relative_path()).run_on(reactor.clone());
+    let mut stat1 = op::Statx::new(fd, libc::STATX_BASIC_STATS).run_on(reactor.clone());
+    let mut stat2 = op::Statx::new(fd, libc::STATX_BASIC_STATS).run_on(reactor.clone());
     let mut fut1 = pin!(&mut stat1);
     let mut fut2 = pin!(&mut stat2);
 
@@ -333,15 +330,13 @@ fn stats_cancel() {
 
     assert_eq!(notifier.try_recv(), Some(()));
 
-    let fd = assert_ready!(poll!(fut, notifier));
-    assert!(fd.as_ref().is_ok_and(|&fd| fd > 0));
-
+    let fd = assert_ready!(poll!(fut, notifier)).unwrap();
     assert!(fut.is_terminated());
     assert!(reactor.is_done());
 
     assert!(std::fs::exists(&file.name()).is_ok_and(|exists| exists));
 
-    let mut stat = op::Statx::new(file.path()).run_on(reactor.clone());
+    let mut stat = op::Statx::new(fd, libc::STATX_BASIC_STATS).run_on(reactor.clone());
     let mut fut = pin!(&mut stat);
     let mut nop = pin!(op::Nop.run_on(reactor.clone()));
 
@@ -376,10 +371,10 @@ mod direct {
         let filename2 = TempFile::new_name();
 
         let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
-            .direct()
+            .auto()
             .run_on(reactor.clone());
-        let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-            .direct()
+        let mut creat2 = op::OpenAt::new(&filename2, libc::O_WRONLY | libc::O_CREAT)
+            .auto()
             .run_on(reactor.clone());
 
         let mut fut1 = pin!(&mut creat1);
@@ -423,10 +418,10 @@ mod direct {
 
         {
             let mut creat1 = op::OpenAt::new(&filename1, libc::O_WRONLY | libc::O_CREAT)
-                .fixed(&direct1)
+                .direct(&direct1)
                 .run_on(reactor.clone());
-            let mut creat2 = op::OpenAt2::new(&filename2, (libc::O_WRONLY | libc::O_CREAT) as u64)
-                .fixed(&direct2)
+            let mut creat2 = op::OpenAt::new(&filename2, libc::O_WRONLY | libc::O_CREAT)
+                .direct(&direct2)
                 .run_on(reactor.clone());
 
             let mut fut1 = pin!(&mut creat1);

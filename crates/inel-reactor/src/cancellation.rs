@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ffi::CString, rc::Rc};
 
 use crate::ring::RingResult;
 
@@ -190,6 +190,12 @@ impl<T> From<Vec<T>> for Cancellation {
 
 impl From<String> for Cancellation {
     fn from(value: String) -> Self {
+        value.into_bytes().into()
+    }
+}
+
+impl From<CString> for Cancellation {
+    fn from(value: CString) -> Self {
         value.into_bytes().into()
     }
 }

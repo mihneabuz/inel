@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString},
+    ffi::CString,
     io::Result,
     os::{fd::RawFd, unix::ffi::OsStrExt},
     path::Path,
@@ -8,27 +8,40 @@ use std::{
 use io_uring::{opcode, squeue::Entry, types::Fd};
 
 use crate::{
+    cancellation::Cancellation,
     op::{util, Op},
     ring::RingResult,
 };
 
-pub struct LinkAt<S> {
+pub struct LinkAt {
     from_fd: RawFd,
-    from_path: S,
+    from_path: CString,
     to_fd: RawFd,
-    to_path: S,
+    to_path: CString,
 }
 
-impl LinkAt<CString> {
-    pub fn absolute<P: AsRef<Path>>(from: P, to: P) -> Self {
+impl LinkAt {
+    pub fn absolute<P, T>(from: P, to: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         Self::from_raw(RawFd::from(-1), from, RawFd::from(-1), to)
     }
 
-    pub fn relative<P: AsRef<Path>>(from: P, to: P) -> Self {
+    pub fn relative<P, T>(from: P, to: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         Self::from_raw(libc::AT_FDCWD, from, libc::AT_FDCWD, to)
     }
 
-    fn from_raw<P: AsRef<Path>>(from_fd: RawFd, from_path: P, to_fd: RawFd, to_path: P) -> Self {
+    fn from_raw<P, T>(from_fd: RawFd, from_path: P, to_fd: RawFd, to_path: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         let from_path = CString::new(from_path.as_ref().as_os_str().as_bytes()).unwrap();
         let to_path = CString::new(to_path.as_ref().as_os_str().as_bytes()).unwrap();
         Self {
@@ -40,7 +53,7 @@ impl LinkAt<CString> {
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for LinkAt<S> {
+unsafe impl Op for LinkAt {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -56,16 +69,24 @@ unsafe impl<S: AsRef<CStr>> Op for LinkAt<S> {
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
     }
+
+    fn cancel(self) -> Cancellation {
+        Cancellation::combine(vec![self.from_path.into(), self.to_path.into()])
+    }
 }
 
-pub struct SymlinkAt<S> {
+pub struct SymlinkAt {
     dir: RawFd,
-    path: S,
-    target: S,
+    path: CString,
+    target: CString,
 }
 
-impl SymlinkAt<CString> {
-    pub fn new<P: AsRef<Path>>(path: P, target: P) -> Self {
+impl SymlinkAt {
+    pub fn new<P, T>(path: P, target: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         if path.as_ref().is_absolute() {
             Self::absolute(path, target)
         } else {
@@ -73,22 +94,34 @@ impl SymlinkAt<CString> {
         }
     }
 
-    pub fn absolute<P: AsRef<Path>>(path: P, target: P) -> Self {
+    pub fn absolute<P, T>(path: P, target: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         Self::from_raw(RawFd::from(-1), path, target)
     }
 
-    pub fn relative<P: AsRef<Path>>(path: P, target: P) -> Self {
+    pub fn relative<P, T>(path: P, target: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         Self::from_raw(libc::AT_FDCWD, path, target)
     }
 
-    fn from_raw<P: AsRef<Path>>(dir: RawFd, path: P, target: P) -> Self {
+    fn from_raw<P, T>(dir: RawFd, path: P, target: T) -> Self
+    where
+        P: AsRef<Path>,
+        T: AsRef<Path>,
+    {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
         let target = CString::new(target.as_ref().as_os_str().as_bytes()).unwrap();
         Self { dir, path, target }
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for SymlinkAt<S> {
+unsafe impl Op for SymlinkAt {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -103,14 +136,18 @@ unsafe impl<S: AsRef<CStr>> Op for SymlinkAt<S> {
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
     }
+
+    fn cancel(self) -> Cancellation {
+        Cancellation::combine(vec![self.path.into(), self.target.into()])
+    }
 }
 
-pub struct UnlinkAt<S> {
+pub struct UnlinkAt {
     dir: RawFd,
-    path: S,
+    path: CString,
 }
 
-impl UnlinkAt<CString> {
+impl UnlinkAt {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         if path.as_ref().is_absolute() {
             Self::absolute(path)
@@ -133,7 +170,7 @@ impl UnlinkAt<CString> {
     }
 }
 
-unsafe impl<S: AsRef<CStr>> Op for UnlinkAt<S> {
+unsafe impl Op for UnlinkAt {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
@@ -142,5 +179,9 @@ unsafe impl<S: AsRef<CStr>> Op for UnlinkAt<S> {
 
     fn result(self, res: RingResult) -> Self::Output {
         util::expect_zero(&res)
+    }
+
+    fn cancel(self) -> Cancellation {
+        self.path.into()
     }
 }
