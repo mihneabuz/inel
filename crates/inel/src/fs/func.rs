@@ -30,7 +30,7 @@ where
 {
     let direct = OwnedDirect::reserve().unwrap();
     op::OpenAt::new(path, libc::O_WRONLY)
-        .fixed(&direct)
+        .direct(&direct)
         .run_on(GlobalReactor)
         .await
         .is_ok()
@@ -45,7 +45,7 @@ where
 
     let open = op::OpenAt::new(path, libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC)
         .mode(0o666)
-        .fixed(&direct)
+        .direct(&direct)
         .chain()
         .run_on(GlobalReactor);
     let write = op::Write::new(&direct, contents)
@@ -71,7 +71,7 @@ where
     let direct = OwnedDirect::reserve().unwrap();
 
     let open = op::OpenAt::new(path, libc::O_RDWR)
-        .fixed(&direct)
+        .direct(&direct)
         .chain()
         .run_on(GlobalReactor);
     let read = op::Read::new(&direct, buffer).chain().run_on(GlobalReactor);
@@ -149,4 +149,20 @@ where
     P: AsRef<Path>,
 {
     DirBuilder::new().recursive(true).create(path).await
+}
+
+pub async fn hard_link<P>(path: P, target: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    op::LinkAt::absolute(path, target)
+        .run_on(GlobalReactor)
+        .await
+}
+
+pub async fn soft_link<P>(path: P, target: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    op::SymlinkAt::new(path, target).run_on(GlobalReactor).await
 }
