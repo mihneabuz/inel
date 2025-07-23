@@ -3,9 +3,13 @@ use std::{
     os::fd::RawFd,
 };
 
-use io_uring::{opcode, squeue::Entry};
+use io_uring::{opcode, squeue::Entry, types::Fixed};
 
-use crate::{op::Op, ring::RingResult, source::DirectAutoFd};
+use crate::{
+    op::Op,
+    ring::{DirectSlot, RingResult},
+    source::{AsDirectSlot, DirectAutoFd},
+};
 
 pub struct RegisterFile {
     fd: RawFd,
@@ -33,6 +37,34 @@ unsafe impl Op for RegisterFile {
             0 => unreachable!(),
             _ => unreachable!(),
         }
+    }
+
+    fn entry_cancel(_key: u64) -> Option<Entry> {
+        None
+    }
+}
+
+pub struct InstallSlot<'a> {
+    slot: &'a DirectSlot,
+}
+
+impl<'a> InstallSlot<'a> {
+    pub fn new<T: AsDirectSlot>(slot: &'a T) -> Self {
+        Self {
+            slot: slot.as_slot(),
+        }
+    }
+}
+
+unsafe impl Op for InstallSlot<'_> {
+    type Output = Result<RawFd>;
+
+    fn entry(&mut self) -> Entry {
+        opcode::FixedFdInstall::new(Fixed(self.slot.index()), 0).build()
+    }
+
+    fn result(self, res: RingResult) -> Self::Output {
+        super::util::expect_fd(&res)
     }
 
     fn entry_cancel(_key: u64) -> Option<Entry> {
