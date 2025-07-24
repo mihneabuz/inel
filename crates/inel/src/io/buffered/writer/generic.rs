@@ -43,21 +43,6 @@ where
         }
     }
 
-    fn ready(&self) -> Option<&View<B, RangeTo<usize>>> {
-        match &self.state {
-            BufWriterState::Ready(buf) => Some(buf),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn buffer(&self) -> Option<&[u8]> {
-        self.ready().map(|buf| buf.buffer())
-    }
-
-    pub(crate) fn capacity(&self) -> Option<usize> {
-        self.ready().map(|buf| buf.inner().size())
-    }
-
     pub(crate) fn into_raw_parts(self) -> (S, Option<(B, usize)>) {
         let Self { state, sink, .. } = self;
         let buf = match state {
@@ -170,14 +155,6 @@ where
 macro_rules! impl_bufwriter {
     ($bufwriter:ident) => {
         impl<S> $bufwriter<S> {
-            pub fn capacity(&self) -> Option<usize> {
-                self.0.capacity()
-            }
-
-            pub fn buffer(&self) -> Option<&[u8]> {
-                self.0.buffer()
-            }
-
             pub fn inner(&self) -> &S {
                 &self.0.sink
             }

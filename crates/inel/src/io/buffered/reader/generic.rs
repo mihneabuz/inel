@@ -9,7 +9,7 @@ use std::{
 use futures::{AsyncBufRead, AsyncRead, FutureExt};
 
 use crate::{
-    buffer::{StableBufferExt, StableBufferMut, View},
+    buffer::{StableBuffer, StableBufferExt, StableBufferMut, View},
     io::ReadSource,
 };
 
@@ -43,19 +43,11 @@ where
         }
     }
 
-    fn ready(&self) -> Option<&View<B, Range<usize>>> {
+    fn buffer(&self) -> &[u8] {
         match &self.state {
-            BufReaderState::Ready(buf) => Some(buf),
-            _ => None,
+            BufReaderState::Ready(buf) => buf.stable_slice(),
+            _ => unreachable!(),
         }
-    }
-
-    pub(crate) fn buffer(&self) -> Option<&[u8]> {
-        self.ready().map(|buf| buf.buffer())
-    }
-
-    pub(crate) fn capacity(&self) -> Option<usize> {
-        self.ready().map(|buf| buf.inner().size())
     }
 
     pub(crate) fn into_raw_parts(self) -> (S, Option<(B, usize, usize)>) {
@@ -136,7 +128,7 @@ where
             }
         };
 
-        Poll::Ready(Ok(this.buffer().unwrap()))
+        Poll::Ready(Ok(this.buffer()))
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
@@ -151,14 +143,6 @@ where
 macro_rules! impl_bufreader {
     ($bufreader:ident) => {
         impl<S> $bufreader<S> {
-            pub fn capacity(&self) -> Option<usize> {
-                self.0.capacity()
-            }
-
-            pub fn buffer(&self) -> Option<&[u8]> {
-                self.0.buffer()
-            }
-
             pub fn inner(&self) -> &S {
                 &self.0.source
             }

@@ -17,17 +17,11 @@ fn simple() {
         let file = inel::fs::File::open(name_clone).await.unwrap();
         let mut reader = inel::io::BufReader::new(file);
 
-        assert!(reader.buffer().is_some());
-        assert!(reader.capacity().is_some());
-
         let mut new = Box::new([b'_'; 256]);
         let res = reader.read(new.as_mut_slice()).await;
 
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), 256);
-
-        assert!(reader.buffer().is_some());
-        assert!(reader.capacity().is_some());
 
         new
     });
@@ -149,17 +143,11 @@ mod fixed {
             let file = inel::fs::File::open(name_clone).await.unwrap();
             let mut reader = inel::io::BufReader::new(file).fix().unwrap();
 
-            assert!(reader.buffer().is_some());
-            assert!(reader.capacity().is_some());
-
             let mut new = Box::new([b'_'; 256]);
             let res = reader.read(new.as_mut_slice()).await;
 
             assert!(res.is_ok());
             assert_eq!(res.unwrap(), 256);
-
-            assert!(reader.buffer().is_some());
-            assert!(reader.capacity().is_some());
 
             new
         });

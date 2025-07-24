@@ -44,7 +44,7 @@ fn write() {
         assert_eq!(wrote, 256);
 
         let buffer = group.get();
-        assert_eq!(buffer.as_slice(), &[b'a'; 256]);
+        assert_eq!(buffer.stable_slice(), &[b'a'; 256]);
 
         group.insert(buffer);
     });
@@ -75,7 +75,7 @@ fn combo() {
             .unwrap();
 
         let mut buffer = group.get_write_buffer();
-        buffer.as_mut_slice().write(&[b'a'; 256]).unwrap();
+        buffer.stable_mut_slice().write(&[b'a'; 256]).unwrap();
         let wrote = group
             .write(&mut write_file, buffer.view(..256))
             .await

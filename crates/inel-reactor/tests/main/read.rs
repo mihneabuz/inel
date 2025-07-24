@@ -81,7 +81,7 @@ fn view() {
     let (view, res) = assert_ready!(poll!(fut, notifier));
     let read = res.expect("read failed");
 
-    assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[..read]);
+    assert_eq!(&view.stable_slice()[..read], &MESSAGE.as_bytes()[..read]);
 
     let buf = view.unview();
     assert_eq!(&buf[0..64], &[0; 64]);
@@ -475,7 +475,7 @@ mod fixed {
         let (view, res) = assert_ready!(poll!(fut, notifier));
         let read = res.expect("read failed");
 
-        assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[..read]);
+        assert_eq!(&view.stable_slice()[..read], &MESSAGE.as_bytes()[..read]);
 
         let buf = view.unview();
         assert_eq!(&buf[0..64], &[0; 64]);

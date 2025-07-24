@@ -14,21 +14,12 @@ fn simple() {
         let file = inel::fs::File::create(name_clone).await.unwrap();
         let mut writer = inel::io::BufWriter::new(file);
 
-        assert!(writer.buffer().is_some());
-        assert!(writer.capacity().is_some());
-
         let buf = Box::new([b'a'; 256]);
         let res = writer.write_all(buf.clone().as_slice()).await;
         assert!(res.is_ok());
 
-        assert!(writer.buffer().is_some());
-        assert!(writer.capacity().is_some());
-
         let res = writer.flush().await;
         assert!(res.is_ok());
-
-        assert!(writer.buffer().is_some());
-        assert!(writer.capacity().is_some());
 
         buf
     });
@@ -145,21 +136,12 @@ mod fixed {
             let file = inel::fs::File::create(name_clone).await.unwrap();
             let mut writer = inel::io::BufWriter::new(file).fix().unwrap();
 
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
-
             let buf = Box::new([b'a'; 256]);
             let res = writer.write_all(buf.clone().as_slice()).await;
             assert!(res.is_ok());
 
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
-
             let res = writer.flush().await;
             assert!(res.is_ok());
-
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
 
             buf
         });
@@ -286,21 +268,12 @@ mod group {
             let file = inel::fs::File::create(name_clone).await.unwrap();
             let mut writer = group.supply_to(file);
 
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
-
             let buf = Box::new([b'a'; 256]);
             let res = writer.write_all(buf.clone().as_slice()).await;
             assert!(res.is_ok());
 
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
-
             let res = writer.flush().await;
             assert!(res.is_ok());
-
-            assert!(writer.buffer().is_some());
-            assert!(writer.capacity().is_some());
 
             buf
         });

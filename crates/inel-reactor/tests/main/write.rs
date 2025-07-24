@@ -87,7 +87,10 @@ fn view() {
     let (view, res) = assert_ready!(poll!(fut, notifier));
     let read = res.expect("write failed");
 
-    assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
+    assert_eq!(
+        &view.stable_slice()[..read],
+        &MESSAGE.as_bytes()[64..64 + read]
+    );
 
     let buf = view.unview();
     assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
@@ -496,7 +499,7 @@ mod fixed {
         let wrote = res.expect("write failed");
 
         assert_eq!(wrote, MESSAGE.as_bytes().len());
-        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.stable_slice(), MESSAGE.as_bytes());
         assert_eq!(file.read(), MESSAGE.to_string());
 
         std::mem::drop(buf);
@@ -529,10 +532,13 @@ mod fixed {
         let (view, res) = assert_ready!(poll!(fut, notifier));
         let read = res.expect("write failed");
 
-        assert_eq!(&view.as_slice()[..read], &MESSAGE.as_bytes()[64..64 + read]);
+        assert_eq!(
+            &view.stable_slice()[..read],
+            &MESSAGE.as_bytes()[64..64 + read]
+        );
 
         let buf = view.unview();
-        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.stable_slice(), MESSAGE.as_bytes());
 
         std::mem::drop(buf);
 
@@ -632,7 +638,7 @@ mod fixed {
         assert_eq!(notifier.try_recv(), Some(()));
 
         let (buf, res) = assert_ready!(poll!(fut, notifier));
-        assert_eq!(buf.as_slice(), MESSAGE.as_bytes());
+        assert_eq!(buf.stable_slice(), MESSAGE.as_bytes());
         res.expect_err("write didn't fail");
     }
 

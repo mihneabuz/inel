@@ -11,10 +11,9 @@ use crate::{cancellation::Cancellation, ring::BufferSlot, ring::Ring, RingReacto
 
 pub trait StableBuffer: Into<Cancellation> {
     fn stable_ptr(&self) -> *const u8;
-
     fn size(&self) -> usize;
 
-    fn as_slice(&self) -> &[u8] {
+    fn stable_slice(&self) -> &[u8] {
         let base = self.stable_ptr();
         if base.is_null() {
             &[]
@@ -27,7 +26,7 @@ pub trait StableBuffer: Into<Cancellation> {
 pub trait StableBufferMut: StableBuffer {
     fn stable_mut_ptr(&mut self) -> *mut u8;
 
-    fn as_mut_slice(&mut self) -> &mut [u8] {
+    fn stable_mut_slice(&mut self) -> &mut [u8] {
         let base = self.stable_mut_ptr();
         if base.is_null() {
             &mut []
@@ -286,13 +285,6 @@ impl<B> View<B, Range<usize>>
 where
     B: StableBuffer,
 {
-    pub fn buffer(&self) -> &[u8] {
-        self.inner
-            .as_slice()
-            .get(self.range.start..self.range.end)
-            .unwrap_or(&[])
-    }
-
     pub fn is_empty(&self) -> bool {
         self.range.is_empty()
     }
@@ -310,10 +302,6 @@ impl<B> View<B, RangeTo<usize>>
 where
     B: StableBuffer,
 {
-    pub fn buffer(&self) -> &[u8] {
-        self.inner.as_slice().get(..self.range.end).unwrap_or(&[])
-    }
-
     pub fn is_empty(&self) -> bool {
         self.range.end == 0
     }
@@ -337,7 +325,7 @@ where
 {
     pub fn fill(&mut self, data: &[u8]) -> usize {
         let pos = self.range.end;
-        let mut writer = &mut self.inner_mut().as_mut_slice()[pos..];
+        let mut writer = &mut self.inner_mut().stable_mut_slice()[pos..];
         let wrote = writer.write(data).unwrap();
         self.range.end += wrote;
         wrote
@@ -372,7 +360,7 @@ where
     R: RangeBounds<usize>,
 {
     fn as_ref(&self) -> &[u8] {
-        self.as_slice()
+        self.stable_slice()
     }
 }
 
@@ -382,7 +370,7 @@ where
     R: RangeBounds<usize>,
 {
     fn as_mut(&mut self) -> &mut [u8] {
-        self.as_mut_slice()
+        self.stable_mut_slice()
     }
 }
 
@@ -405,7 +393,9 @@ where
     }
 
     fn size(&self) -> usize {
-        self.end().saturating_sub(self.start())
+        self.end()
+            .min(self.inner.size())
+            .saturating_sub(self.start())
     }
 }
 

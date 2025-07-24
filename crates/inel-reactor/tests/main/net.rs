@@ -577,7 +577,7 @@ fn read_write() {
     let (read, res) = assert_ready!(poll!(fut2, notifier));
     assert!(res.is_ok_and(|read| read == 4096));
 
-    assert_eq!(wrote.as_slice(), &read.as_slice()[..4096]);
+    assert_eq!(wrote.stable_slice(), &read.stable_slice()[..4096]);
 
     assert!(reactor.is_done());
 }
@@ -764,7 +764,7 @@ mod direct {
         let (read, res) = assert_ready!(poll!(fut2, notifier));
         assert!(res.is_ok_and(|read| read == 4096));
 
-        assert_eq!(wrote.as_slice(), &read.as_slice()[..4096]);
+        assert_eq!(wrote.stable_slice(), &read.stable_slice()[..4096]);
 
         conn1.release(&mut reactor);
         assert!(reactor.is_done());

@@ -10,8 +10,8 @@ fn staticref() {
     assert_eq!(StableBuffer::size(&s), 13);
     assert_eq!(StableBuffer::size(&b), 13);
 
-    assert_eq!(s.as_slice(), b);
-    assert_eq!(b.as_slice(), s.as_bytes());
+    assert_eq!(s.stable_slice(), b);
+    assert_eq!(b.stable_slice(), s.as_bytes());
 }
 
 #[test]
@@ -21,9 +21,9 @@ fn string() {
 
     assert_eq!(StableBuffer::size(&s), 13);
 
-    s.as_mut_slice().write(b"Overwritten!\n").unwrap();
+    s.stable_mut_slice().write(b"Overwritten!\n").unwrap();
 
-    assert_eq!(s.as_slice(), b"Overwritten!\n");
+    assert_eq!(s.stable_slice(), b"Overwritten!\n");
     assert_eq!(s, String::from("Overwritten!\n"));
 }
 
@@ -49,18 +49,18 @@ fn boxed() {
 
     assert_eq!(StableBuffer::size(&b), 256);
 
-    b.as_mut_slice().write(b"Overwritten!\n").unwrap();
+    b.stable_mut_slice().write(b"Overwritten!\n").unwrap();
 
-    assert_eq!(&b.as_slice()[0..13], b"Overwritten!\n");
-    assert_eq!(&b.as_slice()[13..], [0; 256 - 13]);
+    assert_eq!(&b.stable_slice()[0..13], b"Overwritten!\n");
+    assert_eq!(&b.stable_slice()[13..], [0; 256 - 13]);
 }
 
 #[test]
 fn null() {
     let mut b = None;
     assert_eq!(StableBuffer::size(&b), 0);
-    assert_eq!(StableBuffer::as_slice(&b), &[]);
-    assert_eq!(StableBufferMut::as_mut_slice(&mut b), &mut []);
+    assert_eq!(StableBuffer::stable_slice(&b), &[]);
+    assert_eq!(StableBufferMut::stable_mut_slice(&mut b), &mut []);
 }
 
 mod view {
@@ -74,7 +74,7 @@ mod view {
         buf[10..=20].copy_from_slice(&[b'A'; 11]);
 
         let view = View::new(buf, 10..=20);
-        assert_eq!(view.as_slice(), &[b'A'; 11]);
+        assert_eq!(view.stable_slice(), &[b'A'; 11]);
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod view {
         buf[10..20].copy_from_slice(&[b'A'; 10]);
 
         let view = View::new(buf, 10..20);
-        assert_eq!(view.as_slice(), &[b'A'; 10]);
+        assert_eq!(view.stable_slice(), &[b'A'; 10]);
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod view {
         buf[..].copy_from_slice(&[b'A'; 256]);
 
         let view = View::new(buf, ..);
-        assert_eq!(view.as_slice(), &[b'A'; 256]);
+        assert_eq!(view.stable_slice(), &[b'A'; 256]);
     }
 
     #[test]
@@ -101,23 +101,23 @@ mod view {
         buf[..10].copy_from_slice(&[b'A'; 10]);
 
         let view = View::new(buf, ..10);
-        assert_eq!(view.as_slice(), &[b'A'; 10]);
+        assert_eq!(view.stable_slice(), &[b'A'; 10]);
 
         let mut buf = view.unview();
         buf[20..].copy_from_slice(&[b'A'; 236]);
 
         let view = View::new(buf, 20..);
-        assert_eq!(view.as_slice(), &[b'A'; 236]);
+        assert_eq!(view.stable_slice(), &[b'A'; 236]);
     }
 
     #[test]
     fn mutable() {
         let buf = Box::new([b'_'; 256]);
         let mut view = View::new(buf, 10..20);
-        view.as_mut_slice().copy_from_slice(&[b'A'; 10]);
+        view.stable_mut_slice().copy_from_slice(&[b'A'; 10]);
 
         let buf = view.unview();
-        assert_eq!(&buf.as_slice()[10..20], &[b'A'; 10]);
+        assert_eq!(&buf.stable_slice()[10..20], &[b'A'; 10]);
     }
 
     #[test]
@@ -151,13 +151,13 @@ mod view {
         }
 
         let view = View::new(buf, VeryExclusiveRange { inner: (10, 20) });
-        assert_eq!(view.as_slice(), &[b'A'; 9]);
+        assert_eq!(view.stable_slice(), &[b'A'; 9]);
     }
 
     #[test]
     fn string() {
         let mut view = View::new(String::from("Hello World!"), 0..5);
-        view.as_mut_slice().copy_from_slice(b"Never");
+        view.stable_mut_slice().copy_from_slice(b"Never");
 
         assert_eq!(view.inner().as_str(), "Never World!");
     }
@@ -187,23 +187,23 @@ mod view {
         let buf = vec![b'_'; 256];
         let mut cursor = View::new(buf, ..10);
 
-        assert_eq!(cursor.buffer(), &[b'_'; 10]);
+        assert_eq!(cursor.stable_slice(), &[b'_'; 10]);
         assert_eq!(cursor.is_empty(), false);
 
         cursor.set_pos(5);
 
-        assert_eq!(cursor.buffer(), &[b'_'; 5]);
+        assert_eq!(cursor.stable_slice(), &[b'_'; 5]);
         assert_eq!(cursor.is_empty(), false);
 
         cursor.set_pos(0);
 
-        assert_eq!(cursor.buffer(), &[]);
+        assert_eq!(cursor.stable_slice(), &[]);
         assert_eq!(cursor.is_empty(), true);
 
         cursor.set_pos(10);
         *cursor.inner_mut() = vec![b'_'; 2];
 
-        assert_eq!(cursor.buffer(), &[])
+        assert_eq!(cursor.stable_slice(), &[b'_'; 2]);
     }
 
     #[test]
@@ -211,23 +211,23 @@ mod view {
         let buf = vec![b'_'; 256];
         let mut cursor = View::new(buf, 10..20);
 
-        assert_eq!(cursor.buffer(), &[b'_'; 10]);
+        assert_eq!(cursor.stable_slice(), &[b'_'; 10]);
         assert_eq!(cursor.is_empty(), false);
 
         cursor.consume(5);
 
-        assert_eq!(cursor.buffer(), &[b'_'; 5]);
+        assert_eq!(cursor.stable_slice(), &[b'_'; 5]);
         assert_eq!(cursor.is_empty(), false);
 
         cursor.consume(5);
 
-        assert_eq!(cursor.buffer(), &[]);
+        assert_eq!(cursor.stable_slice(), &[]);
         assert_eq!(cursor.is_empty(), true);
 
         let buf = None;
         let cursor = View::new(buf, 10..20);
 
-        assert_eq!(cursor.buffer(), &[]);
+        assert_eq!(cursor.stable_slice(), &[]);
     }
 }
 
@@ -265,8 +265,8 @@ mod fixed {
         let mut fixed4 = Fixed::new(400, reactor.clone()).unwrap();
         fixed4.fill(b'_');
 
-        assert_eq!(fixed1.as_slice(), fixed2.as_slice());
-        assert_eq!(fixed3.as_slice(), fixed4.as_slice());
+        assert_eq!(fixed1.stable_slice(), fixed2.stable_slice());
+        assert_eq!(fixed3.stable_slice(), fixed4.stable_slice());
     }
 
     #[test]
@@ -291,8 +291,8 @@ mod fixed {
 
         let fixed4 = Fixed::register(Box::new([b'_'; LEN]), reactor.clone()).unwrap();
 
-        assert_eq!(fixed1.as_slice(), fixed2.as_slice());
-        assert_eq!(fixed3.as_slice(), fixed4.as_slice());
+        assert_eq!(fixed1.stable_slice(), fixed2.stable_slice());
+        assert_eq!(fixed3.stable_slice(), fixed4.stable_slice());
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod fixed {
         buf[10..=20].copy_from_slice(&[b'A'; 11]);
 
         let view = View::new(buf, 10..=20);
-        assert_eq!(view.as_slice(), &[b'A'; 11]);
+        assert_eq!(view.stable_slice(), &[b'A'; 11]);
     }
 
     #[test]
