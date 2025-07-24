@@ -166,3 +166,17 @@ where
 {
     op::SymlinkAt::new(path, target).run_on(GlobalReactor).await
 }
+
+pub async fn remove_file<P>(path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    op::UnlinkAt::new(path).run_on(GlobalReactor).await
+}
+
+pub async fn remove_dir<P>(path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    op::UnlinkAt::new(path).dir().run_on(GlobalReactor).await
+}

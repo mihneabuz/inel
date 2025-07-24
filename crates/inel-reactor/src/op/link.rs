@@ -145,6 +145,7 @@ unsafe impl Op for SymlinkAt {
 pub struct UnlinkAt {
     dir: RawFd,
     path: CString,
+    flags: i32,
 }
 
 impl UnlinkAt {
@@ -166,7 +167,16 @@ impl UnlinkAt {
 
     fn from_raw<P: AsRef<Path>>(dir: RawFd, path: P) -> Self {
         let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-        Self { dir, path }
+        Self {
+            dir,
+            path,
+            flags: 0,
+        }
+    }
+
+    pub fn dir(mut self) -> Self {
+        self.flags = libc::AT_REMOVEDIR;
+        self
     }
 }
 
@@ -174,7 +184,9 @@ unsafe impl Op for UnlinkAt {
     type Output = Result<()>;
 
     fn entry(&mut self) -> Entry {
-        opcode::UnlinkAt::new(Fd(self.dir), self.path.as_ref().as_ptr()).build()
+        opcode::UnlinkAt::new(Fd(self.dir), self.path.as_ref().as_ptr())
+            .flags(self.flags)
+            .build()
     }
 
     fn result(self, res: RingResult) -> Self::Output {
