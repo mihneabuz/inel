@@ -1,5 +1,5 @@
 use std::{
-    ffi::CString,
+    ffi::OsStr,
     io::{ErrorKind, Result},
     os::unix::ffi::OsStrExt,
     path::Path,
@@ -47,9 +47,8 @@ impl DirBuilder {
         for item in path.as_ref().iter() {
             buf.extend_from_slice(item.as_bytes());
 
-            // TODO: make this more efficient
-            let cpath = unsafe { CString::from_vec_unchecked(buf.clone()) };
-            let res = op::MkDirAt::from_raw(libc::AT_FDCWD, cpath, 0)
+            let path = unsafe { OsStr::from_encoded_bytes_unchecked(&buf) };
+            let res = op::MkDirAt::new(path)
                 .mode(0o777)
                 .run_on(GlobalReactor)
                 .await;
