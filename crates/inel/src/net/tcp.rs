@@ -259,6 +259,14 @@ impl TcpStream {
             .run_on(GlobalReactor)
             .await
     }
+
+    pub async fn make_direct(&self) -> Result<DirectTcpStream> {
+        let slot = op::RegisterFile::new(self.sock.as_raw())
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(DirectTcpStream::from_direct(OwnedDirect::Auto(slot)))
+    }
 }
 
 impl AsRawFd for TcpStream {
@@ -339,6 +347,14 @@ impl DirectTcpStream {
         op::Shutdown::new(&self.direct, how)
             .run_on(GlobalReactor)
             .await
+    }
+
+    pub async fn make_regular(&self) -> Result<TcpStream> {
+        let fd = op::InstallSlot::new(&self.direct)
+            .run_on(GlobalReactor)
+            .await?;
+
+        Ok(unsafe { TcpStream::from_raw_fd(fd) })
     }
 }
 
