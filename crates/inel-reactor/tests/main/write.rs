@@ -596,15 +596,24 @@ mod fixed {
         let write3 = res3.expect("write 3 failed");
 
         assert_eq!(write1, MESSAGE.as_bytes().len());
-        assert_eq!(&buf1[..write1], &MESSAGE.as_bytes()[..write1]);
+        assert_eq!(
+            &buf1.stable_slice()[..write1],
+            &MESSAGE.as_bytes()[..write1]
+        );
         assert_eq!(file1.read(), MESSAGE.to_string());
 
         assert_eq!(write2, MESSAGE.as_bytes().len());
-        assert_eq!(&buf2[..write2], &MESSAGE.as_bytes()[..write2]);
+        assert_eq!(
+            &buf2.stable_slice()[..write2],
+            &MESSAGE.as_bytes()[..write2]
+        );
         assert_eq!(file2.read(), MESSAGE.to_string());
 
         assert_eq!(write3, MESSAGE.as_bytes().len());
-        assert_eq!(&buf3[..write3], &MESSAGE.as_bytes()[..write3]);
+        assert_eq!(
+            &buf3.stable_slice()[..write3],
+            &MESSAGE.as_bytes()[..write3]
+        );
         assert_eq!(file3.read(), MESSAGE.to_string());
 
         assert!(fut1.is_terminated());

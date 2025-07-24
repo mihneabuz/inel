@@ -47,10 +47,6 @@ impl ReadBufferGroup {
     where
         R: Reactor<Handle = Ring>,
     {
-        if self.present() > 0 {
-            panic!("");
-        }
-
         reactor.release_buffer_group(self.id);
     }
 }

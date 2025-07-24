@@ -447,7 +447,7 @@ mod fixed {
         let read = res.expect("read failed");
 
         assert_eq!(read, 1024);
-        assert_eq!(&buf[..read], &MESSAGE.as_bytes()[..read]);
+        assert_eq!(&buf.stable_slice()[..read], &MESSAGE.as_bytes()[..read]);
 
         std::mem::drop(buf);
 
@@ -478,8 +478,8 @@ mod fixed {
         assert_eq!(&view.stable_slice()[..read], &MESSAGE.as_bytes()[..read]);
 
         let buf = view.unview();
-        assert_eq!(&buf[0..64], &[0; 64]);
-        assert_eq!(&buf[512..], &[0; 512]);
+        assert_eq!(&buf.stable_slice()[0..64], &[0; 64]);
+        assert_eq!(&buf.stable_slice()[512..], &[0; 512]);
 
         std::mem::drop(buf);
 
@@ -540,13 +540,13 @@ mod fixed {
         let read3 = res3.expect("read 3 failed");
 
         assert_eq!(read1, READ_LEN1);
-        assert_eq!(&buf1[..read1], &MESSAGE.as_bytes()[..read1]);
+        assert_eq!(&buf1.stable_slice()[..read1], &MESSAGE.as_bytes()[..read1]);
 
         assert_eq!(read2, READ_LEN2);
-        assert_eq!(&buf2[..read2], &MESSAGE.as_bytes()[..read2]);
+        assert_eq!(&buf2.stable_slice()[..read2], &MESSAGE.as_bytes()[..read2]);
 
         assert_eq!(read3, READ_LEN3);
-        assert_eq!(&buf3[..read3], &MESSAGE.as_bytes()[..read3]);
+        assert_eq!(&buf3.stable_slice()[..read3], &MESSAGE.as_bytes()[..read3]);
 
         assert!(fut1.is_terminated());
         assert!(fut2.is_terminated());
@@ -575,7 +575,7 @@ mod fixed {
         assert_eq!(notifier.try_recv(), Some(()));
 
         let (buf, res) = assert_ready!(poll!(fut, notifier));
-        assert_eq!(&buf[..], &[0; 128]);
+        assert_eq!(&buf.stable_slice()[..], &[0; 128]);
         res.expect_err("read didn't fail");
 
         std::mem::drop(buf);

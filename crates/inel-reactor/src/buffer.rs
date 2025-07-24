@@ -1,7 +1,7 @@
 use std::{
     io::{Result, Write},
     mem::ManuallyDrop,
-    ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeTo},
+    ops::{Bound, Range, RangeBounds, RangeTo},
     slice,
 };
 
@@ -187,26 +187,6 @@ where
     }
 }
 
-impl<R> Deref for Fixed<R>
-where
-    R: Reactor<Handle = Ring>,
-{
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap()
-    }
-}
-
-impl<R> DerefMut for Fixed<R>
-where
-    R: Reactor<Handle = Ring>,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.as_mut().unwrap()
-    }
-}
-
 impl<R> From<Fixed<R>> for Cancellation
 where
     R: Reactor<Handle = Ring>,
@@ -351,26 +331,6 @@ where
             Bound::Excluded(x) => *x,
             Bound::Unbounded => self.inner.size(),
         }
-    }
-}
-
-impl<B, R> AsRef<[u8]> for View<B, R>
-where
-    B: StableBuffer,
-    R: RangeBounds<usize>,
-{
-    fn as_ref(&self) -> &[u8] {
-        self.stable_slice()
-    }
-}
-
-impl<B, R> AsMut<[u8]> for View<B, R>
-where
-    B: StableBufferMut,
-    R: RangeBounds<usize>,
-{
-    fn as_mut(&mut self) -> &mut [u8] {
-        self.stable_mut_slice()
     }
 }
 

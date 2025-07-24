@@ -121,17 +121,6 @@ mod view {
     }
 
     #[test]
-    fn as_ref() {
-        let buf = Box::new([b'_'; 256]);
-        let view = View::new(buf, ..);
-        assert_eq!(view.as_ref(), &[b'_'; 256]);
-
-        let buf = view.unview();
-        let mut view = View::new(buf, ..);
-        assert_eq!(view.as_mut(), &[b'_'; 256]);
-    }
-
-    #[test]
     fn custom() {
         let mut buf = Box::new([b'_'; 256]);
         buf[11..20].copy_from_slice(&[b'A'; 9]);
@@ -232,9 +221,7 @@ mod view {
 }
 
 mod fixed {
-    use std::ops::Deref;
-
-    use inel_reactor::buffer::{Fixed, StableBuffer, View};
+    use inel_reactor::buffer::{Fixed, StableBuffer, StableBufferMut, View};
 
     use crate::helpers::runtime;
 
@@ -248,9 +235,9 @@ mod fixed {
         assert!(res.is_ok());
 
         let mut fixed = res.unwrap();
-        fixed.fill_with(|| b'a');
+        fixed.stable_mut_slice().fill_with(|| b'a');
 
-        assert_eq!(fixed.deref(), &[b'a'; 1024]);
+        assert_eq!(fixed.stable_slice(), &[b'a'; 1024]);
     }
 
     #[test]
@@ -259,11 +246,11 @@ mod fixed {
 
         let fixed1 = Fixed::register(Box::new([b'_'; 400]), reactor.clone()).unwrap();
         let mut fixed2 = Fixed::new(400, reactor.clone()).unwrap();
-        fixed2.fill(b'_');
+        fixed2.stable_mut_slice().fill(b'_');
 
         let fixed3 = Fixed::register(Box::new([b'_'; 400]), reactor.clone()).unwrap();
         let mut fixed4 = Fixed::new(400, reactor.clone()).unwrap();
-        fixed4.fill(b'_');
+        fixed4.stable_mut_slice().fill(b'_');
 
         assert_eq!(fixed1.stable_slice(), fixed2.stable_slice());
         assert_eq!(fixed3.stable_slice(), fixed4.stable_slice());
@@ -300,7 +287,7 @@ mod fixed {
         let (reactor, _) = runtime();
 
         let mut buf = Fixed::register(Box::new([b'_'; 256]), reactor).unwrap();
-        buf[10..=20].copy_from_slice(&[b'A'; 11]);
+        buf.stable_mut_slice()[10..=20].copy_from_slice(&[b'A'; 11]);
 
         let view = View::new(buf, 10..=20);
         assert_eq!(view.stable_slice(), &[b'A'; 11]);
