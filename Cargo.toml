@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+
+members = ["crates/inel", "crates/uring"]
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+allocator-api2 = "0.4"
+futures = "0.3"
+tracing = "0.1"
+pin-project-lite = "0.2"
+
+[workspace.dependencies.rustix]
+version = "1.1"
+features = ["io_uring", "mm"]

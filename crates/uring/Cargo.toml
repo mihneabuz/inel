@@ -1,0 +1,16 @@
+[package]
+name = "uring"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+allocator-api2 = { workspace = true }
+futures = { workspace = true }
+rustix = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = "0.3.23"
+
+[lints]
+workspace = true
