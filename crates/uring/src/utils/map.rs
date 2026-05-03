@@ -1,6 +1,6 @@
 use core::{ptr, result::Result};
 
-use rustix::{fd::OwnedFd, io::Errno, mm::*};
+use rustix::{fd::AsFd, io::Errno, mm::*};
 
 // Shared mmap for mapping the io_uring sq and cq in userspace.
 // Dropping calls munmap automatically.
@@ -12,7 +12,7 @@ pub struct Mmap {
 impl Mmap {
     /// # Safety
     /// The underlying file must outlive this mapping. `len` must be non-zero.
-    pub unsafe fn shared(fd: &OwnedFd, offset: u64, len: usize) -> Result<Self, Errno> {
+    pub unsafe fn shared<Fd: AsFd>(fd: Fd, offset: u64, len: usize) -> Result<Self, Errno> {
         unsafe {
             let ptr = mmap(
                 ptr::null_mut(),
@@ -24,6 +24,22 @@ impl Mmap {
             )?;
 
             madvise(ptr, len, Advice::LinuxDontFork)?;
+
+            Ok(Self {
+                addr: ptr::NonNull::new_unchecked(ptr.cast()),
+                len,
+            })
+        }
+    }
+
+    pub fn private(len: usize) -> Result<Self, Errno> {
+        unsafe {
+            let ptr = mmap_anonymous(
+                ptr::null_mut(),
+                len,
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE,
+            )?;
 
             Ok(Self {
                 addr: ptr::NonNull::new_unchecked(ptr.cast()),

@@ -4,8 +4,9 @@ use rustix::io::Errno;
 
 use crate::{
     managed::{
+        buf_rings::{BufGroupId, BufRings},
         cancellation::Cancellation,
-        completion::{CompletionResult, Completions, Key},
+        completion::{CompletionEntry, CompletionResult, Completions, Key, UserData},
         submission::{AsyncCancel, DetachOp, MultiOp, SingleOp},
     },
     sys::IoUring,
@@ -61,12 +62,11 @@ impl<P: UringProxy> UringProxy for &P {
 pub struct Uring {
     ring: IoUring,
     comp: Completions,
-    active: u64,
+
+    buf_rings: BufRings,
 }
 
 impl Uring {
-    const IGNORE_KEY: u64 = u64::MAX;
-
     const SUBMISSION_QUEUE_FULL_ERROR: &str =
         "Submission queue full. Consider configuring with more `sq_entries`.";
     const FAILED_TO_ENTER_ERROR: &str = "Failed to enter io_uring";
@@ -87,12 +87,12 @@ impl Uring {
         Ok(Self {
             ring,
             comp,
-            active: 0,
+            buf_rings: BufRings::new(),
         })
     }
 
     pub const fn is_done(&self) -> bool {
-        self.active == 0
+        self.comp.is_empty()
     }
 
     pub fn submit<O: SingleOp>(&mut self, op: Pin<&mut O>, waker: Waker) -> Key {
@@ -103,12 +103,11 @@ impl Uring {
             self.ring
                 .push_sqe(|sqe| {
                     op.prep(sqe);
-                    sqe.user_data(key.as_u64());
+                    let user_data = UserData::build(sqe, key);
+                    sqe.user_data(user_data.as_raw());
                 })
                 .expect(Self::SUBMISSION_QUEUE_FULL_ERROR);
         }
-
-        self.active += 1;
 
         key
     }
@@ -121,12 +120,11 @@ impl Uring {
             self.ring
                 .push_sqe(|sqe| {
                     op.prep(sqe);
-                    sqe.user_data(key.as_u64());
+                    let user_data = UserData::build(sqe, key);
+                    sqe.user_data(user_data.as_raw());
                 })
                 .expect(Self::SUBMISSION_QUEUE_FULL_ERROR);
         }
-
-        self.active += 1;
 
         key
     }
@@ -137,7 +135,7 @@ impl Uring {
             self.ring
                 .push_sqe(|sqe| {
                     op.prep_detached(sqe);
-                    sqe.user_data(Self::IGNORE_KEY);
+                    sqe.user_data(UserData::IGNORE);
                     sqe.skip_success_cqe();
                 })
                 .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
@@ -168,16 +166,55 @@ impl Uring {
             .expect(Self::FAILED_TO_ENTER_ERROR);
 
         self.ring.for_each_cqe(|cqe| {
-            if cqe.user_data() == Self::IGNORE_KEY {
+            let completion = CompletionEntry::from_cqe(cqe);
+
+            if completion.should_ignore() {
                 return;
             }
 
-            if !cqe.has_more() {
-                self.active -= 1;
+            if !self.comp.notify(completion.key(), completion.result()) {
+                if let Some(bid) = cqe.buffer_id() {
+                    self.buf_rings.recycle(completion.bgid(), bid);
+                }
             }
-
-            let key = Key::from_u64(cqe.user_data());
-            self.comp.notify(key, CompletionResult::from_cqe(cqe));
         });
+    }
+
+    fn create_buf_group(&mut self, max_entries: u16) -> Result<BufGroupId, Errno> {
+        let bgid = self.buf_rings.insert(max_entries);
+        unsafe {
+            self.ring
+                .register_buf_ring(self.buf_rings.get_mut(bgid), bgid.0, 0)?;
+        }
+        Ok(bgid)
+    }
+
+    fn destroy_buf_group(&mut self, bgid: BufGroupId) {
+        self.buf_rings.remove(bgid);
+    }
+}
+
+impl Drop for Uring {
+    fn drop(&mut self) {
+        let _ = self.ring.unregister_buffers();
+        let _ = self.ring.unregister_files();
+    }
+}
+
+pub struct BufGroup<U: UringProxy> {
+    id: BufGroupId,
+    ring: U,
+}
+
+impl<U: UringProxy> Drop for BufGroup<U> {
+    fn drop(&mut self) {
+        self.ring.with(|ring| ring.destroy_buf_group(self.id))
+    }
+}
+
+impl<U: UringProxy> BufGroup<U> {
+    pub fn new(max_entries: u16, ring: U) -> Result<Self, Errno> {
+        ring.with(|ring| ring.create_buf_group(max_entries))
+            .map(|id| Self { id, ring })
     }
 }

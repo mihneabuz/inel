@@ -202,7 +202,7 @@ impl AsyncCancel {
 
 impl Op for AsyncCancel {
     unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
-        sqe.prep_cancel(self.key.as_u64(), IoringAsyncCancelFlags::empty());
+        sqe.prep_cancel(self.key.0 as u64, IoringAsyncCancelFlags::empty());
     }
 
     fn cancel(self) -> (Cancellation, bool) {

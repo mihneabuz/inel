@@ -3,25 +3,43 @@ use core::task::Waker;
 use rustix::io_uring::*;
 
 use crate::{
-    managed::cancellation::Cancellation,
-    sys::Cqe,
-    utils::{Deque, Slab},
+    managed::{buf_rings::BufGroupId, cancellation::Cancellation},
+    sys::{Cqe, Sqe},
+    utils::{Deque, UnsafeSlab},
 };
 
-#[derive(Copy, Clone)]
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct Key(pub(crate) u32);
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct UserData(u64);
+
+impl UserData {
+    pub const IGNORE: u64 = u64::MAX;
+
+    pub const fn build(sqe: &Sqe, key: Key) -> Self {
+        Self(key.0 as u64 | (sqe.get_buf_index() as u64) << 32)
+    }
+
+    pub const fn as_raw(&self) -> u64 {
+        self.0
+    }
+}
+
+pub struct CompletionEntry {
+    user_data: UserData,
+    result: CompletionResult,
+}
+
+#[derive(Clone, Copy)]
 pub struct CompletionResult {
     res: i32,
     flags: IoringCqeFlags,
 }
 
 impl CompletionResult {
-    pub const fn from_cqe(cqe: &Cqe) -> Self {
-        Self {
-            res: cqe.result(),
-            flags: cqe.flags(),
-        }
-    }
-
     pub const fn result(&self) -> i32 {
         self.res
     }
@@ -30,34 +48,59 @@ impl CompletionResult {
         self.flags.contains(IoringCqeFlags::MORE)
     }
 
+    pub fn buffer_id(&self) -> Option<u16> {
+        self.flags
+            .contains(IoringCqeFlags::BUFFER)
+            .then_some((self.flags.bits() >> IORING_CQE_BUFFER_SHIFT) as u16)
+    }
+
     #[cfg(test)]
     pub fn raw(res: i32, flags: IoringCqeFlags) -> Self {
         Self { res, flags }
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Key(u32);
-
-impl Key {
-    pub const fn from_u64(value: u64) -> Self {
-        Self(value as u32)
+impl CompletionEntry {
+    pub const fn from_cqe(cqe: &Cqe) -> Self {
+        Self {
+            user_data: UserData(cqe.user_data()),
+            result: CompletionResult {
+                res: cqe.result(),
+                flags: cqe.flags(),
+            },
+        }
     }
 
-    pub const fn as_u64(&self) -> u64 {
-        self.0 as u64
+    pub const fn key(&self) -> Key {
+        Key(self.user_data.0 as u32)
+    }
+
+    pub const fn bgid(&self) -> BufGroupId {
+        BufGroupId((self.user_data.0 >> 32) as u16)
+    }
+
+    pub const fn should_ignore(&self) -> bool {
+        self.user_data.0 == UserData::IGNORE
+    }
+
+    pub const fn result(&self) -> CompletionResult {
+        self.result
     }
 }
 
 pub struct Completions {
-    slab: Slab<CompletionHandler>,
+    slab: UnsafeSlab<CompletionHandler>,
 }
 
 impl Completions {
     pub fn new(capacity: u32) -> Self {
         Self {
-            slab: Slab::new(capacity),
+            slab: UnsafeSlab::new(capacity),
         }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.slab.len() == 0
     }
 
     pub const fn insert_single(&mut self, waker: Waker) -> Key {
@@ -80,8 +123,8 @@ impl Completions {
         value
     }
 
-    pub fn notify(&mut self, key: Key, result: CompletionResult) {
-        self.with_completion(key, move |comp| comp.try_notify(result));
+    pub fn notify(&mut self, key: Key, result: CompletionResult) -> bool {
+        self.with_completion(key, move |comp| comp.try_notify(result))
     }
 
     pub fn cancel(&mut self, key: Key, handle: Cancellation) -> bool {
@@ -138,19 +181,22 @@ impl CompletionHandler {
         }
     }
 
-    fn try_notify(&mut self, result: CompletionResult) {
+    fn try_notify(&mut self, result: CompletionResult) -> bool {
         match self {
             Self::Pending { waker } => {
                 waker.wake_by_ref();
                 *self = Self::Single { result };
+                true
             }
             Self::Multi { waker, queue } => {
                 waker.wake_by_ref();
                 queue.push(result);
+                true
             }
             Self::Cancelled { handle } => {
                 unsafe { handle.drop_by_ref() };
                 *self = Self::Finished;
+                false
             }
             _ => unreachable!("Cannot post result in this state"),
         }
