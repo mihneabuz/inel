@@ -1,4 +1,4 @@
-use core::pin::Pin;
+use core::{pin::Pin, ptr};
 
 use rustix::{
     fd::{AsRawFd, RawFd},
@@ -7,6 +7,7 @@ use rustix::{
 
 use crate::{
     managed::{
+        BufGroup, GroupBuf, UringProxy,
         buffer::{InFlight, IoBuf, IoBufMut},
         cancellation::Cancellation,
         completion::CompletionResult,
@@ -157,5 +158,65 @@ impl<B: IoBuf, O: Offset> SingleOp for Write<B, O> {
         // SAFETY: we got the CQE, so the kernel is done with the buffer
         let buf = unsafe { self.buf.into_inner() };
         (buf, expect_positive(&cqe))
+    }
+}
+
+/// A read into a buffer the kernel picks from `group` once data is available,
+/// so idle reads don't tie up memory.
+///
+/// Fails with `ENOBUFS` if the group has no free buffer at that point; on
+/// pollable fds nothing was read then, so the read can simply be retried.
+pub struct ReadSelect<'a, U: UringProxy + Clone, O: Offset = Current> {
+    fd: RawFd,
+    group: &'a BufGroup<U>,
+    offset: O,
+}
+
+impl<'a, U: UringProxy + Clone> ReadSelect<'a, U> {
+    pub fn new(fd: &impl AsRawFd, group: &'a BufGroup<U>) -> Self {
+        Self {
+            fd: fd.as_raw_fd(),
+            group,
+            offset: Current,
+        }
+    }
+}
+
+impl<'a, U: UringProxy + Clone> ReadSelect<'a, U, At> {
+    pub fn new_at(fd: &impl AsRawFd, group: &'a BufGroup<U>, offset: usize) -> Self {
+        Self {
+            fd: fd.as_raw_fd(),
+            group,
+            offset: At(offset),
+        }
+    }
+}
+
+impl<U: UringProxy + Clone, O: Offset> Op for ReadSelect<'_, U, O> {
+    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+        let size = self.group.buffer_size();
+        sqe.prep_read(self.fd, ptr::null_mut(), size, self.offset.position());
+        // the ring keeps the group alive until the op's final CQE
+        sqe.buffer_select(self.group.id().raw());
+    }
+}
+
+impl<U: UringProxy + Clone, O: Offset> SingleOp for ReadSelect<'_, U, O> {
+    type Output = Result<GroupBuf<U>, Errno>;
+
+    fn result(self, cqe: CompletionResult) -> Self::Output {
+        let id = self.group.id();
+        let ring = self.group.ring();
+        match (expect_positive(&cqe), cqe.buffer_id()) {
+            // SAFETY: we got the CQE, so the kernel is done with the buffer and
+            // wrote exactly the number of bytes it returned
+            (Ok(n), Some(bid)) => Ok(unsafe { GroupBuf::new(ring.clone(), id, bid, n) }),
+            (Err(err), None) => Err(err),
+            (Err(err), Some(bid)) => {
+                ring.with(|ring| ring.recycle_buf(id, bid));
+                Err(err)
+            }
+            (Ok(_), None) => panic!("buffer select read completed without a buffer"),
+        }
     }
 }

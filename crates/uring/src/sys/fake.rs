@@ -45,7 +45,7 @@ use core::{
     mem::{self, MaybeUninit},
     ptr::{self, NonNull},
     slice,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering},
     time::Duration,
 };
 use std::{
@@ -102,8 +102,9 @@ const SUPPORTED_SETUP: IoringSetupFlags = IoringSetupFlags::NO_SQARRAY
     // sharing the async backend only matters for performance
     .union(IoringSetupFlags::ATTACH_WQ);
 
-const SUPPORTED_SQE_FLAGS: IoringSqeFlags =
-    IoringSqeFlags::ASYNC.union(IoringSqeFlags::CQE_SKIP_SUCCESS);
+const SUPPORTED_SQE_FLAGS: IoringSqeFlags = IoringSqeFlags::ASYNC
+    .union(IoringSqeFlags::CQE_SKIP_SUCCESS)
+    .union(IoringSqeFlags::BUFFER_SELECT);
 
 const SUPPORTED_TIMEOUT: IoringTimeoutFlags =
     TIMEOUT_MULTISHOT.union(IoringTimeoutFlags::ETIME_SUCCESS);
@@ -310,16 +311,31 @@ pub unsafe fn io_uring_enter(
 /// # Safety
 ///
 /// Same contract as the real `io_uring_register`.
-pub const unsafe fn io_uring_register(
-    _fd: &RingFd,
+pub unsafe fn io_uring_register(
+    fd: &RingFd,
     opcode: IoringRegisterOp,
-    _arg: *const c_void,
-    _nr_args: u32,
+    arg: *const c_void,
+    nr_args: u32,
 ) -> Result<u32, Errno> {
     match opcode {
         // nothing can be registered yet, like the kernel when the table is empty
         IoringRegisterOp::UnregisterBuffers | IoringRegisterOp::UnregisterFiles => Err(Errno::NXIO),
-        // TODO: fixed buffers/files, buffer rings
+        IoringRegisterOp::RegisterPbufRing | IoringRegisterOp::UnregisterPbufRing => {
+            if nr_args != 1 {
+                return Err(Errno::INVAL);
+            }
+            if arg.is_null() {
+                return Err(Errno::FAULT);
+            }
+            // SAFETY: the caller passes a valid `io_uring_buf_reg`
+            let reg = unsafe { arg.cast::<io_uring_buf_reg>().read() };
+            if opcode == IoringRegisterOp::RegisterPbufRing {
+                fd.kernel.register_buf_ring(&reg).map(|()| 0)
+            } else {
+                fd.kernel.unregister_buf_ring(&reg).map(|()| 0)
+            }
+        }
+        // TODO: fixed buffers/files
         _ => Err(Errno::INVAL),
     }
 }
@@ -410,6 +426,8 @@ enum Op {
         buf: UserPtr,
         len: u32,
         off: u64,
+        /// Buffer group to pick the buffer from when the read runs.
+        select: Option<u16>,
     },
     Write {
         fd: RawFd,
@@ -427,6 +445,46 @@ impl Op {
             Self::Read { fd, off, .. } if off == u64::MAX => Some((fd, epoll::EventFlags::IN)),
             Self::Write { fd, off, .. } if off == u64::MAX => Some((fd, epoll::EventFlags::OUT)),
             _ => None,
+        }
+    }
+}
+
+/// A provided buffer ring registered by the user. The user publishes buffers
+/// by writing entries and then the tail (release); the head is the kernel's.
+struct BufRing {
+    base: UserPtr,
+    mask: u16,
+    head: u16,
+}
+
+struct PickedBuf {
+    addr: UserPtr,
+    len: u32,
+    bid: u16,
+}
+
+impl BufRing {
+    /// The buffer at the head, without consuming it.
+    fn peek(&self) -> Option<PickedBuf> {
+        let base = self.base.0;
+        // SAFETY: the user keeps the ring memory valid while it's registered.
+        // The tail overlaps `resv` of the first entry and is only accessed
+        // atomically; the entry fields are read individually so it's never
+        // read non-atomically.
+        unsafe {
+            let tail_offset = mem::offset_of!(buf_ring_tail_struct, tail);
+            let tail = AtomicU16::from_ptr(base.add(tail_offset).cast()).load(Ordering::Acquire);
+            if tail == self.head {
+                return None;
+            }
+            let entry = base
+                .cast::<io_uring_buf>()
+                .add((self.head & self.mask) as usize);
+            Some(PickedBuf {
+                addr: UserPtr((&raw const (*entry).addr.ptr).read().cast()),
+                len: (&raw const (*entry).len).read(),
+                bid: (&raw const (*entry).bid).read(),
+            })
         }
     }
 }
@@ -465,6 +523,8 @@ struct State {
     overflow: VecDeque<RawCqe>,
     /// Total CQEs posted, for timeouts with a completion count.
     posted: u64,
+    /// Registered provided buffer rings, by group id.
+    buf_rings: BTreeMap<u16, BufRing>,
     rng: Rng,
     shutdown: bool,
 }
@@ -530,6 +590,7 @@ impl Kernel {
                 deferred: VecDeque::new(),
                 overflow: VecDeque::new(),
                 posted: 0,
+                buf_rings: BTreeMap::new(),
                 rng: Rng::new(seed()),
                 shutdown: false,
             }),
@@ -572,6 +633,49 @@ impl Kernel {
         drop(state);
 
         self.kick();
+    }
+
+    // ---- provided buffer rings ------------------------------------------
+
+    fn register_buf_ring(&self, reg: &io_uring_buf_reg) -> Result<(), Errno> {
+        // mmap'ed rings (IOU_PBUF_RING_MMAP) and incremental consumption
+        // aren't supported yet
+        if reg.flags != 0 || reg.resv != [0; 3] {
+            return Err(Errno::INVAL);
+        }
+        if !reg.ring_entries.is_power_of_two() || reg.ring_entries > 1 << 15 {
+            return Err(Errno::INVAL);
+        }
+        let base = reg.ring_addr.ptr.cast::<u8>();
+        if base.is_null() {
+            return Err(Errno::FAULT);
+        }
+        if base.addr() % rustix::param::page_size() != 0 {
+            return Err(Errno::INVAL);
+        }
+
+        let mut state = self.lock();
+        if state.buf_rings.contains_key(&reg.bgid) {
+            return Err(Errno::EXIST);
+        }
+        state.buf_rings.insert(
+            reg.bgid,
+            BufRing {
+                base: UserPtr(base),
+                mask: (reg.ring_entries - 1) as u16,
+                head: 0,
+            },
+        );
+        Ok(())
+    }
+
+    fn unregister_buf_ring(&self, reg: &io_uring_buf_reg) -> Result<(), Errno> {
+        let mut state = self.lock();
+        state
+            .buf_rings
+            .remove(&reg.bgid)
+            .map(drop)
+            .ok_or(Errno::NOENT)
     }
 
     // ---- submission ------------------------------------------------------
@@ -642,6 +746,10 @@ impl Kernel {
         if !SUPPORTED_SQE_FLAGS.contains(sqe.flags) || sqe.personality != 0 {
             return Err(Errno::INVAL);
         }
+        // like the kernel, before the op's own checks
+        if sqe.flags.contains(IoringSqeFlags::BUFFER_SELECT) && sqe.opcode != IoringOp::Read {
+            return Err(Errno::OPNOTSUPP);
+        }
 
         // SAFETY: all union variants read below are plain integers or pointers
         unsafe {
@@ -650,6 +758,7 @@ impl Kernel {
             let off = sqe.off_or_addr2.off;
             let op_flags = sqe.op_flags.poll32_events;
             let buf_index = sqe.buf.buf_index;
+            let buf_group = sqe.buf.buf_group;
             let file_index = sqe.splice_fd_in_or_file_index_or_addr_len.file_index;
 
             match sqe.opcode {
@@ -737,7 +846,17 @@ impl Kernel {
                     }
                     let (fd, buf) = (sqe.fd, UserPtr(addr));
                     Ok(Some(if sqe.opcode == IoringOp::Read {
-                        Op::Read { fd, buf, len, off }
+                        let select = sqe
+                            .flags
+                            .contains(IoringSqeFlags::BUFFER_SELECT)
+                            .then_some(buf_group);
+                        Op::Read {
+                            fd,
+                            buf,
+                            len,
+                            off,
+                            select,
+                        }
                     } else {
                         Op::Write { fd, buf, len, off }
                     }))
@@ -1044,7 +1163,35 @@ impl Kernel {
         let req = state.requests.get_mut(&id).unwrap();
         req.status = Status::Running;
         req.ready = false;
-        let op = req.op.clone();
+        let mut op = req.op.clone();
+
+        // pick the buffer only now, when the read can make progress. It is
+        // only consumed if the read succeeds; this thread is the only one
+        // picking buffers, so nothing else can take it in the meantime.
+        let mut selected = None;
+        if let Op::Read {
+            select: Some(bgid),
+            ref mut buf,
+            ref mut len,
+            ..
+        } = op
+        {
+            let Some(picked) = state.buf_rings.get(&bgid).and_then(BufRing::peek) else {
+                let req = state.requests.remove(&id).unwrap();
+                self.post(
+                    &mut state,
+                    req.user_data,
+                    -Errno::NOBUFS.raw_os_error(),
+                    false,
+                );
+                return state;
+            };
+            *buf = picked.addr;
+            if *len == 0 || *len > picked.len {
+                *len = picked.len;
+            }
+            selected = Some((bgid, picked.bid));
+        }
         drop(state);
 
         // SAFETY: the SQE contract guarantees user memory stays valid
@@ -1062,10 +1209,28 @@ impl Kernel {
                 req.status = Status::Queued;
                 state.ready.push(id);
             }
-            res => {
+            Ok(res) => {
                 let req = state.requests.remove(&id).unwrap();
-                let res = res.unwrap_or_else(|err| -err.raw_os_error());
-                self.post(&mut state, req.user_data, res, req.skip_success);
+                let mut flags = IoringCqeFlags::empty();
+                if let Some((bgid, bid)) = selected {
+                    if let Some(ring) = state.buf_rings.get_mut(&bgid) {
+                        ring.head = ring.head.wrapping_add(1);
+                    }
+                    flags = IoringCqeFlags::BUFFER
+                        | IoringCqeFlags::from_bits_retain(
+                            u32::from(bid) << IORING_CQE_BUFFER_SHIFT,
+                        );
+                }
+                self.post_flags(&mut state, req.user_data, res, flags, req.skip_success);
+            }
+            Err(err) => {
+                let req = state.requests.remove(&id).unwrap();
+                self.post(
+                    &mut state,
+                    req.user_data,
+                    -err.raw_os_error(),
+                    req.skip_success,
+                );
             }
         }
         state
@@ -1165,7 +1330,9 @@ unsafe fn execute(op: &Op) -> Result<i32, Errno> {
             return fs::openat(dir, path.as_c_str(), flags, mode).map(|fd| fd.into_raw_fd());
         }
 
-        Op::Read { fd, buf, len, off } => {
+        Op::Read {
+            fd, buf, len, off, ..
+        } => {
             let fd = borrow_fd(fd)?;
             let buf = unsafe { user_slice_mut::<MaybeUninit<u8>>(buf, len) }?;
             if off == u64::MAX {

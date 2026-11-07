@@ -3,33 +3,57 @@ use core::task::Waker;
 use rustix::io_uring::*;
 
 use crate::{
-    managed::{buf_rings::BufGroupId, cancellation::Cancellation},
+    managed::{cancellation::Cancellation, uring::BufGroupId},
     sys::{Cqe, Sqe},
     utils::{Deque, UnsafeSlab},
 };
 
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct Key(pub(crate) u32);
+/// Identifies a submitted op. It is the op's `user_data`, so it comes back
+/// with every CQE and cancellation can match it exactly.
+#[repr(packed)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Key {
+    slot: u32,
+    group: Option<BufGroupId>,
+}
 
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct UserData(u64);
+impl Key {
+    /// The key of ops whose completions are ignored. Never a valid key, since
+    /// slots never reach `u32::MAX`.
+    pub const IGNORE: Self = Self::new(u32::MAX);
 
-impl UserData {
-    pub const IGNORE: u64 = u64::MAX;
-
-    pub const fn build(sqe: &Sqe, key: Key) -> Self {
-        Self(key.0 as u64 | (sqe.get_buf_index() as u64) << 32)
+    const fn new(slot: u32) -> Self {
+        Self { slot, group: None }
     }
 
+    pub fn add_group_id(&mut self, sqe: &Sqe) -> &mut Self {
+        self.group = sqe.buf_group().and_then(BufGroupId::new);
+        self
+    }
+
+    pub const fn group_id(&self) -> Option<BufGroupId> {
+        self.group
+    }
+
+    /// Layout: slot in bits 0..32, group in 32..48 (0 for none).
     pub const fn as_raw(&self) -> u64 {
-        self.0
+        let group = match self.group {
+            Some(group) => group.raw(),
+            None => 0,
+        };
+        self.slot as u64 | (group as u64) << 32
+    }
+
+    pub const fn from_raw(raw: u64) -> Self {
+        Self {
+            slot: raw as u32,
+            group: BufGroupId::new((raw >> 32) as u16),
+        }
     }
 }
 
 pub struct CompletionEntry {
-    user_data: UserData,
+    key: Key,
     result: CompletionResult,
 }
 
@@ -63,7 +87,7 @@ impl CompletionResult {
 impl CompletionEntry {
     pub const fn from_cqe(cqe: &Cqe) -> Self {
         Self {
-            user_data: UserData(cqe.user_data()),
+            key: Key::from_raw(cqe.user_data()),
             result: CompletionResult {
                 res: cqe.result(),
                 flags: cqe.flags(),
@@ -72,15 +96,11 @@ impl CompletionEntry {
     }
 
     pub const fn key(&self) -> Key {
-        Key(self.user_data.0 as u32)
+        self.key
     }
 
-    pub const fn bgid(&self) -> BufGroupId {
-        BufGroupId((self.user_data.0 >> 32) as u16)
-    }
-
-    pub const fn should_ignore(&self) -> bool {
-        self.user_data.0 == UserData::IGNORE
+    pub fn should_ignore(&self) -> bool {
+        self.key == Key::IGNORE
     }
 
     pub const fn result(&self) -> CompletionResult {
@@ -104,31 +124,36 @@ impl Completions {
     }
 
     pub const fn insert_single(&mut self, waker: Waker) -> Key {
-        Key(self.slab.insert(CompletionHandler::new_single(waker)))
+        Key::new(self.slab.insert(CompletionHandler::new_single(waker)))
     }
 
     pub const fn insert_multi(&mut self, waker: Waker) -> Key {
-        Key(self.slab.insert(CompletionHandler::new_multi(waker)))
+        Key::new(self.slab.insert(CompletionHandler::new_multi(waker)))
     }
 
     fn with_completion<T, F>(&mut self, key: Key, fun: F) -> T
     where
         F: FnOnce(&mut CompletionHandler) -> T,
     {
-        let completion = unsafe { self.slab.get_mut(key.0) };
+        let completion = unsafe { self.slab.get_mut(key.slot) };
         let value = fun(completion);
         if completion.is_finished() {
-            unsafe { self.slab.remove(key.0) };
+            unsafe { self.slab.remove(key.slot) };
         }
         value
     }
 
+    /// Returns whether the result was stored for the op.
     pub fn notify(&mut self, key: Key, result: CompletionResult) -> bool {
         self.with_completion(key, move |comp| comp.try_notify(result))
     }
 
-    pub fn cancel(&mut self, key: Key, handle: Cancellation) -> bool {
-        self.with_completion(key, move |comp| comp.try_cancel(handle))
+    /// Results that were posted but never read are passed to `unread`.
+    pub fn cancel<F>(&mut self, key: Key, handle: Cancellation, unread: F) -> bool
+    where
+        F: FnMut(CompletionResult),
+    {
+        self.with_completion(key, move |comp| comp.try_cancel(handle, unread))
     }
 
     pub fn update(&mut self, key: Key, waker: Waker) {
@@ -205,20 +230,37 @@ impl CompletionHandler {
         }
     }
 
-    fn try_cancel(&mut self, handle: Cancellation) -> bool {
+    fn try_cancel<F>(&mut self, handle: Cancellation, mut unread: F) -> bool
+    where
+        F: FnMut(CompletionResult),
+    {
         match self {
             Self::Pending { .. } => {
                 *self = Self::Cancelled { handle };
                 true
             }
-            Self::Single { .. } => {
+            Self::Single { result } => {
+                unread(*result);
                 handle.drop_raw();
                 *self = Self::Finished;
                 false
             }
-            Self::Multi { .. } => {
-                *self = Self::Cancelled { handle };
-                true
+            Self::Multi { queue, .. } => {
+                let mut done = false;
+
+                while let Some(result) = queue.pop() {
+                    done |= !result.has_more();
+                    unread(result);
+                }
+
+                if done {
+                    handle.drop_raw();
+                    *self = Self::Finished;
+                    false
+                } else {
+                    *self = Self::Cancelled { handle };
+                    true
+                }
             }
             _ => unreachable!("Cannot cancel in this state"),
         }

@@ -73,8 +73,21 @@ impl Sqe {
         self.add_flag(IoringSqeFlags::CQE_SKIP_SUCCESS);
     }
 
-    pub const fn get_buf_index(&self) -> u16 {
-        unsafe { self.0.buf.buf_index }
+    /// Lets the kernel pick the buffer from the provided buffer group `bgid`
+    /// when the op runs, instead of using `addr`.
+    pub const fn buffer_select(&mut self, bgid: u16) {
+        self.add_flag(IoringSqeFlags::BUFFER_SELECT);
+        self.0.buf.buf_group = bgid;
+    }
+
+    /// The buffer group the op selects from, if any.
+    pub const fn buf_group(&self) -> Option<u16> {
+        if self.0.flags.contains(IoringSqeFlags::BUFFER_SELECT) {
+            // SAFETY: with BUFFER_SELECT, the union holds the group
+            Some(unsafe { self.0.buf.buf_group })
+        } else {
+            None
+        }
     }
 
     const fn prep_rw(
@@ -813,7 +826,11 @@ impl<A: Allocator> BufRing<A> {
     pub fn new_in(max_entries: u16, alloc: A) -> Self {
         let capacity = max_entries.next_power_of_two();
         let layout = Self::layout(capacity);
-        let ptr = alloc.allocate(layout).expect("failed to allocate memory");
+
+        // zeroed, so the kernel sees an empty ring (tail 0) until `advance`
+        let ptr = alloc
+            .allocate_zeroed(layout)
+            .expect("failed to allocate memory");
 
         Self {
             ptr: ptr.cast(),
@@ -836,12 +853,14 @@ impl<A: Allocator> BufRing<A> {
     pub const unsafe fn add(&mut self, bid: u16, buf: *mut u8, len: u32) {
         let slot = (self.tail & self.mask) as usize;
 
+        // Write the fields through raw pointers: `resv` of the first entry is
+        // the tail, which the kernel reads concurrently, so neither a
+        // reference to the entry nor a write to `resv` is allowed.
         unsafe {
-            let entry = self.base_addr().add(slot).as_mut();
-            entry.addr = io_uring_ptr::new(buf.cast());
-            entry.len = len;
-            entry.bid = bid;
-            entry.resv = 0;
+            let entry = self.base_addr().add(slot).as_ptr();
+            (&raw mut (*entry).addr).write(io_uring_ptr::new(buf.cast()));
+            (&raw mut (*entry).len).write(len);
+            (&raw mut (*entry).bid).write(bid);
         }
 
         self.tail = self.tail.wrapping_add(1);

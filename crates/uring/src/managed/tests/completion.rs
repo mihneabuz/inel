@@ -73,7 +73,7 @@ fn cancel_pending_single() {
     let key = comp.insert_single(tw.waker());
     let handle: Cancellation = Box::new(tracked).into();
 
-    let accepted = comp.cancel(key, handle);
+    let accepted = comp.cancel(key, handle, |_| {});
     assert!(accepted);
     assert!(!dropped(&f));
 
@@ -91,7 +91,7 @@ fn cancel_already_completed_single() {
     comp.notify(key, ok(0));
 
     let handle: Cancellation = Box::new(tracked).into();
-    let accepted = comp.cancel(key, handle);
+    let accepted = comp.cancel(key, handle, |_| {});
     assert!(!accepted);
     assert!(dropped(&f));
 }
@@ -106,7 +106,7 @@ fn cancel_pending_multi() {
     comp.notify(key, ok_more(1));
 
     let handle: Cancellation = Box::new(tracked).into();
-    let accepted = comp.cancel(key, handle);
+    let accepted = comp.cancel(key, handle, |_| {});
     assert!(accepted);
     assert!(!dropped(&f));
 
@@ -124,7 +124,7 @@ fn keys_reused_after_completion() {
     comp.result(k0);
 
     let k1 = comp.insert_single(tw.waker());
-    assert_eq!(k0.0, k1.0);
+    assert_eq!(k0, k1);
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn cancel_multi_waits_for_final_completion() {
 
     let key = comp.insert_multi(tw.waker());
     let handle: Cancellation = Box::new(tracked).into();
-    assert!(comp.cancel(key, handle));
+    assert!(comp.cancel(key, handle, |_| {}));
 
     // shots that fired before the cancel reached the kernel
     comp.notify(key, ok_more(1));

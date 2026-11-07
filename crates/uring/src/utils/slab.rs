@@ -80,6 +80,7 @@ impl<T, A: Allocator> UnsafeSlab<T, A> {
     /// # Safety
     /// `key` must refer to an occupied slot returned by a prior `insert`
     /// that has not been `remove`d.
+    #[inline]
     pub unsafe fn get_mut(&mut self, key: u32) -> &mut T {
         unsafe {
             let entry = self.entry(key);
@@ -91,6 +92,7 @@ impl<T, A: Allocator> UnsafeSlab<T, A> {
     /// `key` must refer to an occupied slot returned by a prior `insert`
     /// that has not been `remove`d. Must not be called twice with the same
     /// key without a new `insert` in between.
+    #[inline]
     pub unsafe fn remove(&mut self, key: u32) {
         let next_free = self.next_free;
         unsafe {
