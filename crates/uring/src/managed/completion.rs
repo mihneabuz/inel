@@ -194,8 +194,11 @@ impl CompletionHandler {
                 true
             }
             Self::Cancelled { handle } => {
-                unsafe { handle.drop_by_ref() };
-                *self = Self::Finished;
+                // a multishot op can keep posting until its final CQE
+                if !result.has_more() {
+                    unsafe { handle.drop_by_ref() };
+                    *self = Self::Finished;
+                }
                 false
             }
             _ => unreachable!("Cannot post result in this state"),

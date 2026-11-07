@@ -172,10 +172,10 @@ impl Uring {
                 return;
             }
 
-            if !self.comp.notify(completion.key(), completion.result()) {
-                if let Some(bid) = cqe.buffer_id() {
-                    self.buf_rings.recycle(completion.bgid(), bid);
-                }
+            if !self.comp.notify(completion.key(), completion.result())
+                && let Some(bid) = cqe.buffer_id()
+            {
+                self.buf_rings.recycle(completion.bgid(), bid);
             }
         });
     }

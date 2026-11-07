@@ -12,26 +12,37 @@ use allocator_api2::alloc::{Allocator, Global};
 use rustix::{
     fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
     fs::{OFlags, Timespec},
-    io::{Errno, ReadWriteFlags},
+    io::Errno,
     io_uring::*,
     param::page_size,
 };
 
-pub use crate::utils::Mmap;
+// Miri can't run io_uring, so under miri (or with `--cfg inel_fake`) the
+// syscalls are served by an in-process emulation of the kernel side.
+#[cfg(any(miri, inel_fake))]
+#[path = "fake.rs"]
+mod system;
+#[cfg(not(any(miri, inel_fake)))]
+#[path = "real.rs"]
+mod system;
+
+#[cfg(test)]
+mod tests;
 
 const REQUIRED_FEATURES: IoringFeatureFlags = IoringFeatureFlags::SINGLE_MMAP;
 
+/// `IORING_TIMEOUT_MULTISHOT`, not yet exposed by rustix.
+pub const TIMEOUT_MULTISHOT: IoringTimeoutFlags = IoringTimeoutFlags::from_bits_retain(1 << 6);
+
+#[repr(transparent)]
 pub struct Sqe(io_uring_sqe);
 
 impl Sqe {
     pub(crate) const fn init(&mut self) {
-        self.0.flags = IoringSqeFlags::empty();
-        self.0.ioprio.ioprio = 0;
-        self.0.op_flags.rw_flags = ReadWriteFlags::empty();
-        self.0.buf.buf_index = 0;
-        self.0.personality = 0;
-        self.0.splice_fd_in_or_file_index_or_addr_len.file_index = 0;
-        self.0.addr3_or_cmd.addr3.addr3 = 0;
+        // SQE slots are reused, so clear everything: the kernel validates
+        // fields that individual `prep_*` functions don't touch.
+        // SAFETY: all-zeroes is a valid `io_uring_sqe` (opcode 0 is NOP)
+        self.0 = unsafe { mem::zeroed() };
     }
 
     const fn add_flag(&mut self, flag: IoringSqeFlags) {
@@ -168,6 +179,7 @@ impl SubmissionQueue {
     }
 }
 
+#[repr(transparent)]
 pub struct Cqe(io_uring_cqe);
 
 impl Cqe {
@@ -243,12 +255,6 @@ impl CompletionQueue {
             }
         }
     }
-}
-
-#[allow(unused)]
-struct Backing {
-    rings: Mmap,
-    sqes: Mmap,
 }
 
 pub struct IoUringOptions<'a> {
@@ -367,7 +373,7 @@ impl<'a> IoUringOptions<'a> {
 }
 
 pub struct IoUring {
-    fd: system::OwnedFd,
+    fd: system::RingFd,
 
     sq: SubmissionQueue,
     cq: CompletionQueue,
@@ -375,7 +381,7 @@ pub struct IoUring {
     setup: IoringSetupFlags,
 
     #[allow(unused)]
-    memory: Backing,
+    memory: system::Backing,
 }
 
 impl AsFd for IoUring {
@@ -385,27 +391,38 @@ impl AsFd for IoUring {
 }
 
 impl IoUring {
+    /// Creates a ring with the default [`IoUringOptions`].
     pub fn new() -> Result<Self, Errno> {
         Self::options().build()
     }
 
+    /// Starts configuring a ring; finish with [`IoUringOptions::build`].
     #[must_use]
     pub fn options<'a>() -> IoUringOptions<'a> {
         IoUringOptions::default()
     }
 
+    /// Number of entries in the submission queue.
     pub const fn sq_size(&self) -> u32 {
         self.sq.entries
     }
 
+    /// Number of entries in the completion queue.
     pub const fn cq_size(&self) -> u32 {
         self.cq.entries
     }
 
+    /// Hands the pushed SQEs to the kernel without waiting for completions.
+    /// See [`submit_and_wait`](Self::submit_and_wait).
     pub fn submit(&mut self) -> Result<u32, Errno> {
         self.submit_and_wait(0)
     }
 
+    /// Hands the pushed SQEs to the kernel and blocks until at least `want`
+    /// CQEs are available. Only enters the kernel when needed (pending SQEs
+    /// without SQPOLL, a sleeping SQPOLL thread, deferred task work, CQ
+    /// overflow, or `want > 0`). Returns the number of SQEs the kernel
+    /// consumed during this call, which is 0 if it wasn't entered.
     pub fn submit_and_wait(&mut self, want: u32) -> Result<u32, Errno> {
         let pending = self.sq_flush();
 
@@ -431,6 +448,17 @@ impl IoUring {
         Ok(submitted)
     }
 
+    /// Builds the next SQE in place with `build`. It is picked up by the
+    /// kernel on the next [`submit`](Self::submit). Fails with `NOBUFS` if the
+    /// submission queue is full.
+    ///
+    /// # Safety
+    /// Everything the SQE references (buffers, iovecs, paths, timespecs, ...)
+    /// must stay valid, and must not be moved or accessed in a way that
+    /// conflicts with the kernel, until the op's final CQE is reaped. Data the
+    /// kernel only reads while preparing the op (e.g. a timeout's timespec)
+    /// only needs to outlive the kernel consuming the SQE: after `submit`
+    /// returns, or at an unknown point with SQPOLL.
     pub unsafe fn push_sqe<F>(&mut self, build: F) -> Result<(), Errno>
     where
         F: FnOnce(&mut Sqe),
@@ -455,6 +483,8 @@ impl IoUring {
         Some(sqe)
     }
 
+    /// Calls `reap` on every CQE currently in the completion queue, then
+    /// releases them back to the kernel. Doesn't wait for new ones.
     pub fn for_each_cqe<F>(&mut self, mut reap: F)
     where
         F: FnMut(&Cqe),
@@ -564,6 +594,8 @@ impl IoUring {
         unsafe { system::io_uring_register(&self.fd, op, arg, nr_args) }
     }
 
+    /// Registers `iovecs` as fixed buffers, for the `*_FIXED` opcodes.
+    ///
     /// # Safety
     /// The memory referenced by `iovecs` must remain valid until the buffers
     /// are unregistered (or the ring is closed).
@@ -577,6 +609,8 @@ impl IoUring {
         }
     }
 
+    /// Registers a table of `nr` empty fixed buffer slots, to be filled with
+    /// [`register_buffers_update`](Self::register_buffers_update).
     pub fn register_buffers_sparse(&self, nr: u32) -> Result<u32, Errno> {
         let mut reg = io_uring_rsrc_register::default();
         reg.nr = nr;
@@ -590,6 +624,8 @@ impl IoUring {
         }
     }
 
+    /// Replaces the fixed buffers starting at slot `offset` with `iovecs`.
+    ///
     /// # Safety
     /// The memory referenced by `iovecs` must remain valid until the buffers
     /// are unregistered (or the ring is closed).
@@ -611,10 +647,13 @@ impl IoUring {
         }
     }
 
+    /// Unregisters all fixed buffers.
     pub fn unregister_buffers(&self) -> Result<u32, Errno> {
         unsafe { self.do_register(IoringRegisterOp::UnregisterBuffers, ptr::null(), 0) }
     }
 
+    /// Registers `fds` as fixed files, usable with `IOSQE_FIXED_FILE`.
+    ///
     /// # Safety
     /// `fds` must reference open file descriptors. The slice itself only needs
     /// to live for the duration of the call (the kernel copies the values).
@@ -628,6 +667,9 @@ impl IoUring {
         }
     }
 
+    /// Registers a table of `nr` empty fixed file slots, to be filled with
+    /// [`register_files_update`](Self::register_files_update) or by direct
+    /// descriptor ops.
     pub fn register_files_sparse(&self, nr: u32) -> Result<u32, Errno> {
         let mut reg = io_uring_rsrc_register::default();
         reg.nr = nr;
@@ -641,9 +683,11 @@ impl IoUring {
         }
     }
 
+    /// Replaces the fixed files starting at slot `offset` with `fds` (`-1`
+    /// clears a slot). Returns the number of files actually updated.
+    ///
     /// # Safety
     /// `fds` must reference open file descriptors for the duration of the call.
-    /// Returns the number of files actually updated.
     pub unsafe fn register_files_update(&self, offset: u32, fds: &[RawFd]) -> Result<u32, Errno> {
         let mut up = io_uring_rsrc_update::default();
         up.offset = offset;
@@ -657,6 +701,7 @@ impl IoUring {
         }
     }
 
+    /// Unregisters all fixed files.
     pub fn unregister_files(&self) -> Result<u32, Errno> {
         unsafe { self.do_register(IoringRegisterOp::UnregisterFiles, ptr::null(), 0) }
     }
@@ -708,10 +753,22 @@ impl IoUring {
         }
     }
 
+    /// Restricts the fixed file slots the kernel picks from when an op asks
+    /// it to allocate one (`IORING_FILE_INDEX_ALLOC`) to `offset..offset + len`.
     pub fn register_file_alloc_range(&self, offset: u32, len: u32) -> Result<u32, Errno> {
-        let mut reg = io_uring_file_index_range::default();
-        reg.offset = offset;
-        reg.len = len;
+        // `struct io_uring_file_index_range`, not exposed by rustix
+        #[repr(C)]
+        struct FileIndexRange {
+            offset: u32,
+            len: u32,
+            resv: u64,
+        }
+
+        let reg = FileIndexRange {
+            offset,
+            len,
+            resv: 0,
+        };
         unsafe {
             self.do_register(
                 IoringRegisterOp::RegisterFileAllocRange,
@@ -721,6 +778,8 @@ impl IoUring {
         }
     }
 
+    /// Cancels the requests matching `reg` and blocks until they have
+    /// completed (or `reg`'s timeout expires).
     pub fn register_sync_cancel(&self, reg: &io_uring_sync_cancel_reg) -> Result<u32, Errno> {
         unsafe {
             self.do_register(
@@ -814,379 +873,5 @@ impl<A: Allocator> Drop for BufRing<A> {
             self.alloc
                 .deallocate(self.ptr, Self::layout(self.capacity()));
         }
-    }
-}
-
-#[cfg(not(miri))]
-mod system {
-    use core::{cmp, mem};
-
-    use rustix::{
-        fd::AsFd,
-        ffi::c_void,
-        io::Errno,
-        io_uring::{
-            IORING_OFF_SQ_RING, IORING_OFF_SQES, IoringEnterFlags, IoringRegisterOp,
-            io_uring_params,
-        },
-    };
-
-    use super::{Backing, Cqe, Mmap, Sqe};
-
-    pub use rustix::fd::OwnedFd;
-
-    pub unsafe fn io_uring_setup(
-        entries: u32,
-        params: &mut io_uring_params,
-    ) -> Result<OwnedFd, Errno> {
-        unsafe { rustix::io_uring::io_uring_setup(entries, params) }
-    }
-
-    pub unsafe fn io_uring_enter<Fd: AsFd>(
-        fd: Fd,
-        to_submit: u32,
-        min_complete: u32,
-        flags: IoringEnterFlags,
-    ) -> Result<u32, Errno> {
-        unsafe { rustix::io_uring::io_uring_enter(fd, to_submit, min_complete, flags) }
-    }
-
-    pub unsafe fn io_uring_register<Fd: AsFd>(
-        fd: Fd,
-        opcode: IoringRegisterOp,
-        arg: *const c_void,
-        nr_args: u32,
-    ) -> Result<u32, Errno> {
-        unsafe { rustix::io_uring::io_uring_register(fd, opcode, arg, nr_args) }
-    }
-
-    pub unsafe fn io_uring_map_rings<Fd: AsFd>(
-        fd: Fd,
-        p: &io_uring_params,
-    ) -> Result<Backing, Errno> {
-        let sq_ring_size = p.sq_off.array as usize + p.sq_entries as usize * mem::size_of::<u32>();
-        let cq_ring_size = p.cq_off.cqes as usize + p.cq_entries as usize * mem::size_of::<Cqe>();
-        let rings_size = cmp::max(sq_ring_size, cq_ring_size);
-        let rings_map = unsafe { Mmap::shared(&fd, IORING_OFF_SQ_RING, rings_size) }?;
-
-        let sqes_size = p.sq_entries as usize * mem::size_of::<Sqe>();
-        let sqes_map = unsafe { Mmap::shared(&fd, IORING_OFF_SQES, sqes_size) }?;
-
-        Ok(Backing {
-            rings: rings_map,
-            sqes: sqes_map,
-        })
-    }
-}
-
-#[cfg(miri)]
-mod system {
-    use core::{
-        mem, ptr,
-        sync::atomic::{AtomicU32, Ordering},
-    };
-
-    use std::{collections::HashMap, sync::Mutex};
-
-    use rustix::{
-        fd::{AsFd, AsRawFd, BorrowedFd},
-        ffi::c_void,
-        io::Errno,
-        io_uring::{
-            IoringCqeFlags, IoringEnterFlags, IoringFeatureFlags, IoringOp, IoringRegisterOp,
-            IoringSetupFlags, IoringSqFlags, io_uring_params,
-        },
-    };
-
-    use crate::{sys::Mmap, utils::Slab};
-
-    use super::{Backing, Cqe, Sqe};
-
-    pub struct OwnedFd(i32);
-
-    impl AsFd for OwnedFd {
-        fn as_fd(&self) -> BorrowedFd<'_> {
-            unsafe { BorrowedFd::borrow_raw(self.0) }
-        }
-    }
-
-    impl Drop for OwnedFd {
-        fn drop(&mut self) {
-            FAKE_RINGS.lock().unwrap().remove(self.0 as u32);
-        }
-    }
-
-    static FAKE_RINGS: Mutex<Slab<FakeRing>> = Mutex::new(Slab::new());
-
-    struct FakeRing {
-        sq_head: *const AtomicU32,
-        sq_tail: *const AtomicU32,
-        cq_head: *const AtomicU32,
-        cq_tail: *const AtomicU32,
-
-        sqes: *const Sqe,
-        cqes: *const Cqe,
-
-        pending: Vec<Sqe>,
-
-        files: HashMap<i32, Vec<u8>>,
-        next_fd: i32,
-        seed: u32,
-    }
-
-    unsafe impl Send for FakeRing {}
-
-    impl FakeRing {
-        const ENTRIES: u32 = 16;
-
-        fn new(_entries: u32, p: &mut io_uring_params) -> Self {
-            if p.flags.contains(IoringSetupFlags::SQPOLL) {
-                panic!("Simulated io_uring does not support SQPOLL");
-            }
-
-            p.sq_entries = Self::ENTRIES;
-            p.cq_entries = Self::ENTRIES;
-
-            p.sq_off.head = 0;
-            p.sq_off.tail = 4;
-            p.sq_off.ring_mask = 8;
-            p.sq_off.ring_entries = 12;
-            p.sq_off.flags = 16;
-            p.sq_off.array = 0;
-
-            p.cq_off.head = 20;
-            p.cq_off.tail = 24;
-            p.cq_off.ring_mask = 28;
-            p.cq_off.ring_entries = 32;
-            p.cq_off.cqes = 64;
-
-            p.features = IoringFeatureFlags::SINGLE_MMAP;
-
-            Self {
-                sq_head: ptr::null(),
-                sq_tail: ptr::null(),
-                cq_head: ptr::null(),
-                cq_tail: ptr::null(),
-                sqes: ptr::null(),
-                cqes: ptr::null(),
-                pending: Vec::new(),
-                files: HashMap::new(),
-                next_fd: 100,
-                seed: 17,
-            }
-        }
-
-        fn map(&mut self, p: &io_uring_params) -> Backing {
-            let rings = Mmap::private(4096).unwrap();
-            let sqes = Mmap::private(4096).unwrap();
-
-            unsafe {
-                self.sq_head = rings.addr().offset(p.sq_off.head as isize).as_ptr().cast();
-                self.sq_tail = rings.addr().offset(p.sq_off.tail as isize).as_ptr().cast();
-                rings
-                    .addr()
-                    .offset(p.sq_off.ring_mask as isize)
-                    .cast()
-                    .write(Self::ENTRIES - 1);
-                rings
-                    .addr()
-                    .offset(p.sq_off.ring_entries as isize)
-                    .cast()
-                    .write(Self::ENTRIES);
-                rings
-                    .addr()
-                    .offset(p.sq_off.flags as isize)
-                    .cast()
-                    .write(IoringSqFlags::empty());
-
-                self.cq_head = rings.addr().offset(p.cq_off.head as isize).as_ptr().cast();
-                self.cq_tail = rings.addr().offset(p.cq_off.tail as isize).as_ptr().cast();
-                rings
-                    .addr()
-                    .offset(p.cq_off.ring_mask as isize)
-                    .cast()
-                    .write(Self::ENTRIES - 1);
-                rings
-                    .addr()
-                    .offset(p.cq_off.ring_entries as isize)
-                    .cast()
-                    .write(Self::ENTRIES);
-
-                self.cqes = rings.addr().offset(p.cq_off.cqes as isize).as_ptr().cast();
-                for i in 0..Self::ENTRIES as isize {
-                    self.cqes.offset(i).cast_mut().write(mem::zeroed());
-                }
-
-                self.sqes = sqes.addr().as_ptr().cast();
-                for i in 0..Self::ENTRIES as isize {
-                    self.sqes.offset(i).cast_mut().write(mem::zeroed());
-                }
-            }
-
-            Backing { rings, sqes }
-        }
-
-        fn enter(&mut self, to_submit: u32, min_complete: u32, _flags: IoringEnterFlags) -> u32 {
-            let mask = Self::ENTRIES - 1;
-            let head = unsafe { (*self.sq_head).load(Ordering::Relaxed) };
-            let tail = unsafe { (*self.sq_tail).load(Ordering::Relaxed) };
-            let available = tail.wrapping_sub(head);
-            let count = to_submit.min(available);
-
-            for i in 0..count {
-                let idx = (head.wrapping_add(i) & mask) as usize;
-                let sqe = unsafe { ptr::read(self.sqes.add(idx)) };
-                self.pending.push(sqe);
-            }
-
-            unsafe { (*self.sq_head).store(head.wrapping_add(count), Ordering::Relaxed) };
-
-            let cq_head = unsafe { (*self.cq_head).load(Ordering::Acquire) };
-            let cq_tail = unsafe { (*self.cq_tail).load(Ordering::Relaxed) };
-            let ready = cq_tail.wrapping_sub(cq_head);
-            let to_post = min_complete.saturating_sub(ready);
-            for _ in 0..to_post {
-                self.complete_rand();
-            }
-
-            count
-        }
-
-        fn post_cqe(&mut self, user_data: u64, res: i32) {
-            let mask = Self::ENTRIES - 1;
-            let head = unsafe { (*self.cq_head).load(Ordering::Acquire) };
-            let tail = unsafe { (*self.cq_tail).load(Ordering::Relaxed) };
-
-            assert!(tail.wrapping_sub(head) < Self::ENTRIES, "CQ overflow");
-
-            let idx = (tail & mask) as usize;
-            unsafe {
-                let slot = &mut (*self.cqes.add(idx).cast_mut()).0;
-                slot.user_data.u64_ = user_data;
-                slot.res = res;
-                slot.flags = IoringCqeFlags::empty();
-            }
-
-            unsafe { (*self.cq_tail).store(tail.wrapping_add(1), Ordering::Release) };
-        }
-
-        fn complete_rand(&mut self) {
-            if self.pending.is_empty() {
-                return;
-            }
-
-            let idx = self.rand(self.pending.len() as u32) as usize;
-            let sqe = self.pending.swap_remove(idx);
-
-            let user_data = unsafe { sqe.0.user_data.u64_ };
-            let res = match sqe.0.opcode {
-                IoringOp::Openat => self.simulate_openat(),
-                IoringOp::Read => unsafe { self.simulate_read(&sqe) },
-                IoringOp::Write => unsafe { self.simulate_write(&sqe) },
-                _ => -1,
-            };
-
-            self.post_cqe(user_data, res);
-        }
-
-        fn simulate_openat(&mut self) -> i32 {
-            let fd = self.next_fd;
-            self.next_fd += 1;
-            self.files.insert(fd, Vec::new());
-            fd
-        }
-
-        /// # Safety
-        /// `sqe` must be a valid Read SQE: `addr`/`len` describe a writable
-        /// buffer the caller still owns.
-        unsafe fn simulate_read(&mut self, sqe: &Sqe) -> i32 {
-            let fd = sqe.0.fd;
-            let addr = unsafe { sqe.0.addr_or_splice_off_in.addr.ptr } as *mut u8;
-            let len = unsafe { sqe.0.len.len } as usize;
-            let offset = unsafe { sqe.0.off_or_addr2.off } as usize;
-
-            let Some(file) = self.files.get(&fd) else {
-                return -Errno::BADF.raw_os_error();
-            };
-
-            if offset >= file.len() {
-                return 0;
-            }
-            let n = (file.len() - offset).min(len);
-
-            unsafe { ptr::copy_nonoverlapping(file.as_ptr().add(offset), addr, n) };
-
-            n as i32
-        }
-
-        /// # Safety
-        /// `sqe` must be a valid Write SQE: `addr`/`len` describe a readable
-        /// buffer the caller still owns.
-        unsafe fn simulate_write(&mut self, sqe: &Sqe) -> i32 {
-            let fd = sqe.0.fd;
-            let addr = unsafe { sqe.0.addr_or_splice_off_in.addr.ptr } as *const u8;
-            let len = unsafe { sqe.0.len.len } as usize;
-            let offset = unsafe { sqe.0.off_or_addr2.off } as usize;
-
-            let Some(file) = self.files.get_mut(&fd) else {
-                return -Errno::BADF.raw_os_error();
-            };
-
-            let end = offset + len;
-            if file.len() < end {
-                file.resize(end, 0);
-            }
-
-            unsafe { ptr::copy_nonoverlapping(addr, file.as_mut_ptr().add(offset), len) };
-
-            len as i32
-        }
-
-        fn rand(&mut self, max: u32) -> u32 {
-            self.seed = self.seed.wrapping_mul(31).wrapping_add(101);
-            self.seed % max
-        }
-    }
-
-    pub unsafe fn io_uring_setup(
-        entries: u32,
-        params: &mut io_uring_params,
-    ) -> Result<OwnedFd, Errno> {
-        let ring = FakeRing::new(entries, params);
-        let idx = FAKE_RINGS.lock().unwrap().insert(ring);
-        Ok(OwnedFd(idx as i32))
-    }
-
-    pub unsafe fn io_uring_map_rings<Fd: AsFd>(
-        fd: Fd,
-        p: &io_uring_params,
-    ) -> Result<Backing, Errno> {
-        Ok(FAKE_RINGS
-            .lock()
-            .unwrap()
-            .get_mut(fd.as_fd().as_raw_fd() as u32)
-            .map(p))
-    }
-
-    pub unsafe fn io_uring_enter<Fd: AsFd>(
-        fd: Fd,
-        to_submit: u32,
-        min_complete: u32,
-        flags: IoringEnterFlags,
-    ) -> Result<u32, Errno> {
-        Ok(FAKE_RINGS
-            .lock()
-            .unwrap()
-            .get_mut(fd.as_fd().as_raw_fd() as u32)
-            .enter(to_submit, min_complete, flags))
-    }
-
-    pub unsafe fn io_uring_register<Fd: AsFd>(
-        _fd: Fd,
-        _opcode: IoringRegisterOp,
-        _arg: *const c_void,
-        _nr_args: u32,
-    ) -> Result<u32, Errno> {
-        panic!("Simulated io_uring cannot register");
     }
 }
