@@ -2,6 +2,7 @@ mod buffer;
 mod cancellation;
 mod completion;
 mod read;
+mod select;
 mod submission;
 mod write;
 

@@ -438,6 +438,35 @@ enum Op {
 }
 
 impl Op {
+    /// Checks the kernel does when the request is issued, before it waits for
+    /// readiness or touches user memory: the fd must be open in the right
+    /// direction, and a buffer-select read needs a buffer in its group. Like
+    /// the kernel, the buffer is only peeked here; it is picked again when the
+    /// read actually runs.
+    fn issue(&self, state: &State) -> Result<(), Errno> {
+        let (fd, read) = match *self {
+            Self::Read { fd, .. } => (fd, true),
+            Self::Write { fd, .. } => (fd, false),
+            _ => return Ok(()),
+        };
+
+        let mode = fs::fcntl_getfl(borrow_fd(fd)?)? & OFlags::RWMODE;
+        let denied = if read { OFlags::WRONLY } else { OFlags::RDONLY };
+        if mode == denied {
+            return Err(Errno::BADF);
+        }
+
+        if let Self::Read {
+            select: Some(bgid), ..
+        } = *self
+            && state.buf_rings.get(&bgid).and_then(BufRing::peek).is_none()
+        {
+            return Err(Errno::NOBUFS);
+        }
+
+        Ok(())
+    }
+
     /// Stream I/O must wait for readiness instead of blocking the kernel
     /// thread.
     const fn readiness(&self) -> Option<(RawFd, epoll::EventFlags)> {
@@ -1129,6 +1158,15 @@ impl Kernel {
         let len = state.ready.len();
         let pick = state.rng.below(len);
         let id = state.ready.swap_remove(pick);
+        let req = &state.requests[&id];
+        if !req.ready
+            && let Err(err) = req.op.issue(&state)
+        {
+            let req = state.requests.remove(&id).unwrap();
+            self.post(&mut state, req.user_data, -err.raw_os_error(), false);
+            return state;
+        }
+
         let req = state.requests.get_mut(&id).unwrap();
 
         if let Some((fd, interest)) = req.op.readiness()
@@ -1209,8 +1247,11 @@ impl Kernel {
                 req.status = Status::Queued;
                 state.ready.push(id);
             }
-            Ok(res) => {
+            res => {
                 let req = state.requests.remove(&id).unwrap();
+                let res = res.unwrap_or_else(|err| -err.raw_os_error());
+                // the picked buffer is consumed even if the read failed, and
+                // the CQE says which one it was
                 let mut flags = IoringCqeFlags::empty();
                 if let Some((bgid, bid)) = selected {
                     if let Some(ring) = state.buf_rings.get_mut(&bgid) {
@@ -1222,15 +1263,6 @@ impl Kernel {
                         );
                 }
                 self.post_flags(&mut state, req.user_data, res, flags, req.skip_success);
-            }
-            Err(err) => {
-                let req = state.requests.remove(&id).unwrap();
-                self.post(
-                    &mut state,
-                    req.user_data,
-                    -err.raw_os_error(),
-                    req.skip_success,
-                );
             }
         }
         state

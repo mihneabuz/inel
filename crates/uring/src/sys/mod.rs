@@ -39,9 +39,7 @@ pub struct Sqe(io_uring_sqe);
 
 impl Sqe {
     pub(crate) const fn init(&mut self) {
-        // SQE slots are reused, so clear everything: the kernel validates
-        // fields that individual `prep_*` functions don't touch.
-        // SAFETY: all-zeroes is a valid `io_uring_sqe` (opcode 0 is NOP)
+        // SAFETY: all-zeroes is a valid `io_uring_sqe`
         self.0 = unsafe { mem::zeroed() };
     }
 
@@ -140,18 +138,18 @@ impl Sqe {
 }
 
 struct SubmissionQueue {
-    pub(crate) head: u32,
-    pub(crate) tail: u32,
+    head: u32,
+    tail: u32,
 
-    pub(crate) khead: NonNull<AtomicU32>,
-    pub(crate) ktail: NonNull<AtomicU32>,
+    khead: NonNull<AtomicU32>,
+    ktail: NonNull<AtomicU32>,
 
-    pub(crate) mask: u32,
-    pub(crate) entries: u32,
+    mask: u32,
+    entries: u32,
 
-    pub(crate) flags: NonNull<AtomicU32>,
+    flags: NonNull<AtomicU32>,
 
-    pub(crate) sqes: NonNull<Sqe>,
+    sqes: NonNull<Sqe>,
 }
 
 impl SubmissionQueue {
@@ -229,13 +227,13 @@ impl Cqe {
 }
 
 struct CompletionQueue {
-    pub(crate) khead: NonNull<AtomicU32>,
-    pub(crate) ktail: NonNull<AtomicU32>,
+    khead: NonNull<AtomicU32>,
+    ktail: NonNull<AtomicU32>,
 
-    pub(crate) mask: u32,
-    pub(crate) entries: u32,
+    mask: u32,
+    entries: u32,
 
-    pub(crate) cqes: NonNull<Cqe>,
+    cqes: NonNull<Cqe>,
 }
 
 impl CompletionQueue {
@@ -729,7 +727,7 @@ impl IoUring {
     /// consume provided buffers.
     pub unsafe fn register_buf_ring<A: Allocator>(
         &self,
-        ring: &BufRing<A>,
+        ring: &IoBufRing<A>,
         bgid: u16,
         flags: u16,
     ) -> Result<u32, Errno> {
@@ -804,20 +802,20 @@ impl IoUring {
     }
 }
 
-pub struct BufRing<A: Allocator = Global> {
+pub struct IoBufRing<A: Allocator = Global> {
     ptr: NonNull<u8>,
     mask: u16,
     tail: u16,
     alloc: A,
 }
 
-impl BufRing<Global> {
+impl IoBufRing<Global> {
     pub fn new(max_entries: u16) -> Self {
         Self::new_in(max_entries, Global)
     }
 }
 
-impl<A: Allocator> BufRing<A> {
+impl<A: Allocator> IoBufRing<A> {
     fn layout(capacity: u16) -> Layout {
         let bytes = capacity as usize * size_of::<io_uring_buf>();
         Layout::from_size_align(bytes, page_size()).unwrap()
@@ -886,7 +884,7 @@ impl<A: Allocator> BufRing<A> {
     }
 }
 
-impl<A: Allocator> Drop for BufRing<A> {
+impl<A: Allocator> Drop for IoBufRing<A> {
     fn drop(&mut self) {
         unsafe {
             self.alloc

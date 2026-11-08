@@ -3,18 +3,23 @@ use core::task::Waker;
 use rustix::io_uring::*;
 
 use crate::{
-    managed::{cancellation::Cancellation, uring::BufGroupId},
+    managed::{cancellation::Cancellation, group::BufGroupId, group::BufId},
     sys::{Cqe, Sqe},
     utils::{Deque, UnsafeSlab},
 };
 
 /// Identifies a submitted op. It is the op's `user_data`, so it comes back
 /// with every CQE and cancellation can match it exactly.
-#[repr(packed)]
+///
+/// Packed so it has no padding: 6 bytes instead of 8, which keeps the
+/// `SubmissionState` holding it at 7 bytes instead of 12.
+#[repr(Rust, packed)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Key {
+    /// The op's slot in `Completions`.
     slot: u32,
-    group: Option<BufGroupId>,
+    /// The buffer group the op picks a buffer from, if any.
+    gid: Option<BufGroupId>,
 }
 
 impl Key {
@@ -23,31 +28,36 @@ impl Key {
     pub const IGNORE: Self = Self::new(u32::MAX);
 
     const fn new(slot: u32) -> Self {
-        Self { slot, group: None }
+        Self { slot, gid: None }
     }
 
+    /// Records the buffer group a prepared SQE selects from, so completions
+    /// and cancellation know which group a returned buffer belongs to.
     pub fn add_group_id(&mut self, sqe: &Sqe) -> &mut Self {
-        self.group = sqe.buf_group().and_then(BufGroupId::new);
+        self.gid = sqe.buf_group().and_then(BufGroupId::from_raw);
         self
     }
 
+    /// The buffer group the op picks a buffer from, if any.
     pub const fn group_id(&self) -> Option<BufGroupId> {
-        self.group
+        self.gid
     }
 
-    /// Layout: slot in bits 0..32, group in 32..48 (0 for none).
+    /// Encodes the key as `user_data`: slot in bits 0..32, group in 32..48
+    /// (0 for none).
     pub const fn as_raw(&self) -> u64 {
-        let group = match self.group {
-            Some(group) => group.raw(),
+        let gid = match self.gid {
+            Some(gid) => gid.as_raw(),
             None => 0,
         };
-        self.slot as u64 | (group as u64) << 32
+        self.slot as u64 | (gid as u64) << 32
     }
 
+    /// Decodes a CQE's `user_data`. Inverse of [`Self::as_raw`].
     pub const fn from_raw(raw: u64) -> Self {
         Self {
             slot: raw as u32,
-            group: BufGroupId::new((raw >> 32) as u16),
+            gid: BufGroupId::from_raw((raw >> 32) as u16),
         }
     }
 }
@@ -72,10 +82,11 @@ impl CompletionResult {
         self.flags.contains(IoringCqeFlags::MORE)
     }
 
-    pub fn buffer_id(&self) -> Option<u16> {
+    pub fn buffer_id(&self) -> Option<BufId> {
         self.flags
             .contains(IoringCqeFlags::BUFFER)
             .then_some((self.flags.bits() >> IORING_CQE_BUFFER_SHIFT) as u16)
+            .map(BufId::from_raw)
     }
 
     #[cfg(test)]
