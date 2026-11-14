@@ -240,7 +240,7 @@ fn read_into_box_view() {
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(4));
-    assert_eq!((buf.begin(), buf.end()), (2, Some(6)));
+    assert_eq!((buf.start(), buf.end()), (2, Some(6)));
     assert_eq!(&*buf.into_inner(), b"..hell..");
 }
 
