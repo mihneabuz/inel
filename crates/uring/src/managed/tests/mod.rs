@@ -1,8 +1,10 @@
 mod buffer;
 mod cancellation;
 mod completion;
+mod direct;
 mod read;
 mod select;
+mod shutdown;
 mod submission;
 mod write;
 
@@ -18,12 +20,12 @@ use std::{
 };
 
 use rustix::{
-    fd::{AsRawFd, RawFd},
-    io_uring::{IoringAsyncCancelFlags, IoringTimeoutFlags, Timespec},
+    fd::RawFd,
+    io_uring::{IoringAsyncCancelFlags, IoringSqeFlags, IoringTimeoutFlags, Timespec},
 };
 
 use crate::{
-    managed::{Uring, UringProxy, submission::Op},
+    managed::{IoSource, Uring, UringProxy, submission::Op},
     sys::Sqe,
 };
 
@@ -39,7 +41,8 @@ pub struct TestRing {
     ring: Rc<RefCell<Uring>>,
 }
 
-impl UringProxy for TestRing {
+// SAFETY: every clone shares the same `Uring` through the `Rc`
+unsafe impl UringProxy for TestRing {
     fn with<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&mut Uring) -> T,
@@ -52,6 +55,12 @@ impl TestRing {
     pub fn new() -> Self {
         Self {
             ring: Rc::new(RefCell::new(Uring::new().unwrap())),
+        }
+    }
+
+    pub fn with_direct_files(direct_files: u32) -> Self {
+        Self {
+            ring: Rc::new(RefCell::new(Uring::with_direct_files(direct_files).unwrap())),
         }
     }
 
@@ -79,21 +88,27 @@ pub fn block_on<F: Future>(ring: &TestRing, mut fut: Pin<&mut F>) -> F::Output {
 /// An fd that is never valid, for error paths.
 pub struct BadFd;
 
-impl AsRawFd for BadFd {
-    fn as_raw_fd(&self) -> RawFd {
+impl IoSource for BadFd {
+    fn raw_fd(&self) -> RawFd {
         -1
+    }
+
+    fn flags(&self) -> IoringSqeFlags {
+        IoringSqeFlags::empty()
     }
 }
 
 pub struct Nop;
 
-impl Op for Nop {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+// SAFETY: test op, see its docs
+unsafe impl Op for Nop {
+    fn prep(&mut self, sqe: &mut Sqe) {
         sqe.prep_nop();
     }
 }
 
-impl SingleOp for Nop {
+// SAFETY: never multishot
+unsafe impl SingleOp for Nop {
     type Output = i32;
     fn result(self, cqe: CompletionResult) -> i32 {
         cqe.result()
@@ -102,7 +117,7 @@ impl SingleOp for Nop {
 
 impl MultiOp for Nop {
     type Output = i32;
-    fn result(self: Pin<&mut Self>, cqe: CompletionResult) -> i32 {
+    fn result(&mut self, cqe: CompletionResult) -> i32 {
         cqe.result()
     }
 }
@@ -120,8 +135,9 @@ impl OwnedOp {
     }
 }
 
-impl Op for OwnedOp {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+// SAFETY: test op, see its docs
+unsafe impl Op for OwnedOp {
+    fn prep(&mut self, sqe: &mut Sqe) {
         sqe.prep_nop();
     }
 
@@ -130,14 +146,15 @@ impl Op for OwnedOp {
     }
 }
 
-impl SingleOp for OwnedOp {
+// SAFETY: never multishot
+unsafe impl SingleOp for OwnedOp {
     type Output = ();
     fn result(self, _: CompletionResult) {}
 }
 
 impl MultiOp for OwnedOp {
     type Output = ();
-    fn result(self: Pin<&mut Self>, _: CompletionResult) {}
+    fn result(&mut self, _: CompletionResult) {}
 }
 
 /// Timeout; the kernel copies the timespec during submission.
@@ -160,8 +177,9 @@ impl Timeout {
     }
 }
 
-impl Op for Timeout {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+// SAFETY: test op, see its docs
+unsafe impl Op for Timeout {
+    fn prep(&mut self, sqe: &mut Sqe) {
         sqe.prep_timeout(&*self.ts, self.count, self.flags);
     }
 
@@ -170,7 +188,8 @@ impl Op for Timeout {
     }
 }
 
-impl SingleOp for Timeout {
+// SAFETY: never multishot
+unsafe impl SingleOp for Timeout {
     type Output = i32;
     fn result(self, cqe: CompletionResult) -> i32 {
         cqe.result()
@@ -179,7 +198,7 @@ impl SingleOp for Timeout {
 
 impl MultiOp for Timeout {
     type Output = i32;
-    fn result(self: Pin<&mut Self>, cqe: CompletionResult) -> i32 {
+    fn result(&mut self, cqe: CompletionResult) -> i32 {
         cqe.result()
     }
 }
@@ -187,13 +206,15 @@ impl MultiOp for Timeout {
 /// Cancels every in-flight op.
 pub struct CancelAll;
 
-impl Op for CancelAll {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+// SAFETY: test op, see its docs
+unsafe impl Op for CancelAll {
+    fn prep(&mut self, sqe: &mut Sqe) {
         sqe.prep_cancel(0, IoringAsyncCancelFlags::ANY);
     }
 }
 
-impl DetachOp for CancelAll {}
+// SAFETY: references no memory
+unsafe impl DetachOp for CancelAll {}
 
 pub struct TestWaker {
     woken: AtomicBool,

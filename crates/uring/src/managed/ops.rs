@@ -1,19 +1,21 @@
-use core::{pin::Pin, ptr};
+use core::ptr;
+use std::ffi::{CStr, CString};
 
 use rustix::{
-    fd::{AsRawFd, RawFd},
+    fd::AsRawFd,
+    fs::{CWD, Mode, OFlags},
     io::Errno,
 };
 
 use crate::{
     managed::{
-        SelectBuf, SelectGroup, UringProxy,
+        DirectFd, IoSource, SelectBuf, SelectGroup, UringProxy,
         buffer::{InFlight, IoBuf, IoBufMut},
         cancellation::Cancellation,
         completion::CompletionResult,
         submission::{Op, SingleOp},
     },
-    sys::Sqe,
+    sys::{FILE_INDEX_ALLOC, Sqe},
 };
 
 mod private {
@@ -57,39 +59,40 @@ const fn expect_positive(res: &CompletionResult) -> Result<usize, Errno> {
     }
 }
 
-pub struct Read<B: IoBufMut, O: Offset = Current> {
-    fd: RawFd,
+pub struct Read<'a, S: IoSource, B: IoBufMut, O: Offset = Current> {
+    src: &'a S,
     buf: InFlight<B>,
     offset: O,
 }
 
-impl<B: IoBufMut> Read<B> {
-    pub fn new(fd: &impl AsRawFd, buf: B) -> Self {
+impl<'a, S: IoSource, B: IoBufMut> Read<'a, S, B> {
+    pub fn new(src: &'a S, buf: B) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             buf: InFlight::new(buf),
             offset: Current,
         }
     }
 }
 
-impl<B: IoBufMut> Read<B, At> {
-    pub fn new_at(fd: &impl AsRawFd, buf: B, offset: usize) -> Self {
+impl<'a, S: IoSource, B: IoBufMut> Read<'a, S, B, At> {
+    pub fn new_at(src: &'a S, buf: B, offset: usize) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             buf: InFlight::new(buf),
             offset: At(offset),
         }
     }
 }
 
-impl<B: IoBufMut, O: Offset> Op for Read<B, O> {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
-        // SAFETY: nothing is moved out of the pinned op
-        let this = unsafe { self.get_unchecked_mut() };
-        let (ptr, len) = this.buf.raw_buf_mut();
+// SAFETY: the SQE only references the buffer, which lives behind `InFlight`
+// and is handed over on cancel
+unsafe impl<S: IoSource, B: IoBufMut, O: Offset> Op for Read<'_, S, B, O> {
+    fn prep(&mut self, sqe: &mut Sqe) {
+        let (ptr, len) = self.buf.raw_buf_mut();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
-        sqe.prep_read(this.fd, ptr, len, this.offset.position());
+        sqe.prep_read(self.src.raw_fd(), ptr, len, self.offset.position());
+        sqe.add_flag(self.src.flags());
     }
 
     fn cancel(self) -> (Cancellation, bool) {
@@ -97,7 +100,8 @@ impl<B: IoBufMut, O: Offset> Op for Read<B, O> {
     }
 }
 
-impl<B: IoBufMut, O: Offset> SingleOp for Read<B, O> {
+// SAFETY: a plain read, one CQE
+unsafe impl<S: IoSource, B: IoBufMut, O: Offset> SingleOp for Read<'_, S, B, O> {
     type Output = (B, Result<usize, Errno>);
 
     fn result(self, cqe: CompletionResult) -> Self::Output {
@@ -111,39 +115,40 @@ impl<B: IoBufMut, O: Offset> SingleOp for Read<B, O> {
     }
 }
 
-pub struct Write<B: IoBuf, O: Offset = Current> {
-    fd: RawFd,
+pub struct Write<'a, S: IoSource, B: IoBuf, O: Offset = Current> {
+    src: &'a S,
     buf: InFlight<B>,
     offset: O,
 }
 
-impl<B: IoBuf> Write<B> {
-    pub fn new(fd: &impl AsRawFd, buf: B) -> Self {
+impl<'a, S: IoSource, B: IoBuf> Write<'a, S, B> {
+    pub fn new(src: &'a S, buf: B) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             buf: InFlight::new(buf),
             offset: Current,
         }
     }
 }
 
-impl<B: IoBuf> Write<B, At> {
-    pub fn new_at(fd: &impl AsRawFd, buf: B, offset: usize) -> Self {
+impl<'a, S: IoSource, B: IoBuf> Write<'a, S, B, At> {
+    pub fn new_at(src: &'a S, buf: B, offset: usize) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             buf: InFlight::new(buf),
             offset: At(offset),
         }
     }
 }
 
-impl<B: IoBuf, O: Offset> Op for Write<B, O> {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
-        // SAFETY: nothing is moved out of the pinned op
-        let this = unsafe { self.get_unchecked_mut() };
-        let (ptr, len) = this.buf.raw_buf();
+// SAFETY: the SQE only references the buffer, which lives behind `InFlight`
+// and is handed over on cancel
+unsafe impl<S: IoSource, B: IoBuf, O: Offset> Op for Write<'_, S, B, O> {
+    fn prep(&mut self, sqe: &mut Sqe) {
+        let (ptr, len) = self.buf.raw_buf();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
-        sqe.prep_write(this.fd, ptr, len, this.offset.position());
+        sqe.prep_write(self.src.raw_fd(), ptr, len, self.offset.position());
+        sqe.add_flag(self.src.flags());
     }
 
     fn cancel(self) -> (Cancellation, bool) {
@@ -151,7 +156,8 @@ impl<B: IoBuf, O: Offset> Op for Write<B, O> {
     }
 }
 
-impl<B: IoBuf, O: Offset> SingleOp for Write<B, O> {
+// SAFETY: a plain write, one CQE
+unsafe impl<S: IoSource, B: IoBuf, O: Offset> SingleOp for Write<'_, S, B, O> {
     type Output = (B, Result<usize, Errno>);
 
     fn result(self, cqe: CompletionResult) -> Self::Output {
@@ -169,42 +175,46 @@ impl<B: IoBuf, O: Offset> SingleOp for Write<B, O> {
 ///
 /// Fails with `ENOBUFS` if the group has no free buffer at that point; on
 /// pollable fds nothing was read then, so the read can simply be retried.
-pub struct ReadSelect<U: UringProxy, O: Offset = Current> {
-    fd: RawFd,
+pub struct ReadSelect<'a, U: UringProxy, S: IoSource, O: Offset = Current> {
+    src: &'a S,
     group: SelectGroup<U>,
     offset: O,
 }
 
-impl<U: UringProxy> ReadSelect<U> {
-    pub fn new(fd: &impl AsRawFd, group: &SelectGroup<U>) -> Self {
+impl<'a, U: UringProxy, S: IoSource> ReadSelect<'a, U, S> {
+    pub fn new(src: &'a S, group: &SelectGroup<U>) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             group: group.clone(),
             offset: Current,
         }
     }
 }
 
-impl<U: UringProxy> ReadSelect<U, At> {
-    pub fn new_at(fd: &impl AsRawFd, group: &SelectGroup<U>, offset: usize) -> Self {
+impl<'a, U: UringProxy, S: IoSource> ReadSelect<'a, U, S, At> {
+    pub fn new_at(src: &'a S, group: &SelectGroup<U>, offset: usize) -> Self {
         Self {
-            fd: fd.as_raw_fd(),
+            src,
             group: group.clone(),
             offset: At(offset),
         }
     }
 }
 
-impl<U: UringProxy, O: Offset> Op for ReadSelect<U, O> {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
+// SAFETY: the SQE references no memory, the kernel picks a buffer from the
+// group, which the ring keeps alive while the op is in flight
+unsafe impl<U: UringProxy, S: IoSource, O: Offset> Op for ReadSelect<'_, U, S, O> {
+    fn prep(&mut self, sqe: &mut Sqe) {
         let size = self.group.buffer_size();
         let offset = self.offset.position();
-        sqe.prep_read(self.fd, ptr::null_mut(), size, offset);
+        sqe.prep_read(self.src.raw_fd(), ptr::null_mut(), size, offset);
+        sqe.add_flag(self.src.flags());
         sqe.buffer_select(self.group.id().as_raw());
     }
 }
 
-impl<U: UringProxy, O: Offset> SingleOp for ReadSelect<U, O> {
+// SAFETY: a plain (not multishot) read, one CQE
+unsafe impl<U: UringProxy, S: IoSource, O: Offset> SingleOp for ReadSelect<'_, U, S, O> {
     type Output = Result<SelectBuf<U>, Errno>;
 
     fn result(self, cqe: CompletionResult) -> Self::Output {
@@ -221,5 +231,57 @@ impl<U: UringProxy, O: Offset> SingleOp for ReadSelect<U, O> {
             }
             (Ok(_), None) => unreachable!("buffer select read completed without a buffer"),
         }
+    }
+}
+
+/// Opens a file (relative to the current directory) as a [`DirectFd`] in a
+/// slot the kernel picks.
+///
+/// `O_CLOEXEC` is ignored: direct descriptors aren't inherited anyway. Fails
+/// with `ENFILE` when the table is full.
+///
+/// Dropping the submission after the kernel opened the file leaks the slot
+/// (until the ring is dropped): the result is discarded unread.
+pub struct OpenDirect<U: UringProxy> {
+    path: CString,
+    flags: OFlags,
+    mode: Mode,
+    ring: U,
+}
+
+impl<U: UringProxy> OpenDirect<U> {
+    /// `ring` must be the ring the op runs on: it owns the descriptor.
+    pub fn new(path: &CStr, flags: OFlags, mode: Mode, ring: U) -> Self {
+        Self {
+            path: path.to_owned(),
+            flags: flags.difference(OFlags::CLOEXEC),
+            mode,
+            ring,
+        }
+    }
+}
+
+// SAFETY: the SQE only references the path, which lives on the heap and is
+// handed over on cancel
+unsafe impl<U: UringProxy> Op for OpenDirect<U> {
+    fn prep(&mut self, sqe: &mut Sqe) {
+        sqe.prep_openat(CWD.as_raw_fd(), self.path.as_ptr(), self.flags, self.mode.bits());
+        sqe.set_file_index(FILE_INDEX_ALLOC);
+    }
+
+    fn cancel(self) -> (Cancellation, bool) {
+        (Box::new(self.path).into(), true)
+    }
+}
+
+// SAFETY: a plain open, one CQE
+unsafe impl<U: UringProxy> SingleOp for OpenDirect<U> {
+    type Output = Result<DirectFd<U>, Errno>;
+
+    fn result(self, cqe: CompletionResult) -> Self::Output {
+        let slot = expect_positive(&cqe)?;
+        // SAFETY: the kernel allocated the slot for this op, and the ring
+        // started tracking it when handing out the result
+        Ok(unsafe { DirectFd::from_raw(slot as u32, self.ring) })
     }
 }

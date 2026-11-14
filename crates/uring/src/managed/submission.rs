@@ -9,7 +9,7 @@ use rustix::io_uring::IoringAsyncCancelFlags;
 
 use crate::{
     managed::{
-        UringProxy,
+        UringProxy, UringProxyExt,
         cancellation::Cancellation,
         completion::{CompletionResult, Key},
     },
@@ -27,6 +27,10 @@ pub struct Submission<O: Op, U: UringProxy> {
     state: SubmissionState,
     ring: U,
 }
+
+// Nothing is structurally pinned: whatever the kernel references lives outside
+// the op (see `Op`), so the op can move while in flight.
+impl<O: Op, U: UringProxy> Unpin for Submission<O, U> {}
 
 impl<O: Op, U: UringProxy> Drop for Submission<O, U> {
     fn drop(&mut self) {
@@ -59,47 +63,42 @@ impl<O: Op, U: UringProxy> Submission<O, U> {
         }
     }
 
-    fn project(self: Pin<&mut Self>) -> (Pin<&mut O>, &mut SubmissionState, &U) {
-        // SAFETY: only the inner op must be pinned
-        unsafe {
-            let this = self.get_unchecked_mut();
-            (
-                Pin::new_unchecked(&mut this.op),
-                &mut this.state,
-                &this.ring,
-            )
-        }
+    /// # Safety
+    /// The op must not be used afterwards.
+    unsafe fn take_op(&mut self) -> O {
+        unsafe { ManuallyDrop::take(&mut self.op) }
     }
 
-    unsafe fn take_op(self: Pin<&mut Self>) -> O {
-        unsafe { ManuallyDrop::take(&mut self.get_unchecked_mut().op) }
-    }
-
-    unsafe fn drop_op(self: Pin<&mut Self>) {
-        unsafe { ManuallyDrop::drop(&mut self.get_unchecked_mut().op) }
+    /// # Safety
+    /// The op must not be used afterwards.
+    unsafe fn drop_op(&mut self) {
+        unsafe { ManuallyDrop::drop(&mut self.op) }
     }
 }
 
 impl<O: SingleOp, U: UringProxy> Future for Submission<O, U> {
     type Output = O::Output;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (op, state, ring) = self.as_mut().project();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
 
-        match state {
+        match this.state {
             SubmissionState::Initial => {
-                let key = ring.submit(op, cx.waker().clone());
-                *state = SubmissionState::Submitted(key);
+                let key = this.ring.submit(&mut *this.op, cx.waker().clone());
+                this.state = SubmissionState::Submitted(key);
             }
 
             SubmissionState::Submitted(key) => {
-                if let Some(result) = ring.result(*key) {
-                    *state = SubmissionState::Completed;
+                if let Some(result) = this.ring.result(key) {
+                    this.state = SubmissionState::Completed;
                     // SAFETY: we got the completion of the op so there are no more
-                    // references to it in the kernel
-                    let op = unsafe { self.take_op() };
+                    // references to it in the kernel, and the state is Completed
+                    let op = unsafe { this.take_op() };
                     return Poll::Ready(op.result(result));
                 }
+
+                // the future may have moved to another task since the last poll
+                this.ring.update(key, cx.waker());
             }
 
             SubmissionState::Completed => panic!("Polled already completed submission"),
@@ -118,30 +117,35 @@ impl<O: SingleOp, U: UringProxy> FusedFuture for Submission<O, U> {
 impl<O: MultiOp, U: UringProxy> Stream for Submission<O, U> {
     type Item = O::Output;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let (op, state, ring) = self.as_mut().project();
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
 
-        match state {
+        match this.state {
             SubmissionState::Initial => {
-                let key = ring.submit_multi(op, cx.waker().clone());
-                *state = SubmissionState::Submitted(key);
+                let key = this.ring.submit_multi(&mut *this.op, cx.waker().clone());
+                this.state = SubmissionState::Submitted(key);
                 Poll::Pending
             }
 
             #[allow(clippy::option_if_let_else)]
-            SubmissionState::Submitted(key) => match ring.result(*key) {
+            SubmissionState::Submitted(key) => match this.ring.result(key) {
                 Some(result) => {
                     let has_more = result.has_more();
-                    let res = op.result(result);
+                    let res = this.op.result(result);
                     if !has_more {
-                        *state = SubmissionState::Completed;
+                        this.state = SubmissionState::Completed;
                         // SAFETY: we got the last completion of the op so there are
-                        //  no more references to it in the kernel
-                        unsafe { self.drop_op() };
+                        // no more references to it in the kernel, and the state is
+                        // Completed
+                        unsafe { this.drop_op() };
                     }
                     Poll::Ready(Some(res))
                 }
-                None => Poll::Pending,
+                None => {
+                    // the stream may have moved to another task since the last poll
+                    this.ring.update(key, cx.waker());
+                    Poll::Pending
+                }
             },
 
             SubmissionState::Completed => Poll::Ready(None),
@@ -149,9 +153,20 @@ impl<O: MultiOp, U: UringProxy> Stream for Submission<O, U> {
     }
 }
 
-pub trait Op {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe);
+/// An operation that can be submitted to the ring.
+///
+/// # Safety
+/// Everything the SQE built by [`Self::prep`] references (buffers, paths,
+/// timespecs, ...) must be owned by the op, but not stored inline in it: the
+/// op may be moved while in flight. That memory must stay valid until the op's
+/// final CQE, which is when the op is consumed by its `result`, or, if the op
+/// is cancelled first, until the [`Cancellation`] returned by [`Self::cancel`]
+/// is dropped.
+pub unsafe trait Op {
+    fn prep(&mut self, sqe: &mut Sqe);
 
+    /// Hands over everything the kernel may still reference, to be freed once
+    /// the op completes, and whether an `AsyncCancel` should be submitted.
     fn cancel(self) -> (Cancellation, bool)
     where
         Self: Sized,
@@ -159,50 +174,73 @@ pub trait Op {
         (Cancellation::empty(), true)
     }
 
-    fn run_on<U: UringProxy>(self, ring: U) -> Submission<Self, U>
+    fn run_on<U: UringProxy>(self, uring: U) -> Submission<Self, U>
     where
         Self: Sized,
     {
-        Submission::new(self, ring)
+        Submission::new(self, uring)
     }
 }
 
-pub trait SingleOp: Op {
+/// An op that completes with a single CQE.
+///
+/// # Safety
+/// The SQE built by [`Op::prep`] must complete with exactly one CQE, so it
+/// must not request a multishot variant.
+pub unsafe trait SingleOp: Op {
     type Output;
     fn result(self, cqe: CompletionResult) -> Self::Output;
 }
 
+/// An op that may complete with several CQEs, the last one without
+/// `IORING_CQE_F_MORE`.
 pub trait MultiOp: Op {
     type Output;
-    fn result(self: Pin<&mut Self>, cqe: CompletionResult) -> Self::Output;
+    fn result(&mut self, cqe: CompletionResult) -> Self::Output;
 }
 
-pub trait DetachOp: Op + Unpin {
-    fn prep_detached(&mut self, sqe: &mut Sqe) {
-        unsafe { Pin::new(self).prep(sqe) }
-    }
-
-    fn run_detached<U: UringProxy>(self, mut ring: U)
+/// An op submitted without waiting for its completion, which is ignored.
+///
+/// # Safety
+/// The op is dropped right after [`Self::prep_detached`], so the SQE must not
+/// reference any memory owned by it. It must also not select a buffer from a
+/// buffer group, since the completion carrying it is ignored.
+pub unsafe trait DetachOp: Op {
+    fn run_detached<U: UringProxy>(self, mut uring: U)
     where
         Self: Sized,
     {
-        ring.submit_detached(self);
+        uring.submit_detached(self);
     }
 }
 
 pub struct AsyncCancel {
-    key: Key,
+    user_data: u64,
+    flags: IoringAsyncCancelFlags,
 }
 
 impl AsyncCancel {
+    /// Cancels the op submitted with `key`.
     pub const fn new(key: Key) -> Self {
-        Self { key }
+        Self {
+            user_data: key.as_raw(),
+            flags: IoringAsyncCancelFlags::empty(),
+        }
+    }
+
+    /// Cancels every op in flight.
+    pub const fn all() -> Self {
+        Self {
+            user_data: 0,
+            flags: IoringAsyncCancelFlags::ANY,
+        }
     }
 }
 
-impl Op for AsyncCancel {
-    unsafe fn prep(self: Pin<&mut Self>, sqe: &mut Sqe) {
-        sqe.prep_cancel(self.key.as_raw(), IoringAsyncCancelFlags::empty());
+// SAFETY: the SQE only carries the key, it references no memory
+unsafe impl Op for AsyncCancel {
+    fn prep(&mut self, sqe: &mut Sqe) {
+        sqe.prep_cancel(self.user_data, self.flags);
     }
 
     fn cancel(self) -> (Cancellation, bool) {
@@ -210,4 +248,5 @@ impl Op for AsyncCancel {
     }
 }
 
-impl DetachOp for AsyncCancel {}
+// SAFETY: see `Op`
+unsafe impl DetachOp for AsyncCancel {}

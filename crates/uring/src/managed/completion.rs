@@ -134,11 +134,11 @@ impl Completions {
         self.slab.len() == 0
     }
 
-    pub const fn insert_single(&mut self, waker: Waker) -> Key {
+    pub fn insert_single(&mut self, waker: Waker) -> Key {
         Key::new(self.slab.insert(CompletionHandler::new_single(waker)))
     }
 
-    pub const fn insert_multi(&mut self, waker: Waker) -> Key {
+    pub fn insert_multi(&mut self, waker: Waker) -> Key {
         Key::new(self.slab.insert(CompletionHandler::new_multi(waker)))
     }
 
@@ -167,7 +167,7 @@ impl Completions {
         self.with_completion(key, move |comp| comp.try_cancel(handle, unread))
     }
 
-    pub fn update(&mut self, key: Key, waker: Waker) {
+    pub fn update(&mut self, key: Key, waker: &Waker) {
         self.with_completion(key, move |comp| comp.update_waker(waker));
     }
 
@@ -205,13 +205,13 @@ impl CompletionHandler {
         }
     }
 
-    fn update_waker(&mut self, new_waker: Waker) {
+    /// Replaces the stored waker, unless it already wakes the same task.
+    fn update_waker(&mut self, new_waker: &Waker) {
         match self {
-            Self::Pending { waker } => {
-                *waker = new_waker;
-            }
-            Self::Multi { waker, .. } => {
-                *waker = new_waker;
+            Self::Pending { waker } | Self::Multi { waker, .. } => {
+                if !waker.will_wake(new_waker) {
+                    *waker = new_waker.clone();
+                }
             }
             _ => unreachable!("Cannot update waker in this state"),
         }

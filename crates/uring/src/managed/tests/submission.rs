@@ -5,13 +5,15 @@ use std::{
 };
 
 use futures::{Stream, future::FusedFuture};
-use rustix::{io::Errno, io_uring::IoringTimeoutFlags};
+use rustix::{io::Errno, io_uring::IoringTimeoutFlags, pipe};
 
 use crate::{
     managed::{
-        UringProxy,
+        Read, UringProxy,
         submission::Submission,
-        tests::{CancelAll, Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag},
+        tests::{
+            CancelAll, Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag,
+        },
     },
     sys::TIMEOUT_MULTISHOT,
 };
@@ -74,6 +76,77 @@ fn single_fused_after_completion() {
     ring.wait();
     let _ = fut.as_mut().poll(&mut cx);
     assert!(fut.is_terminated());
+}
+
+#[test]
+fn single_wakes_latest_waker() {
+    let ring = TestRing::new();
+    let (tw1, tw2) = (TestWaker::new(), TestWaker::new());
+    let (w1, w2) = (tw1.waker(), tw2.waker());
+
+    let mut fut = pin!(Submission::new(Nop, ring.clone()));
+    assert!(
+        fut.as_mut()
+            .poll(&mut Context::from_waker(&w1))
+            .is_pending()
+    );
+    // moved to another task before completing
+    assert!(
+        fut.as_mut()
+            .poll(&mut Context::from_waker(&w2))
+            .is_pending()
+    );
+
+    ring.wait();
+    assert!(!tw1.was_woken());
+    assert!(tw2.was_woken());
+    assert_eq!(fut.poll(&mut Context::from_waker(&w2)), Poll::Ready(0));
+}
+
+#[test]
+fn multi_wakes_latest_waker() {
+    let ring = TestRing::new();
+    let (tw1, tw2) = (TestWaker::new(), TestWaker::new());
+    let (w1, w2) = (tw1.waker(), tw2.waker());
+
+    let mut stream = pin!(Submission::new(Nop, ring.clone()));
+    let poll = stream.as_mut().poll_next(&mut Context::from_waker(&w1));
+    assert!(poll.is_pending());
+    let poll = stream.as_mut().poll_next(&mut Context::from_waker(&w2));
+    assert!(poll.is_pending());
+
+    ring.wait();
+    assert!(!tw1.was_woken());
+    assert!(tw2.was_woken());
+}
+
+#[test]
+fn more_in_flight_than_sq_entries() {
+    let ring = TestRing::new();
+    let (rx, _tx) = pipe::pipe().unwrap();
+    let tw = TestWaker::new();
+    let waker = tw.waker();
+    let mut cx = Context::from_waker(&waker);
+
+    // the SQ holds 128 entries: submit in rounds, each with a nop so that
+    // `wait` returns while the reads stay blocked in the kernel
+    let mut reads = Vec::new();
+    for _ in 0..2 {
+        for _ in 0..70 {
+            let mut fut = Box::pin(Submission::new(Read::new(&rx, vec![0; 8]), ring.clone()));
+            assert!(fut.as_mut().poll(&mut cx).is_pending());
+            reads.push(fut);
+        }
+        let mut nop = pin!(Submission::new(Nop, ring.clone()));
+        assert!(nop.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(block_on(&ring, nop), 0);
+    }
+
+    ring.shutdown();
+    for mut fut in reads {
+        let (_, res) = block_on(&ring, fut.as_mut());
+        assert_eq!(res, Err(Errno::CANCELED));
+    }
 }
 
 #[test]

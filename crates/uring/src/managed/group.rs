@@ -1,4 +1,4 @@
-use core::slice;
+use core::{mem, slice};
 use std::{
     alloc::{Layout, handle_alloc_error},
     num::NonZeroU16,
@@ -10,7 +10,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use rustix::io::Errno;
 
 use crate::{
-    managed::UringProxy,
+    managed::{UringProxy, UringProxyExt},
     sys::{IoBufRing, IoUring},
     utils::Slab,
 };
@@ -279,6 +279,19 @@ impl<A: Allocator> Drop for BufGroup<A> {
         if let Some(layout) = Self::layout(self.count, self.size) {
             // SAFETY: allocated in `BufGroup::new_in` with this layout
             unsafe { self.alloc.deallocate(self.mem, layout) };
+        }
+    }
+}
+
+impl Drop for BufGroups {
+    fn drop(&mut self) {
+        for group in self.groups.drain() {
+            // an op in flight may still pick (and write) one of its buffers,
+            // or a `SelectBuf` still points into it: leak both the buffers
+            // and the ring the kernel picks them from
+            if group.users > 0 {
+                mem::forget(group);
+            }
         }
     }
 }

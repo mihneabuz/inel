@@ -6,6 +6,7 @@ use std::{
 };
 
 use rustix::{
+    fd::OwnedFd,
     io::{self, Errno},
     pipe,
 };
@@ -22,8 +23,7 @@ fn write_pipe<B: IoBuf>(buf: B, expected: &[u8]) -> B {
     let ring = TestRing::new();
     let (rx, tx) = pipe::pipe().unwrap();
 
-    let fut = pin!(Submission::new(Write::new(&tx, buf), ring.clone()));
-    let (buf, res) = block_on(&ring, fut);
+    let (buf, res) = block_on(&ring, pin!(Submission::new(Write::new(&tx, buf), ring.clone())));
     assert_eq!(res, Ok(expected.len()));
 
     drop(tx);
@@ -165,11 +165,11 @@ fn write_view_drop_in_flight() {
 struct TempFile(PathBuf);
 
 impl TempFile {
-    fn new(name: &str, contents: &[u8]) -> (Self, File) {
+    fn new(name: &str, contents: &[u8]) -> (Self, OwnedFd) {
         let path = std::env::temp_dir().join(format!("inel-{}-{name}", std::process::id()));
         fs::write(&path, contents).unwrap();
         let file = File::options().read(true).write(true).open(&path).unwrap();
-        (Self(path), file)
+        (Self(path), file.into())
     }
 
     fn contents(&self) -> Vec<u8> {

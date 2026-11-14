@@ -40,6 +40,9 @@ impl Cancellation {
         unsafe { self.drop_by_ref() };
     }
 
+    /// # Safety
+    /// Same as [`Self::from_raw`]: the op must have completed, and the handle
+    /// must not be dropped again afterwards.
     pub unsafe fn drop_by_ref(&self) {
         if let Some(drop) = self.drop {
             unsafe { (drop)(self.ptr, self.metadata) }

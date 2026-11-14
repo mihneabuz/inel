@@ -3,6 +3,7 @@ use core::{
     mem::{self, ManuallyDrop},
     ptr::NonNull,
 };
+use std::alloc::handle_alloc_error;
 
 use allocator_api2::{
     alloc::{Allocator, Global},
@@ -30,8 +31,10 @@ impl<T> UnsafeSlab<T, Global> {
 
 impl<T, A: Allocator> UnsafeSlab<T, A> {
     pub fn new_in(capacity: u32, alloc: A) -> Self {
-        let layout = Layout::array::<UnsafeEntry<T>>(capacity as usize).unwrap();
-        let ptr = alloc.allocate(layout).unwrap();
+        let layout = Self::layout(capacity);
+        let ptr = alloc
+            .allocate(layout)
+            .unwrap_or_else(|_| handle_alloc_error(layout));
 
         let mut slab = Self {
             ptr: ptr.cast(),
@@ -54,6 +57,10 @@ impl<T, A: Allocator> UnsafeSlab<T, A> {
         self.len
     }
 
+    fn layout(capacity: u32) -> Layout {
+        Layout::array::<UnsafeEntry<T>>(capacity as usize).expect("slab too large")
+    }
+
     /// # Safety
     /// `key` must refer to an occupied slot returned by a prior `insert`
     /// that has not been `remove`d.
@@ -61,9 +68,12 @@ impl<T, A: Allocator> UnsafeSlab<T, A> {
         unsafe { self.ptr.add(key as usize).as_mut() }
     }
 
-    pub const fn insert(&mut self, value: T) -> u32 {
+    pub fn insert(&mut self, value: T) -> u32 {
+        if self.next_free == self.capacity {
+            self.grow();
+        }
+
         let key = self.next_free;
-        assert!(key < self.capacity, "slab is full");
 
         unsafe {
             let entry = self.entry(key);
@@ -75,6 +85,30 @@ impl<T, A: Allocator> UnsafeSlab<T, A> {
             self.len += 1;
         }
         key
+    }
+
+    /// Doubles the capacity and links the new slots into the free list, which
+    /// is empty when this is called. Keys are indices, so they stay valid.
+    #[cold]
+    fn grow(&mut self) {
+        assert!(self.capacity < u32::MAX, "slab is full");
+
+        let old_capacity = self.capacity;
+        let new_capacity = old_capacity.saturating_mul(2).max(4);
+        let (old, new) = (Self::layout(old_capacity), Self::layout(new_capacity));
+
+        // SAFETY: allocated by `alloc` with `old`, and `new` is not smaller
+        let ptr = unsafe { self.alloc.grow(self.ptr.cast(), old, new) }
+            .unwrap_or_else(|_| handle_alloc_error(new));
+        self.ptr = ptr.cast();
+        self.capacity = new_capacity;
+
+        for i in old_capacity..new_capacity {
+            // SAFETY: in bounds of the new allocation. `i + 1` can't overflow
+            // since `i < new_capacity <= u32::MAX`
+            unsafe { *self.entry(i) = UnsafeEntry { next_free: i + 1 } };
+        }
+        self.next_free = old_capacity;
     }
 
     /// # Safety
@@ -122,8 +156,10 @@ impl<T, A: Allocator> Drop for UnsafeSlab<T, A> {
             }
         }
 
-        let layout = Layout::array::<UnsafeEntry<T>>(self.capacity as usize).unwrap();
-        unsafe { self.alloc.deallocate(self.ptr.cast(), layout) };
+        unsafe {
+            self.alloc
+                .deallocate(self.ptr.cast(), Self::layout(self.capacity))
+        };
     }
 }
 
@@ -183,6 +219,15 @@ impl<T, A: Allocator> Slab<T, A> {
             Entry::Occupied(value) => value,
             Entry::Vacant(_) => panic!("tried to access vacant entry"),
         }
+    }
+
+    /// Removes every value, in slot order, leaving the slab empty.
+    pub fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        self.free = 0;
+        self.slots.drain(..).filter_map(|entry| match entry {
+            Entry::Occupied(value) => Some(value),
+            Entry::Vacant(_) => None,
+        })
     }
 }
 
@@ -250,13 +295,38 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn insert_when_full_panics() {
+    fn grows_when_full() {
         let mut slab = UnsafeSlab::<u64>::new(2);
 
-        slab.insert(1);
-        slab.insert(2);
-        slab.insert(3); // should panic
+        let keys: Vec<u32> = (0..100).map(|i| slab.insert(i)).collect();
+        assert_eq!(keys, (0..100).collect::<Vec<_>>());
+
+        for (i, &k) in keys.iter().enumerate() {
+            assert_eq!(unsafe { *slab.get_mut(k) }, i as u64);
+        }
+    }
+
+    #[test]
+    fn grows_from_empty() {
+        let mut slab = UnsafeSlab::<u64>::new(0);
+
+        let k = slab.insert(7);
+        assert_eq!(unsafe { *slab.get_mut(k) }, 7);
+    }
+
+    #[test]
+    fn reuses_slots_after_growing() {
+        let mut slab = UnsafeSlab::<u64>::new(2);
+
+        let keys: Vec<u32> = (0..5).map(|i| slab.insert(i)).collect();
+        unsafe { slab.remove(keys[1]) };
+        unsafe { slab.remove(keys[4]) };
+
+        // freed slots come back before the slab grows again
+        assert_eq!(slab.insert(40), keys[4]);
+        assert_eq!(slab.insert(10), keys[1]);
+        assert_eq!(unsafe { *slab.get_mut(keys[0]) }, 0);
+        assert_eq!(unsafe { *slab.get_mut(keys[3]) }, 3);
     }
 
     #[test]
@@ -300,18 +370,19 @@ mod tests {
         DROP_COUNT.store(0, Ordering::Relaxed);
 
         {
-            let mut slab = UnsafeSlab::<Tracked>::new(4);
+            // grows twice, so the free list spans several growths
+            let mut slab = UnsafeSlab::<Tracked>::new(2);
 
-            slab.insert(Tracked(10));
-            slab.insert(Tracked(20));
-            slab.insert(Tracked(30));
+            for i in 0..5 {
+                slab.insert(Tracked(i));
+            }
 
-            // Remove one, leave two occupied
+            // Remove one, leave four occupied
             unsafe { slab.remove(1) };
             assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1);
         }
 
-        // Slab dropped — remaining 2 entries should have been dropped
-        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 3);
+        // Slab dropped — remaining 4 entries should have been dropped
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 5);
     }
 }

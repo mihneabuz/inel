@@ -36,7 +36,7 @@ fn single_waker_update() {
     let tw2 = TestWaker::new();
 
     let key = comp.insert_single(tw1.waker());
-    comp.update(key, tw2.waker());
+    comp.update(key, &tw2.waker());
     comp.notify(key, ok(0));
 
     assert!(!tw1.was_woken());

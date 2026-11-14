@@ -31,6 +31,11 @@ mod tests;
 
 const REQUIRED_FEATURES: IoringFeatureFlags = IoringFeatureFlags::SINGLE_MMAP;
 
+/// `IORING_FILE_INDEX_ALLOC`: as an op's file index, asks the kernel to pick a
+/// free direct descriptor slot (within the alloc range) and return it as the
+/// result.
+pub const FILE_INDEX_ALLOC: u32 = u32::MAX;
+
 /// `IORING_TIMEOUT_MULTISHOT`, not yet exposed by rustix.
 pub const TIMEOUT_MULTISHOT: IoringTimeoutFlags = IoringTimeoutFlags::from_bits_retain(1 << 6);
 
@@ -43,7 +48,7 @@ impl Sqe {
         self.0 = unsafe { mem::zeroed() };
     }
 
-    const fn add_flag(&mut self, flag: IoringSqeFlags) {
+    pub const fn add_flag(&mut self, flag: IoringSqeFlags) {
         self.0.flags = self.0.flags.union(flag);
     }
 
@@ -69,6 +74,13 @@ impl Sqe {
 
     pub const fn skip_success_cqe(&mut self) {
         self.add_flag(IoringSqeFlags::CQE_SKIP_SUCCESS);
+    }
+
+    /// For ops that create a descriptor (open, accept, socket), installs it as
+    /// a direct descriptor: in slot `index - 1`, or in a slot the kernel picks
+    /// with [`FILE_INDEX_ALLOC`]. For close, the slot to close, plus one.
+    pub const fn set_file_index(&mut self, index: u32) {
+        self.0.splice_fd_in_or_file_index_or_addr_len.file_index = index;
     }
 
     /// Lets the kernel pick the buffer from the provided buffer group `bgid`
@@ -126,6 +138,17 @@ impl Sqe {
     pub const fn prep_openat(&mut self, dfd: RawFd, path: *const c_char, flags: OFlags, mode: u32) {
         self.prep_rw(IoringOp::Openat, dfd, path.cast(), mode, 0);
         self.0.op_flags.open_flags = flags;
+    }
+
+    /// Closes the regular fd `fd`.
+    pub const fn prep_close(&mut self, fd: RawFd) {
+        self.prep_rw(IoringOp::Close, fd, ptr::null(), 0, 0);
+    }
+
+    /// Closes the direct descriptor in `slot`.
+    pub const fn prep_close_direct(&mut self, slot: u32) {
+        self.prep_rw(IoringOp::Close, 0, ptr::null(), 0, 0);
+        self.set_file_index(slot + 1);
     }
 
     pub const fn prep_read(&mut self, fd: RawFd, buf: *mut u8, nbytes: u32, offset: u64) {

@@ -6,19 +6,18 @@ use std::{
 };
 
 use rustix::{
-    fd::AsRawFd,
     io::{self, Errno},
     pipe,
 };
 
 use crate::managed::{
-    ReadSelect, SelectBuf, SelectGroup, UringProxy,
+    IoSource, ReadSelect, SelectBuf, SelectGroup, UringProxy,
     submission::Submission,
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
-fn read(ring: &TestRing, fd: &impl AsRawFd, group: &SelectGroup<TestRing>) -> ReadResult {
-    let fut = pin!(Submission::new(ReadSelect::new(fd, group), ring.clone()));
+fn read(ring: &TestRing, src: &impl IoSource, group: &SelectGroup<TestRing>) -> ReadResult {
+    let fut = pin!(Submission::new(ReadSelect::new(src, group), ring.clone()));
     block_on(ring, fut)
 }
 
@@ -203,7 +202,7 @@ fn write_only_fd() {
 fn error_after_pick_recycles_buffer() {
     let ring = TestRing::new();
     let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
-    let dir = std::fs::File::open(".").unwrap();
+    let dir = rustix::fd::OwnedFd::from(std::fs::File::open(".").unwrap());
 
     // the kernel picks the buffer before the read fails, and hands it back
     // with the error
@@ -275,6 +274,30 @@ fn drop_completed_unread() {
 
     io::write(&tx, b"def").unwrap();
     assert_eq!(&*read(&ring, &rx, &group).unwrap(), b"def");
+}
+
+#[test]
+fn drop_completed_unread_last_handle() {
+    let ring = TestRing::new();
+    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let (rx, tx) = pipe::pipe().unwrap();
+    io::write(&tx, b"abc").unwrap();
+
+    let tw = TestWaker::new();
+    let waker = tw.waker();
+    let mut cx = Context::from_waker(&waker);
+    {
+        // the op holds the only handle, so dropping it frees the group while
+        // its unread CQE still holds a buffer
+        let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+        drop(group);
+        assert!(fut.as_mut().poll(&mut cx).is_pending());
+        while !tw.was_woken() {
+            ring.wait();
+        }
+    }
+
+    ring.drain();
 }
 
 #[test]

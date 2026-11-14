@@ -61,13 +61,13 @@ use std::{
 use rustix::{
     buffer::spare_capacity,
     event::{self, EventfdFlags, Timespec as EventTimespec, epoll},
-    fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd, RawFd},
+    fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
     fs::{self, Mode, OFlags},
     io::{self, Errno},
     io_uring::*,
 };
 
-use super::TIMEOUT_MULTISHOT;
+use super::{FILE_INDEX_ALLOC, TIMEOUT_MULTISHOT};
 
 // Ring layout. Both rings share one allocation (IORING_FEAT_SINGLE_MMAP).
 const SQ_HEAD: u32 = 0;
@@ -86,6 +86,8 @@ const CQ_CQES: u32 = 128;
 
 const MAX_ENTRIES: u32 = 32768;
 const POISON: u8 = 0xA5;
+/// `IORING_MAX_FIXED_FILES`
+const MAX_FIXED_FILES: u32 = 1 << 20;
 const WAKE_TOKEN: u64 = u64::MAX;
 
 /// `IORING_NOP_INJECT_RESULT`
@@ -103,6 +105,7 @@ const SUPPORTED_SETUP: IoringSetupFlags = IoringSetupFlags::NO_SQARRAY
     .union(IoringSetupFlags::ATTACH_WQ);
 
 const SUPPORTED_SQE_FLAGS: IoringSqeFlags = IoringSqeFlags::ASYNC
+    .union(IoringSqeFlags::FIXED_FILE)
     .union(IoringSqeFlags::CQE_SKIP_SUCCESS)
     .union(IoringSqeFlags::BUFFER_SELECT);
 
@@ -317,9 +320,45 @@ pub unsafe fn io_uring_register(
     arg: *const c_void,
     nr_args: u32,
 ) -> Result<u32, Errno> {
+    let kernel = &fd.kernel;
     match opcode {
         // nothing can be registered yet, like the kernel when the table is empty
-        IoringRegisterOp::UnregisterBuffers | IoringRegisterOp::UnregisterFiles => Err(Errno::NXIO),
+        IoringRegisterOp::UnregisterBuffers => Err(Errno::NXIO),
+        IoringRegisterOp::RegisterFiles2 => {
+            if nr_args as usize != mem::size_of::<io_uring_rsrc_register>() {
+                return Err(Errno::INVAL);
+            }
+            if arg.is_null() {
+                return Err(Errno::FAULT);
+            }
+            // SAFETY: the caller passes a valid `io_uring_rsrc_register`
+            let reg = unsafe { arg.cast::<io_uring_rsrc_register>().read() };
+            kernel.register_files(&reg).map(|()| 0)
+        }
+        IoringRegisterOp::RegisterFileAllocRange => {
+            if nr_args != 0 {
+                return Err(Errno::INVAL);
+            }
+            if arg.is_null() {
+                return Err(Errno::FAULT);
+            }
+            // SAFETY: the caller passes a valid `io_uring_file_index_range`:
+            // `{ off: u32, len: u32, resv: u64 }`
+            let (off, len, resv) = unsafe {
+                let range = arg.cast::<u32>();
+                (range.read(), range.add(1).read(), range.add(2).cast::<u64>().read())
+            };
+            if resv != 0 {
+                return Err(Errno::INVAL);
+            }
+            kernel.register_file_alloc_range(off, len).map(|()| 0)
+        }
+        IoringRegisterOp::UnregisterFiles => {
+            if !arg.is_null() || nr_args != 0 {
+                return Err(Errno::INVAL);
+            }
+            kernel.unregister_files().map(|()| 0)
+        }
         IoringRegisterOp::RegisterPbufRing | IoringRegisterOp::UnregisterPbufRing => {
             if nr_args != 1 {
                 return Err(Errno::INVAL);
@@ -330,12 +369,12 @@ pub unsafe fn io_uring_register(
             // SAFETY: the caller passes a valid `io_uring_buf_reg`
             let reg = unsafe { arg.cast::<io_uring_buf_reg>().read() };
             if opcode == IoringRegisterOp::RegisterPbufRing {
-                fd.kernel.register_buf_ring(&reg).map(|()| 0)
+                kernel.register_buf_ring(&reg).map(|()| 0)
             } else {
-                fd.kernel.unregister_buf_ring(&reg).map(|()| 0)
+                kernel.unregister_buf_ring(&reg).map(|()| 0)
             }
         }
-        // TODO: fixed buffers/files
+        // TODO: fixed buffers, non-sparse file tables and file updates
         _ => Err(Errno::INVAL),
     }
 }
@@ -420,9 +459,17 @@ enum Op {
         path: CString,
         flags: OFlags,
         mode: Mode,
+        /// 0 for a regular fd, otherwise the direct descriptor slot plus one,
+        /// or `FILE_INDEX_ALLOC`.
+        file_index: u32,
+    },
+    Close {
+        fd: RawFd,
+        /// The direct descriptor slot plus one, 0 to close `fd` instead.
+        file_index: u32,
     },
     Read {
-        fd: RawFd,
+        fd: Resolved,
         buf: UserPtr,
         len: u32,
         off: u64,
@@ -430,11 +477,37 @@ enum Op {
         select: Option<u16>,
     },
     Write {
-        fd: RawFd,
+        fd: Resolved,
         buf: UserPtr,
         len: u32,
         off: u64,
     },
+}
+
+/// The file a request works on. Direct descriptors are looked up when the
+/// request is submitted, as the kernel does when issuing it (SQEs are issued
+/// in order), and the request holds the file, so closing the slot afterwards
+/// doesn't pull it from under the request.
+#[derive(Clone)]
+enum Resolved {
+    Fd(RawFd),
+    Fixed(Arc<OwnedFd>),
+}
+
+impl Resolved {
+    fn as_fd(&self) -> Result<BorrowedFd<'_>, Errno> {
+        match self {
+            Self::Fd(fd) => borrow_fd(*fd),
+            Self::Fixed(file) => Ok(file.as_fd()),
+        }
+    }
+}
+
+/// The registered direct descriptor table.
+struct FileTable {
+    slots: Vec<Option<Arc<OwnedFd>>>,
+    /// `FILE_INDEX_ALLOC` picks a free slot in this range.
+    alloc: (u32, u32),
 }
 
 impl Op {
@@ -444,13 +517,13 @@ impl Op {
     /// the kernel, the buffer is only peeked here; it is picked again when the
     /// read actually runs.
     fn issue(&self, state: &State) -> Result<(), Errno> {
-        let (fd, read) = match *self {
+        let (fd, read) = match self {
             Self::Read { fd, .. } => (fd, true),
             Self::Write { fd, .. } => (fd, false),
             _ => return Ok(()),
         };
 
-        let mode = fs::fcntl_getfl(borrow_fd(fd)?)? & OFlags::RWMODE;
+        let mode = fs::fcntl_getfl(fd.as_fd()?)? & OFlags::RWMODE;
         let denied = if read { OFlags::WRONLY } else { OFlags::RDONLY };
         if mode == denied {
             return Err(Errno::BADF);
@@ -469,10 +542,10 @@ impl Op {
 
     /// Stream I/O must wait for readiness instead of blocking the kernel
     /// thread.
-    const fn readiness(&self) -> Option<(RawFd, epoll::EventFlags)> {
-        match *self {
-            Self::Read { fd, off, .. } if off == u64::MAX => Some((fd, epoll::EventFlags::IN)),
-            Self::Write { fd, off, .. } if off == u64::MAX => Some((fd, epoll::EventFlags::OUT)),
+    fn readiness(&self) -> Option<(&Resolved, epoll::EventFlags)> {
+        match self {
+            Self::Read { fd, off, .. } if *off == u64::MAX => Some((fd, epoll::EventFlags::IN)),
+            Self::Write { fd, off, .. } if *off == u64::MAX => Some((fd, epoll::EventFlags::OUT)),
             _ => None,
         }
     }
@@ -554,8 +627,69 @@ struct State {
     posted: u64,
     /// Registered provided buffer rings, by group id.
     buf_rings: BTreeMap<u16, BufRing>,
+    files: Option<FileTable>,
     rng: Rng,
     shutdown: bool,
+}
+
+impl State {
+    /// The file an SQE names, either a regular fd or (`IOSQE_FIXED_FILE`) a
+    /// direct descriptor slot.
+    fn resolve(&self, sqe: &io_uring_sqe) -> Result<Resolved, Errno> {
+        if !sqe.flags.contains(IoringSqeFlags::FIXED_FILE) {
+            return Ok(Resolved::Fd(sqe.fd));
+        }
+        self.files
+            .as_ref()
+            .and_then(|table| table.slots.get(sqe.fd as u32 as usize)?.clone())
+            .map(Resolved::Fixed)
+            .ok_or(Errno::BADF)
+    }
+
+    /// Installs `file` as a direct descriptor, in slot `file_index - 1` or, for
+    /// `FILE_INDEX_ALLOC`, in a random free slot of the alloc range, which is
+    /// returned. Dropping `file` on failure closes it.
+    fn install(&mut self, file: OwnedFd, file_index: u32) -> Result<i32, Errno> {
+        let table = self.files.as_mut();
+        if file_index == FILE_INDEX_ALLOC {
+            let table = table.ok_or(Errno::NFILE)?;
+            let (start, end) = table.alloc;
+            let free = (start..end)
+                .filter(|slot| table.slots[*slot as usize].is_none())
+                .collect::<Vec<_>>();
+            if free.is_empty() {
+                return Err(Errno::NFILE);
+            }
+            let slot = free[self.rng.below(free.len())];
+            table.slots[slot as usize] = Some(Arc::new(file));
+            Ok(slot as i32)
+        } else {
+            // an occupied slot is replaced, closing its file
+            let entry = table
+                .and_then(|table| table.slots.get_mut(file_index as usize - 1))
+                .ok_or(Errno::INVAL)?;
+            *entry = Some(Arc::new(file));
+            Ok(0)
+        }
+    }
+
+    /// Runs a close request. Direct descriptors are only closed once no
+    /// running request holds them anymore.
+    fn close(&mut self, fd: RawFd, file_index: u32) -> Result<i32, Errno> {
+        if file_index == 0 {
+            borrow_fd(fd)?;
+            // SAFETY: the user asked for it to be closed
+            unsafe { io::close(fd) };
+            return Ok(0);
+        }
+
+        let slot = self
+            .files
+            .as_mut()
+            .and_then(|table| table.slots.get_mut(file_index as usize - 1))
+            .ok_or(Errno::NXIO)?;
+        slot.take().map(|_| 0).ok_or(Errno::BADF)
+    }
 }
 
 struct Kernel {
@@ -620,6 +754,7 @@ impl Kernel {
                 overflow: VecDeque::new(),
                 posted: 0,
                 buf_rings: BTreeMap::new(),
+                files: None,
                 rng: Rng::new(seed()),
                 shutdown: false,
             }),
@@ -707,6 +842,52 @@ impl Kernel {
             .ok_or(Errno::NOENT)
     }
 
+    // ---- direct descriptors ----------------------------------------------
+
+    fn register_files(&self, reg: &io_uring_rsrc_register) -> Result<(), Errno> {
+        // only sparse tables are supported yet
+        if reg.flags != IoringRsrcFlags::REGISTER_SPARSE
+            || !reg.data.ptr.is_null()
+            || !reg.tags.ptr.is_null()
+            || reg.resv2 != 0
+        {
+            return Err(Errno::INVAL);
+        }
+        if reg.nr == 0 {
+            return Err(Errno::INVAL);
+        }
+        if reg.nr > MAX_FIXED_FILES {
+            return Err(Errno::MFILE);
+        }
+
+        let mut state = self.lock();
+        if state.files.is_some() {
+            return Err(Errno::BUSY);
+        }
+        state.files = Some(FileTable {
+            slots: vec![None; reg.nr as usize],
+            alloc: (0, reg.nr),
+        });
+        Ok(())
+    }
+
+    fn register_file_alloc_range(&self, off: u32, len: u32) -> Result<(), Errno> {
+        let mut state = self.lock();
+        let table = state.files.as_mut().ok_or(Errno::NXIO)?;
+        match off.checked_add(len) {
+            Some(end) if end as usize <= table.slots.len() => {
+                table.alloc = (off, end);
+                Ok(())
+            }
+            _ => Err(Errno::INVAL),
+        }
+    }
+
+    fn unregister_files(&self) -> Result<(), Errno> {
+        // running requests keep their files until they are done
+        self.lock().files.take().map(drop).ok_or(Errno::NXIO)
+    }
+
     // ---- submission ------------------------------------------------------
 
     fn submit(&self, state: &mut State, to_submit: u32) -> u32 {
@@ -753,6 +934,7 @@ impl Kernel {
             IoringOp::Timeout,
             IoringOp::AsyncCancel,
             IoringOp::Openat,
+            IoringOp::Close,
             IoringOp::Read,
             IoringOp::Write,
         ];
@@ -789,8 +971,14 @@ impl Kernel {
             let buf_index = sqe.buf.buf_index;
             let buf_group = sqe.buf.buf_group;
             let file_index = sqe.splice_fd_in_or_file_index_or_addr_len.file_index;
+            let fixed = sqe.flags.contains(IoringSqeFlags::FIXED_FILE);
 
             match sqe.opcode {
+                // ops that take no file
+                IoringOp::Nop | IoringOp::Timeout | IoringOp::AsyncCancel if fixed => {
+                    Err(Errno::INVAL)
+                }
+
                 IoringOp::Nop => {
                     if op_flags & !NOP_INJECT_RESULT != 0 {
                         return Err(Errno::INVAL);
@@ -851,7 +1039,15 @@ impl Kernel {
                 }
 
                 IoringOp::Openat => {
-                    if buf_index != 0 || file_index != 0 {
+                    let flags = sqe.op_flags.open_flags;
+                    if buf_index != 0 {
+                        return Err(Errno::INVAL);
+                    }
+                    if fixed {
+                        return Err(Errno::BADF);
+                    }
+                    // direct descriptors can't be inherited anyway
+                    if file_index != 0 && flags.contains(OFlags::CLOEXEC) {
                         return Err(Errno::INVAL);
                     }
                     if addr.is_null() {
@@ -862,8 +1058,26 @@ impl Kernel {
                     Ok(Some(Op::Openat {
                         dfd: sqe.fd,
                         path,
-                        flags: sqe.op_flags.open_flags,
+                        flags,
                         mode: Mode::from_bits_retain(len),
+                        file_index,
+                    }))
+                }
+
+                IoringOp::Close => {
+                    if off != 0 || !addr.is_null() || len != 0 || op_flags != 0 || buf_index != 0
+                    {
+                        return Err(Errno::INVAL);
+                    }
+                    if fixed {
+                        return Err(Errno::BADF);
+                    }
+                    if file_index != 0 && sqe.fd != 0 {
+                        return Err(Errno::INVAL);
+                    }
+                    Ok(Some(Op::Close {
+                        fd: sqe.fd,
+                        file_index,
                     }))
                 }
 
@@ -873,7 +1087,7 @@ impl Kernel {
                     if op_flags != 0 || sqe.ioprio.ioprio != 0 || attr_type_mask != 0 {
                         return Err(Errno::INVAL);
                     }
-                    let (fd, buf) = (sqe.fd, UserPtr(addr));
+                    let (fd, buf) = (state.resolve(sqe)?, UserPtr(addr));
                     Ok(Some(if sqe.opcode == IoringOp::Read {
                         let select = sqe
                             .flags
@@ -1167,34 +1381,25 @@ impl Kernel {
             return state;
         }
 
-        let req = state.requests.get_mut(&id).unwrap();
+        let req = &state.requests[&id];
+        let armed = match req.op.readiness() {
+            Some(_) if req.ready => Ok(None),
+            Some(_) if req.cancel_requested => Err(Errno::CANCELED),
+            Some((file, interest)) => self.arm(id, file, interest),
+            None => Ok(None),
+        };
 
-        if let Some((fd, interest)) = req.op.readiness()
-            && !req.ready
-        {
-            if req.cancel_requested {
-                let req = state.requests.remove(&id).unwrap();
-                self.post(
-                    &mut state,
-                    req.user_data,
-                    -Errno::CANCELED.raw_os_error(),
-                    false,
-                );
+        match armed {
+            Ok(Some(dup)) => {
+                state.requests.get_mut(&id).unwrap().status = Status::Parked(dup);
                 return state;
             }
-
-            match self.arm(id, fd, interest) {
-                Ok(Some(dup)) => {
-                    req.status = Status::Parked(dup);
-                    return state;
-                }
-                // not pollable (regular file), will not block
-                Ok(None) => {}
-                Err(err) => {
-                    let req = state.requests.remove(&id).unwrap();
-                    self.post(&mut state, req.user_data, -err.raw_os_error(), false);
-                    return state;
-                }
+            // no need to wait, or not pollable (regular file), will not block
+            Ok(None) => {}
+            Err(err) => {
+                let req = state.requests.remove(&id).unwrap();
+                self.post(&mut state, req.user_data, -err.raw_os_error(), false);
+                return state;
             }
         }
 
@@ -1202,6 +1407,16 @@ impl Kernel {
         req.status = Status::Running;
         req.ready = false;
         let mut op = req.op.clone();
+
+        // closing only touches the kernel's state, so it runs under the lock
+        if let Op::Close { fd, file_index } = op {
+            let res = state.close(fd, file_index);
+            let req = state.requests.remove(&id).unwrap();
+            let res = res.unwrap_or_else(|err| -err.raw_os_error());
+            self.post(&mut state, req.user_data, res, req.skip_success);
+            return state;
+        }
+
 
         // pick the buffer only now, when the read can make progress. It is
         // only consumed if the read succeeds; this thread is the only one
@@ -1239,6 +1454,10 @@ impl Kernel {
         let mut state = self.lock();
         let Some(req) = state.requests.get_mut(&id) else {
             // discarded by shutdown
+            if let (Op::Openat { .. }, Ok(fd)) = (&op, res) {
+                // SAFETY: just opened, and never handed out
+                drop(unsafe { OwnedFd::from_raw_fd(fd) });
+            }
             return state;
         };
 
@@ -1249,6 +1468,13 @@ impl Kernel {
             }
             res => {
                 let req = state.requests.remove(&id).unwrap();
+                let res = match (&op, res) {
+                    (&Op::Openat { file_index, .. }, Ok(fd)) if file_index != 0 => {
+                        // SAFETY: just opened, and never handed out
+                        state.install(unsafe { OwnedFd::from_raw_fd(fd) }, file_index)
+                    }
+                    (_, res) => res,
+                };
                 let res = res.unwrap_or_else(|err| -err.raw_os_error());
                 // the picked buffer is consumed even if the read failed, and
                 // the CQE says which one it was
@@ -1273,10 +1499,10 @@ impl Kernel {
     fn arm(
         &self,
         id: u64,
-        fd: RawFd,
+        file: &Resolved,
         interest: epoll::EventFlags,
     ) -> Result<Option<OwnedFd>, Errno> {
-        let dup = io::dup(borrow_fd(fd)?)?;
+        let dup = io::dup(file.as_fd()?)?;
         match epoll::add(&self.epoll, &dup, epoll::EventData::new_u64(id), interest) {
             Ok(()) => Ok(Some(dup)),
             Err(Errno::PERM) => Ok(None),
@@ -1347,12 +1573,14 @@ unsafe fn execute(op: &Op) -> Result<i32, Errno> {
     let res = match *op {
         Op::Nop { res } => return Ok(res),
         Op::Timeout { .. } => unreachable!("timeouts are fired by the kernel thread"),
+        Op::Close { .. } => unreachable!("closes run under the lock"),
 
         Op::Openat {
             dfd,
             ref path,
             flags,
             mode,
+            ..
         } => {
             let dir = if dfd == fs::CWD.as_raw_fd() {
                 fs::CWD
@@ -1363,9 +1591,13 @@ unsafe fn execute(op: &Op) -> Result<i32, Errno> {
         }
 
         Op::Read {
-            fd, buf, len, off, ..
+            ref fd,
+            buf,
+            len,
+            off,
+            ..
         } => {
-            let fd = borrow_fd(fd)?;
+            let fd = fd.as_fd()?;
             let buf = unsafe { user_slice_mut::<MaybeUninit<u8>>(buf, len) }?;
             if off == u64::MAX {
                 io::read(fd, buf)?.0.len()
@@ -1374,8 +1606,13 @@ unsafe fn execute(op: &Op) -> Result<i32, Errno> {
             }
         }
 
-        Op::Write { fd, buf, len, off } => {
-            let fd = borrow_fd(fd)?;
+        Op::Write {
+            ref fd,
+            buf,
+            len,
+            off,
+        } => {
+            let fd = fd.as_fd()?;
             let buf = unsafe { user_slice(buf, len) }?;
             if off == u64::MAX {
                 io::write(fd, buf)?

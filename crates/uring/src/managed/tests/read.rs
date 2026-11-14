@@ -190,7 +190,7 @@ fn read_accumulating_full_reads_nothing() {
 )]
 fn read_at_offset() {
     let ring = TestRing::new();
-    let file = std::fs::File::open("Cargo.toml").unwrap();
+    let file = rustix::fd::OwnedFd::from(std::fs::File::open("Cargo.toml").unwrap());
 
     let fut = pin!(Submission::new(
         Read::new_at(&file, boxed(8), 1),
@@ -217,7 +217,7 @@ fn read_at_offset() {
 )]
 fn read_current_advances() {
     let ring = TestRing::new();
-    let file = std::fs::File::open("Cargo.toml").unwrap();
+    let file = rustix::fd::OwnedFd::from(std::fs::File::open("Cargo.toml").unwrap());
 
     let fut = pin!(Submission::new(Read::new(&file, boxed(1)), ring.clone()));
     let (buf, _) = block_on(&ring, fut);
