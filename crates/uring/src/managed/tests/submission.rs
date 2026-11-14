@@ -155,7 +155,7 @@ fn single_drop_before_poll() {
     let ring = TestRing::new();
 
     // Drop in Initial state — op dropped normally
-    let fut = Submission::new(OwnedOp::new(df), ring.clone());
+    let fut = Submission::new(OwnedOp::new(df), ring);
     drop(fut);
     assert!(dropped(&f));
 }

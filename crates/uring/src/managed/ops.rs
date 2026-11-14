@@ -96,7 +96,7 @@ unsafe impl<S: IoSource, B: IoBufMut, O: Offset> Op for Read<'_, S, B, O> {
     }
 
     fn cancel(self) -> (Cancellation, bool) {
-        (self.buf.into(), true)
+        (self.buf.into_cancel(), true)
     }
 }
 
@@ -152,7 +152,7 @@ unsafe impl<S: IoSource, B: IoBuf, O: Offset> Op for Write<'_, S, B, O> {
     }
 
     fn cancel(self) -> (Cancellation, bool) {
-        (self.buf.into(), true)
+        (self.buf.into_cancel(), true)
     }
 }
 
@@ -270,7 +270,7 @@ unsafe impl<U: UringProxy> Op for OpenDirect<U> {
     }
 
     fn cancel(self) -> (Cancellation, bool) {
-        (Box::new(self.path).into(), true)
+        (self.path.into(), true)
     }
 }
 

@@ -1,6 +1,6 @@
 use core::{
     alloc::Layout,
-    cmp::max,
+    cmp,
     marker::PhantomData,
     mem::{align_of, needs_drop, size_of},
     ptr::NonNull,
@@ -24,6 +24,29 @@ static EMPTY_HEADER: Header = Header {
 const INITIAL_CAPACITY: u32 = 16;
 const MAX_CAPACITY: u32 = 1 << 31;
 
+fn alloc_align<T>() -> usize {
+    cmp::max(align_of::<T>(), align_of::<Header>())
+}
+
+const fn data_offset<T>() -> usize {
+    let header_size = size_of::<Header>();
+    let align = align_of::<T>();
+    (header_size + align - 1) & !(align - 1)
+}
+
+fn layout<T>(cap: usize) -> Layout {
+    let size = data_offset::<T>()
+        .checked_add(
+            size_of::<T>()
+                .checked_mul(cap)
+                .expect("deque size overflow"),
+        )
+        .expect("deque size overflow");
+    Layout::from_size_align(size, alloc_align::<T>()).expect("deque layout overflow")
+}
+
+/// A growable FIFO ring buffer, stored as `[Header | padding | T; capacity]` in
+/// a single allocation (so the handle is one pointer wide).
 pub struct Deque<T, A: Allocator = Global> {
     ptr: NonNull<Header>,
     alloc: A,
@@ -39,6 +62,7 @@ impl<T> Deque<T, Global> {
 impl<T, A: Allocator> Deque<T, A> {
     pub const fn new_in(alloc: A) -> Self {
         Self {
+            // SAFETY: non-null static; never written through (capacity == 0).
             ptr: unsafe { NonNull::new_unchecked(&EMPTY_HEADER as *const _ as *mut _) },
             alloc,
             _pd: PhantomData,
@@ -53,6 +77,7 @@ impl<T, A: Allocator> Deque<T, A> {
         self.len() == 0
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn capacity(&self) -> usize {
         self.header().capacity as usize
     }
@@ -63,6 +88,8 @@ impl<T, A: Allocator> Deque<T, A> {
         if header.len == header.capacity {
             self.grow();
         }
+        // SAFETY: after the grow `capacity > 0` and `len < capacity`, so the slot
+        // is in bounds and uninitialized.
         unsafe {
             let data = self.data_ptr();
             let header = self.header_mut();
@@ -78,6 +105,8 @@ impl<T, A: Allocator> Deque<T, A> {
         if self.is_empty() {
             return None;
         }
+        // SAFETY: non-empty implies allocated; slot `head` is initialized and is
+        // removed from the live range by advancing `head`/`len`.
         unsafe {
             let data = self.data_ptr();
             let header = self.header_mut();
@@ -90,6 +119,7 @@ impl<T, A: Allocator> Deque<T, A> {
     }
 
     const fn header(&self) -> &Header {
+        // SAFETY: `ptr` always points to an initialized `Header`.
         unsafe { self.ptr.as_ref() }
     }
 
@@ -97,15 +127,17 @@ impl<T, A: Allocator> Deque<T, A> {
     /// The deque must not be the empty singleton. Callers must ensure an
     /// allocation has been made (capacity > 0) before invoking this.
     const unsafe fn header_mut(&mut self) -> &mut Header {
+        // SAFETY: caller guarantees an allocation.
         unsafe { self.ptr.as_mut() }
     }
 
-    const fn data_ptr(&self) -> NonNull<T> {
-        if self.capacity() == 0 {
-            NonNull::<T>::dangling()
-        } else {
-            unsafe { self.ptr.cast::<u8>().add(data_offset::<T>()).cast() }
-        }
+    /// # Safety
+    /// The deque must not be the empty singleton. Callers must ensure an
+    /// allocation has been made (capacity > 0) before invoking this.
+    const unsafe fn data_ptr(&self) -> NonNull<T> {
+        // SAFETY: the block is at least `data_offset` bytes and the result is
+        // aligned for `T` (see `alloc_align`/`data_offset`).
+        unsafe { self.ptr.cast::<u8>().add(data_offset::<T>()).cast() }
     }
 
     #[cold]
@@ -124,19 +156,24 @@ impl<T, A: Allocator> Deque<T, A> {
                 .expect("deque capacity overflow")
         };
 
-        unsafe {
-            let new_layout = layout::<T>(new_cap as usize);
-            let raw = self
-                .alloc
-                .allocate(new_layout)
-                .expect("failed to allocate memory");
-            let new_header: NonNull<Header> = raw.cast();
-            let new_data: NonNull<T> = new_header.cast::<u8>().add(data_offset::<T>()).cast();
+        let new_layout = layout::<T>(new_cap as usize);
+        let raw = self
+            .alloc
+            .allocate(new_layout)
+            .expect("failed to allocate memory");
 
-            if len > 0 {
+        let new_header: NonNull<Header> = raw.cast();
+        // SAFETY: `new_layout` covers the `Header` bytes.
+        let new_data: NonNull<T> =
+            unsafe { new_header.cast::<u8>().add(data_offset::<T>()).cast() };
+
+        if len > 0 {
+            let head = old_head as usize;
+            let first = (old_cap as usize - head).min(len as usize);
+            // SAFETY: both runs are initialized and in bounds in the old block;
+            // the destination is fresh with `new_cap >= len`, so no overlap.
+            unsafe {
                 let src = self.data_ptr();
-                let head = old_head as usize;
-                let first = (old_cap as usize - head).min(len as usize);
                 new_data.copy_from_nonoverlapping(src.add(head), first);
                 if first < len as usize {
                     new_data
@@ -144,20 +181,24 @@ impl<T, A: Allocator> Deque<T, A> {
                         .copy_from_nonoverlapping(src, len as usize - first);
                 }
             }
+        }
 
+        // SAFETY: fresh allocation sized and aligned for `Header`.
+        unsafe {
             new_header.write(Header {
                 len,
                 capacity: new_cap,
                 head: 0,
             });
-
-            if old_cap > 0 {
-                let old_layout = layout::<T>(old_cap as usize);
-                self.alloc.deallocate(self.ptr.cast(), old_layout);
-            }
-
-            self.ptr = new_header;
         }
+
+        if old_cap > 0 {
+            let old_layout = layout::<T>(old_cap as usize);
+            // SAFETY: `ptr` is still the old block (`old_cap > 0`) with `old_layout`.
+            unsafe { self.alloc.deallocate(self.ptr.cast(), old_layout) };
+        }
+
+        self.ptr = new_header;
     }
 }
 
@@ -167,6 +208,8 @@ impl<T, A: Allocator> Drop for Deque<T, A> {
         if capacity == 0 {
             return;
         }
+        // SAFETY: allocated, and exactly the `len` live slots are dropped once.
+        // A panicking destructor leaks the rest, which is safe.
         unsafe {
             if needs_drop::<T>() {
                 let len = self.header().len as usize;
@@ -181,27 +224,6 @@ impl<T, A: Allocator> Drop for Deque<T, A> {
                 .deallocate(self.ptr.cast(), layout::<T>(capacity as usize));
         }
     }
-}
-
-fn alloc_align<T>() -> usize {
-    max(align_of::<T>(), align_of::<Header>())
-}
-
-const fn data_offset<T>() -> usize {
-    let header_size = size_of::<Header>();
-    let align = align_of::<T>();
-    (header_size + align - 1) & !(align - 1)
-}
-
-fn layout<T>(cap: usize) -> Layout {
-    let size = data_offset::<T>()
-        .checked_add(
-            size_of::<T>()
-                .checked_mul(cap)
-                .expect("deque size overflow"),
-        )
-        .expect("deque size overflow");
-    Layout::from_size_align(size, alloc_align::<T>()).expect("deque layout overflow")
 }
 
 #[cfg(test)]

@@ -62,11 +62,6 @@ impl Key {
     }
 }
 
-pub struct CompletionEntry {
-    key: Key,
-    result: CompletionResult,
-}
-
 #[derive(Clone, Copy)]
 pub struct CompletionResult {
     res: i32,
@@ -90,9 +85,14 @@ impl CompletionResult {
     }
 
     #[cfg(test)]
-    pub fn raw(res: i32, flags: IoringCqeFlags) -> Self {
+    pub const fn raw(res: i32, flags: IoringCqeFlags) -> Self {
         Self { res, flags }
     }
+}
+
+pub struct CompletionEntry {
+    key: Key,
+    result: CompletionResult,
 }
 
 impl CompletionEntry {

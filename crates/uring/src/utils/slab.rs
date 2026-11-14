@@ -221,7 +221,6 @@ impl<T, A: Allocator> Slab<T, A> {
         }
     }
 
-    /// Removes every value, in slot order, leaving the slab empty.
     pub fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
         self.free = 0;
         self.slots.drain(..).filter_map(|entry| match entry {

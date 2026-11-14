@@ -6,222 +6,100 @@ use core::{
 
 use crate::managed::cancellation::Cancellation;
 
-/// A buffer that can be handed to the kernel.
+/// A buffer that can be converted to/from a raw form.
 ///
-/// While an op is in flight, the buffer targeted by it can be accessed by the
-/// kernel, which breaks Rust's aliasing rules. To avoid this problem, we store
-/// these buffers in raw form, by converting them when the op is created, then
-/// restoring the original type once the op is done, or transforming into a
-/// [Cancellation] when the op is cancelled.
+/// Because of the nature of io_uring, futures cannot safely borrow buffers,
+/// since dropping the future cannot synchronously cancel the associated op
+/// (at least not in an efficient manner), which can lead to a situation where
+/// the future is canceled, the buffer is dropped, but the kernel still has
+/// a pending op with a pointer into that buffer.
 ///
-/// The kernel only reads from an [IoBuf], so on its own it should only be used
-/// for write operations (`write`, `send`, ...). Operations where the kernel
-/// writes into the buffer (`read`, `recv`, ...) need an [IoBufMut].
+/// This means the only way to make a safe API is to take buffers by ownership
+/// and ensure they are not dropped until the op is completed - this is
+/// handeld by the [Cancellation] returned by [raw_cancel].
+///
+/// Another soundness problem is pointer aliasing. While an op is in flight,
+/// the buffer targeted by it can be accessed by the kernel, which breaks
+/// Rust's aliasing rules. To avoid this problem, we store these buffers in
+/// raw form, by converting them when the op is created, then restoring the
+/// original type once the op is done, or transforming into a [Cancellation]
+/// when the op is cancelled.
 ///
 /// # Safety
-/// - `from_raw(into_raw(buf))` must give back `buf`
-/// - the memory described by `raw_buf` (and `raw_buf_mut`) must stay valid, at
-///   the same address, for as long as the buffer is in raw form
-/// - `cancellation` must free the buffer, and not access it before it is
-///   dropped
-pub unsafe trait IoBuf: Sized {
+/// - `from_raw(into_raw(buf))` must give back `buf`.
+/// - `raw_cancel` must not access the buffer's memory.
+///
+pub unsafe trait RawBuf: Sized {
+    /// The raw type that the buffer will have while the op is in flight.
+    ///
+    /// # Safety
+    /// Must not contain a pointer type with strict aliasing like `Box<T>`.
     type Raw;
 
-    fn size(&self) -> usize;
-
+    /// Tansform `self` into it's `Self::Raw` form.
     fn into_raw(self) -> Self::Raw;
 
+    /// Transform `raw` back into it's `Self` form.
+    ///
     /// # Safety
     /// `raw` must come from [IoBuf::into_raw], and the kernel must be done
     /// with the buffer.
     unsafe fn from_raw(raw: Self::Raw) -> Self;
 
-    /// Pointer to the initialized bytes and their length, for writes.
-    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize);
-
-    fn cancellation(raw: Self::Raw) -> Cancellation;
-
-    /// Restricts the buffer to `range` of its initialized bytes.
-    fn view<R: RangeBounds<usize>>(self, range: R) -> View<Self, R> {
-        View::new(self, range)
-    }
+    /// Transform `raw` back into it's `Self` form.
+    fn raw_cancel(raw: Self::Raw) -> Cancellation;
 }
 
-/// A buffer the kernel can write into.
-///
-/// The mutable extension to [IoBuf] which can be used for read operations.
-///
-/// # Safety
-/// Same as [IoBuf], and the memory returned by both `raw_buf_mut` and
-/// `raw_buf` must be valid for writes.
-pub unsafe trait IoBufMut: IoBuf {
-    /// Pointer to the writable bytes and their length, for reads.
-    fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize);
-
-    /// The kernel initialized `n` bytes starting at `raw_buf_mut`.
-    ///
-    /// # Safety
-    /// `n` must not exceed the length returned by `raw_buf_mut`, and those
-    /// bytes must have been written.
-    unsafe fn set_init(raw: &mut Self::Raw, n: usize);
-}
-
-/// Owns a buffer that may be shared with the kernel, in its raw form.
-pub struct InFlight<B: IoBuf> {
-    raw: B::Raw,
-}
-
-impl<B: IoBuf> InFlight<B> {
-    pub fn new(buf: B) -> Self {
-        Self {
-            raw: buf.into_raw(),
-        }
-    }
-
-    pub fn raw_buf(&self) -> (*const u8, usize) {
-        B::raw_buf(&self.raw)
-    }
-
-    /// # Safety
-    /// The kernel must be done with the buffer (final CQE seen).
-    pub unsafe fn into_raw(self) -> B::Raw {
-        let this = ManuallyDrop::new(self);
-        unsafe { ptr::read(&this.raw) }
-    }
-
-    /// # Safety
-    /// The kernel must be done with the buffer (final CQE seen).
-    pub unsafe fn into_inner(self) -> B {
-        unsafe { B::from_raw(self.into_raw()) }
-    }
-}
-
-impl<B: IoBufMut> InFlight<B> {
-    pub fn raw_buf_mut(&self) -> (*mut u8, usize) {
-        B::raw_buf_mut(&self.raw)
-    }
-
-    /// Rebuilds the buffer after the kernel wrote `n` bytes into it.
-    ///
-    /// # Safety
-    /// The kernel must be done with the buffer (final CQE seen), and must
-    /// have written `n` bytes starting at `raw_buf_mut`.
-    pub unsafe fn into_inner_init(self, n: usize) -> B {
-        unsafe {
-            let mut raw = self.into_raw();
-            B::set_init(&mut raw, n);
-            B::from_raw(raw)
-        }
-    }
-}
-
-impl<B: IoBuf> Drop for InFlight<B> {
-    fn drop(&mut self) {
-        // only reached for an op that was never submitted: every other path
-        // goes through `into_raw` or the `Cancellation`
-        drop(unsafe { B::from_raw(ptr::read(&self.raw)) });
-    }
-}
-
-impl<B: IoBuf> From<InFlight<B>> for Cancellation {
-    fn from(buf: InFlight<B>) -> Self {
-        // the buffer stays in raw form, it is only rebuilt (and dropped)
-        // after the final CQE
-        let this = ManuallyDrop::new(buf);
-        B::cancellation(unsafe { ptr::read(&this.raw) })
-    }
-}
-
-unsafe impl IoBuf for &'static [u8] {
-    type Raw = Self;
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn into_raw(self) -> Self::Raw {
-        self
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        raw
-    }
-
-    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.as_ptr(), raw.len())
-    }
-
-    fn cancellation(_: Self::Raw) -> Cancellation {
-        Cancellation::empty()
-    }
-}
-
-unsafe impl IoBuf for &'static str {
-    type Raw = Self;
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn into_raw(self) -> Self::Raw {
-        self
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        raw
-    }
-
-    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.as_ptr(), raw.len())
-    }
-
-    fn cancellation(_: Self::Raw) -> Cancellation {
-        Cancellation::empty()
-    }
-}
-
-/// Reads fill the whole slice, from the start.
-// `Self::from_raw` would read like a recursive call to `IoBuf::from_raw`
-unsafe impl IoBuf for Box<[u8]> {
-    type Raw = NonNull<[u8]>;
-
-    fn size(&self) -> usize {
-        self.len()
-    }
+unsafe impl<T> RawBuf for Box<[T]> {
+    type Raw = NonNull<[T]>;
 
     fn into_raw(self) -> Self::Raw {
         Self::into_non_null(self)
     }
 
     unsafe fn from_raw(raw: Self::Raw) -> Self {
+        // SAFETY: `raw` comes from a valid `Box<[T]>`.
         unsafe { Self::from_raw(raw.as_ptr()) }
     }
 
-    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.cast().as_ptr(), raw.len())
-    }
-
-    fn cancellation(raw: Self::Raw) -> Cancellation {
-        unsafe {
-            Cancellation::from_raw(raw.cast().as_ptr(), raw.len(), |ptr, len| {
-                drop(Self::from_raw(ptr::slice_from_raw_parts_mut(
-                    ptr.cast::<u8>(),
-                    len,
-                )));
-            })
-        }
+    fn raw_cancel(raw: Self::Raw) -> Cancellation {
+        unsafe { Cancellation::from_assume_boxed_slice(raw.as_ptr()) }
     }
 }
 
-unsafe impl IoBufMut for Box<[u8]> {
-    fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize) {
-        (raw.cast().as_ptr(), raw.len())
+unsafe impl RawBuf for &'static [u8] {
+    type Raw = Self;
+
+    fn into_raw(self) -> Self::Raw {
+        self
     }
 
-    unsafe fn set_init(_: &mut Self::Raw, _: usize) {}
+    unsafe fn from_raw(raw: Self::Raw) -> Self {
+        raw
+    }
+
+    fn raw_cancel(_raw: Self::Raw) -> Cancellation {
+        Cancellation::default()
+    }
 }
 
-/// Raw parts of a `Vec<u8>`.
+unsafe impl RawBuf for &'static str {
+    type Raw = Self;
+
+    fn into_raw(self) -> Self::Raw {
+        self
+    }
+
+    unsafe fn from_raw(raw: Self::Raw) -> Self {
+        raw
+    }
+
+    fn raw_cancel(_raw: Self::Raw) -> Cancellation {
+        Cancellation::default()
+    }
+}
+
+/// Raw parts of a `Vec<u8>` which can also be used for `Vec`-like buffers.
 pub struct RawVec {
     ptr: NonNull<u8>,
     len: usize,
@@ -238,17 +116,124 @@ impl RawVec {
         }
     }
 
-    unsafe fn into_vec(self) -> Vec<u8> {
+    fn into_vec(self) -> Vec<u8> {
+        // SAFETY: `self` comes from a valid `Vec<u8>`.
         unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.cap) }
     }
 
-    fn cancellation(self) -> Cancellation {
-        // freeing only needs the capacity, `u8` has no drop
-        unsafe {
-            Cancellation::from_raw(self.ptr.as_ptr().cast(), self.cap, |ptr, cap| {
-                drop(Vec::from_raw_parts(ptr.cast::<u8>(), 0, cap));
-            })
-        }
+    const fn into_cancel(self) -> Cancellation {
+        // SAFETY: `self` comes from a valid `Vec<u8>`.
+        unsafe { Cancellation::from_assume_vec(self.ptr.as_ptr(), self.cap) }
+    }
+}
+
+unsafe impl RawBuf for Vec<u8> {
+    type Raw = RawVec;
+
+    fn into_raw(self) -> Self::Raw {
+        RawVec::new(self)
+    }
+
+    unsafe fn from_raw(raw: Self::Raw) -> Self {
+        raw.into_vec()
+    }
+
+    fn raw_cancel(raw: Self::Raw) -> Cancellation {
+        raw.into_cancel()
+    }
+}
+
+unsafe impl RawBuf for String {
+    type Raw = RawVec;
+
+    fn into_raw(self) -> Self::Raw {
+        RawVec::new(self.into_bytes())
+    }
+
+    unsafe fn from_raw(raw: Self::Raw) -> Self {
+        // SAFETY: the bytes came from a `String` and were not written to
+        unsafe { Self::from_utf8_unchecked(raw.into_vec()) }
+    }
+
+    fn raw_cancel(raw: Self::Raw) -> Cancellation {
+        raw.into_cancel()
+    }
+}
+
+/// A buffer that can be used for write ops.
+///
+/// This trait provides immutable access to the bytes of the buffers.
+///
+/// Only types which implement [IoBuf] can be safely used for ops which read
+/// from their bytes, see [RawBuf] for more details.
+///
+/// # Safety
+/// `raw_buf` must return an the same value even if `raw` was moved.
+/// It must also point to a initialized memory block which is valid for reads.
+///
+pub unsafe trait IoBuf: RawBuf {
+    /// The pointer and size of the raw form.
+    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize);
+
+    /// Restricts the buffer to `range` of its initialized bytes.
+    fn view<R: RangeBounds<usize>>(self, range: R) -> View<Self, R> {
+        View::new(self, range)
+    }
+}
+
+/// A buffer that can be used for read ops.
+///
+/// The mutable extension to [IoBuf] which can be used to get mutable access
+/// to the bytes of the buffer.
+///
+/// Only types which implement [IoBufMut] can be safely used for ops which
+/// write into their bytes, see [RawBuf] for more details.
+///
+/// For buffers which also hold uninitialized data, the [set_init] method can
+/// be implemented to allow the op to update the buffer with the amount of
+/// bytes it has initialized.
+///
+/// # Safety
+/// `raw_buf_mut` must return an the same value even if `raw` was moved.
+/// It must also point to a initialized memory block which is valid for writes.
+/// `set_init` must leave a `raw` in a valid state, such that it is also valid
+/// when converted back into T.
+///
+pub unsafe trait IoBufMut: RawBuf {
+    /// The mutable pointer and size of the raw form.
+    fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize);
+
+    /// The op initialized `n` bytes starting at `raw_buf_mut`.
+    ///
+    /// # Safety
+    /// `n` must not exceed the length returned by `raw_buf_mut`, and those
+    /// bytes must have been written.
+    #[allow(unused_variables)]
+    unsafe fn set_init(raw: &mut Self::Raw, n: usize) {}
+}
+
+unsafe impl IoBuf for &'static [u8] {
+    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
+        (raw.as_ptr(), raw.len())
+    }
+}
+
+unsafe impl IoBuf for &'static str {
+    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
+        (raw.as_ptr(), raw.len())
+    }
+}
+
+/// Reads fill the whole slice, from the start.
+unsafe impl IoBuf for Box<[u8]> {
+    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
+        (raw.cast().as_ptr(), raw.len())
+    }
+}
+
+unsafe impl IoBufMut for Box<[u8]> {
+    fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize) {
+        (raw.cast().as_ptr(), raw.len())
     }
 }
 
@@ -257,26 +242,8 @@ impl RawVec {
 /// read (previous contents are discarded). To append instead, use
 /// [Accumulating].
 unsafe impl IoBuf for Vec<u8> {
-    type Raw = RawVec;
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn into_raw(self) -> Self::Raw {
-        RawVec::new(self)
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        unsafe { raw.into_vec() }
-    }
-
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
         (raw.ptr.as_ptr(), raw.len)
-    }
-
-    fn cancellation(raw: Self::Raw) -> Cancellation {
-        raw.cancellation()
     }
 }
 
@@ -292,27 +259,8 @@ unsafe impl IoBufMut for Vec<u8> {
 
 /// Only for writes, reads could produce invalid UTF-8.
 unsafe impl IoBuf for String {
-    type Raw = RawVec;
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn into_raw(self) -> Self::Raw {
-        RawVec::new(self.into_bytes())
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        // SAFETY: the bytes came from a `String` and were not written to
-        unsafe { Self::from_utf8_unchecked(raw.into_vec()) }
-    }
-
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
         (raw.ptr.as_ptr(), raw.len)
-    }
-
-    fn cancellation(raw: Self::Raw) -> Cancellation {
-        raw.cancellation()
     }
 }
 
@@ -326,8 +274,15 @@ pub struct View<B, R> {
     range: R,
 }
 
-/// Resolves `range` against a buffer of `len` bytes, clamped to `0..=len`.
-fn bounds(range: &impl RangeBounds<usize>, len: usize) -> (usize, usize) {
+impl<B, R> View<B, R> {
+    pub const fn new(buf: B, range: R) -> Self {
+        Self { buf, range }
+    }
+}
+
+/// Resolves `range` against a region of `len` bytes, clamped to `0..=len`
+/// (`begin <= end <= len` always holds).
+fn bounds<R: RangeBounds<usize>>(range: &R, len: usize) -> (usize, usize) {
     let begin = match range.start_bound() {
         Bound::Included(&x) => x,
         Bound::Excluded(&x) => x.saturating_add(1),
@@ -345,17 +300,33 @@ fn bounds(range: &impl RangeBounds<usize>, len: usize) -> (usize, usize) {
     (begin, end)
 }
 
-impl<B: IoBuf, R: RangeBounds<usize>> View<B, R> {
-    pub const fn new(buf: B, range: R) -> Self {
-        Self { buf, range }
-    }
+/// Applies the range of a [`View`] to the region `(ptr, len)` of its buffer.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes (as an in-bounds or one-past pointer).
+unsafe fn window<R: RangeBounds<usize>>(range: &R, ptr: *mut u8, len: usize) -> (*mut u8, usize) {
+    let (begin, end) = bounds(range, len);
+    // SAFETY: `begin <= len`, so the pointer stays in (or one past) the region.
+    (unsafe { ptr.add(begin) }, end - begin)
+}
 
+impl<B, R: RangeBounds<usize>> View<B, R> {
+    /// The start of the range, before clamping to the buffer.
     pub fn begin(&self) -> usize {
-        bounds(&self.range, self.buf.size()).0
+        match self.range.start_bound() {
+            Bound::Included(&x) => x,
+            Bound::Excluded(&x) => x.saturating_add(1),
+            Bound::Unbounded => 0,
+        }
     }
 
-    pub fn end(&self) -> usize {
-        bounds(&self.range, self.buf.size()).1
+    /// The end of the range, before clamping to the buffer (`None` if unbounded).
+    pub fn end(&self) -> Option<usize> {
+        match self.range.end_bound() {
+            Bound::Included(&x) => Some(x.saturating_add(1)),
+            Bound::Excluded(&x) => Some(x),
+            Bound::Unbounded => None,
+        }
     }
 
     pub const fn range(&self) -> &R {
@@ -376,12 +347,8 @@ pub struct RawView<B, R> {
     range: R,
 }
 
-unsafe impl<B: IoBuf, R: RangeBounds<usize>> IoBuf for View<B, R> {
+unsafe impl<B: RawBuf, R> RawBuf for View<B, R> {
     type Raw = RawView<B::Raw, R>;
-
-    fn size(&self) -> usize {
-        self.end() - self.begin()
-    }
 
     fn into_raw(self) -> Self::Raw {
         RawView {
@@ -397,27 +364,29 @@ unsafe impl<B: IoBuf, R: RangeBounds<usize>> IoBuf for View<B, R> {
         }
     }
 
-    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        let (ptr, len) = B::raw_buf(&raw.raw);
-        let (begin, end) = bounds(&raw.range, len);
-        // SAFETY: `begin <= len`, so the pointer stays in (or one past) the buffer
-        (unsafe { ptr.add(begin) }, end - begin)
-    }
-
-    fn cancellation(raw: Self::Raw) -> Cancellation {
-        B::cancellation(raw.raw)
+    fn raw_cancel(raw: Self::Raw) -> Cancellation {
+        B::raw_cancel(raw.raw)
     }
 }
 
+unsafe impl<B: IoBuf, R: RangeBounds<usize>> IoBuf for View<B, R> {
+    fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
+        let (ptr, len) = B::raw_buf(&raw.raw);
+        // SAFETY: `(ptr, len)` is a valid region of the buffer.
+        let (ptr, len) = unsafe { window(&raw.range, ptr.cast_mut(), len) };
+        (ptr.cast_const(), len)
+    }
+}
+
+/// Reads overwrite the initialized bytes in place, `set_init` is a no-op, so
+/// the length of the inner buffer never changes.
 unsafe impl<B: IoBufMut, R: RangeBounds<usize>> IoBufMut for View<B, R> {
     fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize) {
-        // `B: IoBufMut`, so its initialized bytes are writable too
-        let (ptr, len) = Self::raw_buf(raw);
-        (ptr.cast_mut(), len)
+        let (ptr, len) = B::raw_buf_mut(&raw.raw);
+        // SAFETY: `(ptr, len)` is a valid region of the buffer.
+        let (ptr, len) = unsafe { window(&raw.range, ptr, len) };
+        (ptr, len)
     }
-
-    // the range was already initialized, nothing to record
-    unsafe fn set_init(_: &mut Self::Raw, _: usize) {}
 }
 
 /// A `Vec` that reads append to: they fill the spare capacity `[len..cap)` and
@@ -461,27 +430,25 @@ impl DerefMut for Accumulating {
     }
 }
 
-unsafe impl IoBuf for Accumulating {
+unsafe impl RawBuf for Accumulating {
     type Raw = RawVec;
-
-    fn size(&self) -> usize {
-        self.0.len()
-    }
 
     fn into_raw(self) -> Self::Raw {
         RawVec::new(self.0)
     }
 
     unsafe fn from_raw(raw: Self::Raw) -> Self {
-        Self(unsafe { raw.into_vec() })
+        Self(raw.into_vec())
     }
 
+    fn raw_cancel(raw: Self::Raw) -> Cancellation {
+        raw.into_cancel()
+    }
+}
+
+unsafe impl IoBuf for Accumulating {
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
         (raw.ptr.as_ptr(), raw.len)
-    }
-
-    fn cancellation(raw: Self::Raw) -> Cancellation {
-        raw.cancellation()
     }
 }
 
@@ -493,5 +460,71 @@ unsafe impl IoBufMut for Accumulating {
 
     unsafe fn set_init(raw: &mut Self::Raw, n: usize) {
         raw.len += n;
+    }
+}
+
+/// Owns a buffer that may be shared with the kernel, in its raw form.
+///
+/// This is a helper type for handling the conversion between the normal
+/// and raw form for [IoBuf] and [IoBufMut] buffers. Any ops which pass
+/// buffers into the kernel should use this type to ensure safety.
+///
+pub struct InFlight<B: RawBuf> {
+    raw: B::Raw,
+}
+
+impl<B: RawBuf> InFlight<B> {
+    pub fn new(buf: B) -> Self {
+        Self {
+            raw: buf.into_raw(),
+        }
+    }
+
+    fn into_raw(self) -> B::Raw {
+        let this = ManuallyDrop::new(self);
+        unsafe { ptr::read(&this.raw) }
+    }
+
+    /// # Safety
+    /// The kernel must be done with the buffer.
+    pub unsafe fn into_inner(self) -> B {
+        unsafe { B::from_raw(self.into_raw()) }
+    }
+
+    pub fn into_cancel(self) -> Cancellation {
+        B::raw_cancel(self.into_raw())
+    }
+}
+
+impl<B: IoBuf> InFlight<B> {
+    pub fn raw_buf(&self) -> (*const u8, usize) {
+        B::raw_buf(&self.raw)
+    }
+}
+
+impl<B: IoBufMut> InFlight<B> {
+    pub fn raw_buf_mut(&self) -> (*mut u8, usize) {
+        B::raw_buf_mut(&self.raw)
+    }
+
+    /// Rebuilds the buffer after the op wrote `n` bytes into it.
+    ///
+    /// # Safety
+    /// The kernel must be done with the buffer, and must have written `n` bytes
+    /// starting at `raw_buf_mut`.
+    pub unsafe fn into_inner_init(self, n: usize) -> B {
+        unsafe {
+            let mut raw = self.into_raw();
+            B::set_init(&mut raw, n);
+            B::from_raw(raw)
+        }
+    }
+}
+
+impl<B: RawBuf> Drop for InFlight<B> {
+    fn drop(&mut self) {
+        // only reached for an op that was never submitted: every other path
+        // goes through `into_raw` or the `Cancellation`
+        drop(unsafe { B::from_raw(ptr::read(&self.raw)) });
     }
 }

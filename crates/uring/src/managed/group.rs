@@ -183,7 +183,7 @@ impl<U: UringProxy> Drop for SelectBuf<U> {
 /// A group lives until every [`SelectGroup`] handle is dropped and it has no
 /// users left. It then goes on the `dead` list and is unregistered and freed
 /// by [`BufGroups::free_dead`].
-pub(crate) struct BufGroups {
+pub struct BufGroups {
     groups: Slab<BufGroup>,
     dead: Vec<BufGroupId>,
 }
