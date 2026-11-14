@@ -23,7 +23,10 @@ fn write_pipe<B: IoBuf>(buf: B, expected: &[u8]) -> B {
     let ring = TestRing::new();
     let (rx, tx) = pipe::pipe().unwrap();
 
-    let (buf, res) = block_on(&ring, pin!(Submission::new(Write::new(&tx, buf), ring.clone())));
+    let (buf, res) = block_on(
+        &ring,
+        pin!(Submission::new(Write::new(&tx, buf), ring.clone())),
+    );
     assert_eq!(res, Ok(expected.len()));
 
     drop(tx);

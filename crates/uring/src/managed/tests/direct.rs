@@ -5,9 +5,9 @@ use std::{ffi::CStr, fs, path::PathBuf, pin::pin};
 
 use rustix::{
     fd::RawFd,
-    io_uring::IoringSqeFlags,
     fs::{Mode, OFlags},
     io::Errno,
+    io_uring::IoringSqeFlags,
 };
 
 use crate::managed::{
@@ -156,9 +156,14 @@ fn drop_during_cancelled_read_closes_after_it() {
     let ring = TestRing::with_direct_files(1);
     let fd = open(&ring, CARGO_TOML, OFlags::RDONLY).unwrap();
 
-    let mut fut = Box::pin(Submission::new(Read::new_at(&fd, vec![0; 8], 0), ring.clone()));
+    let mut fut = Box::pin(Submission::new(
+        Read::new_at(&fd, vec![0; 8], 0),
+        ring.clone(),
+    ));
     let tw = TestWaker::new();
-    let _ = fut.as_mut().poll(&mut std::task::Context::from_waker(&tw.waker()));
+    let _ = fut
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(&tw.waker()));
     drop(fut);
     // the read may still be in flight, it keeps the file it already resolved
     drop(fd);

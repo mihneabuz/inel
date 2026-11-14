@@ -1,4 +1,7 @@
-use rustix::{fd::{AsRawFd, OwnedFd, RawFd}, io_uring::IoringSqeFlags};
+use rustix::{
+    fd::{AsRawFd, OwnedFd, RawFd},
+    io_uring::IoringSqeFlags,
+};
 
 use crate::{
     managed::{
@@ -57,7 +60,8 @@ impl<U: UringProxy> DirectFd<U> {
 impl<U: UringProxy> Drop for DirectFd<U> {
     fn drop(&mut self) {
         let slot = self.slot;
-        self.ring.with(|uring| uring.submit_detached(CloseDirect(slot)));
+        self.ring
+            .with(|uring| uring.submit_detached(CloseDirect(slot)));
     }
 }
 

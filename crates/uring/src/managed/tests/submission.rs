@@ -11,9 +11,7 @@ use crate::{
     managed::{
         Read, UringProxy,
         submission::Submission,
-        tests::{
-            CancelAll, Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag,
-        },
+        tests::{CancelAll, Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag},
     },
     sys::TIMEOUT_MULTISHOT,
 };

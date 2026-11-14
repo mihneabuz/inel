@@ -346,7 +346,11 @@ pub unsafe fn io_uring_register(
             // `{ off: u32, len: u32, resv: u64 }`
             let (off, len, resv) = unsafe {
                 let range = arg.cast::<u32>();
-                (range.read(), range.add(1).read(), range.add(2).cast::<u64>().read())
+                (
+                    range.read(),
+                    range.add(1).read(),
+                    range.add(2).cast::<u64>().read(),
+                )
             };
             if resv != 0 {
                 return Err(Errno::INVAL);
@@ -1065,8 +1069,7 @@ impl Kernel {
                 }
 
                 IoringOp::Close => {
-                    if off != 0 || !addr.is_null() || len != 0 || op_flags != 0 || buf_index != 0
-                    {
+                    if off != 0 || !addr.is_null() || len != 0 || op_flags != 0 || buf_index != 0 {
                         return Err(Errno::INVAL);
                     }
                     if fixed {
@@ -1416,7 +1419,6 @@ impl Kernel {
             self.post(&mut state, req.user_data, res, req.skip_success);
             return state;
         }
-
 
         // pick the buffer only now, when the read can make progress. It is
         // only consumed if the read succeeds; this thread is the only one

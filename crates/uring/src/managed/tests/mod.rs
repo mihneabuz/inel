@@ -60,7 +60,9 @@ impl TestRing {
 
     pub fn with_direct_files(direct_files: u32) -> Self {
         Self {
-            ring: Rc::new(RefCell::new(Uring::with_direct_files(direct_files).unwrap())),
+            ring: Rc::new(RefCell::new(
+                Uring::with_direct_files(direct_files).unwrap(),
+            )),
         }
     }
 

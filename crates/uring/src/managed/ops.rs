@@ -265,7 +265,12 @@ impl<U: UringProxy> OpenDirect<U> {
 // handed over on cancel
 unsafe impl<U: UringProxy> Op for OpenDirect<U> {
     fn prep(&mut self, sqe: &mut Sqe) {
-        sqe.prep_openat(CWD.as_raw_fd(), self.path.as_ptr(), self.flags, self.mode.bits());
+        sqe.prep_openat(
+            CWD.as_raw_fd(),
+            self.path.as_ptr(),
+            self.flags,
+            self.mode.bits(),
+        );
         sqe.set_file_index(FILE_INDEX_ALLOC);
     }
 
