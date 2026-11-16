@@ -18,7 +18,7 @@ pub use ops::{At, Current, Offset, Open, OpenDirect, Read, ReadSelect, Write};
 pub use proxy::UringProxy;
 pub(crate) use proxy::UringProxyExt;
 pub use submission::{MultiOp, Op, SingleOp, Submission};
-pub use uring::Uring;
+pub use uring::{Uring, UringOptions};
 
 #[cfg(test)]
 mod tests;

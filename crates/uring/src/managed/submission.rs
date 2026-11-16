@@ -53,13 +53,13 @@ impl Scratch {
 ///
 /// # Safety
 ///
-/// Memory referenced by pointers written into the sqe by [`Self::prep`] must not be stored
-/// inline in the op: the op may be moved after `prep`, even before the sqe is submitted. It
+/// Memory referenced by pointers written into the SQE by [`Self::prep`] must not be stored
+/// inline in the op: the op may be moved after `prep`, even before the SQE is submitted. It
 /// must also stay valid for as long as the kernel may access it, which is one of two cases:
 ///
 /// - Memory the kernel accesses while the op runs (usually buffers) must be owned by the op
-///   and stay valid until its final cqe is posted. If the op is cancelled, [`Self::cancel`]
-///   must move it into the returned [`Cancellation`], which is kept until that cqe arrives.
+///   and stay valid until its final CQE is posted. If the op is cancelled, [`Self::cancel`]
+///   must move it into the returned [`Cancellation`], which is kept until that CQE arrives.
 ///
 /// - Memory the kernel only reads while preparing the request in `io_uring_enter`, and
 ///   copies (e.g. the path of an open, the address of a connect), only has to stay valid
@@ -101,7 +101,7 @@ pub unsafe trait Op {
 
 /// An op that completes with a single result.
 ///
-/// This trait only describes how an op handles its cqe results. The submission and
+/// This trait only describes how an op handles its CQE results. The submission and
 /// cancellation logic lives in the [`Op`] implementation.
 ///
 /// [`Self::result`] gets the completion result and the ring the op ran on, so outputs
@@ -112,8 +112,8 @@ pub unsafe trait Op {
 ///
 /// # Safety
 ///
-/// The sqe prepped by the [`Op`] implementation must post exactly one cqe. The op, and
-/// the memory it owns, is dropped once that cqe is consumed by [`Self::result`], so any
+/// The SQE prepped by the [`Op`] implementation must post exactly one CQE. The op, and
+/// the memory it owns, is dropped once that CQE is consumed by [`Self::result`], so any
 /// later completion would let the kernel access freed memory.
 pub unsafe trait SingleOp<U: UringProxy>: Op {
     type Output;
@@ -122,7 +122,7 @@ pub unsafe trait SingleOp<U: UringProxy>: Op {
 
 /// An op that may complete with multiple results.
 ///
-/// This trait only describes how an op handles its cqe results. The submission and
+/// This trait only describes how an op handles its CQE results. The submission and
 /// cancellation logic lives in the [`Op`] implementation. This is the multishot
 /// variant of [`SingleOp`].
 ///

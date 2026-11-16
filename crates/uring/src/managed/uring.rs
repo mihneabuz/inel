@@ -13,14 +13,117 @@ use crate::{
     sys::{IoUring, Sqe},
 };
 
+/// Configuration for a [`Uring`], created with [`Uring::options`].
+///
+/// The direct descriptor table has `manual_direct_files` slots at the start, which
+/// ops install into by index, followed by `auto_direct_files` slots the kernel
+/// allocates from (e.g. for [`OpenDirect`]).
+///
+/// [`OpenDirect`]: super::OpenDirect
+#[derive(Debug, Clone)]
+pub struct UringOptions {
+    sq_entries: u32,
+    cq_entries: u32,
+    auto_direct_files: u32,
+    manual_direct_files: u32,
+}
+
+impl Default for UringOptions {
+    fn default() -> Self {
+        Self {
+            sq_entries: 128,
+            cq_entries: 256,
+            auto_direct_files: 1024,
+            manual_direct_files: 0,
+        }
+    }
+}
+
+impl UringOptions {
+    /// Sets the size of the submission queue, which also bounds the ops submitted
+    /// between two waits.
+    #[must_use]
+    pub const fn with_sq_entries(mut self, entries: u32) -> Self {
+        self.sq_entries = entries;
+        self
+    }
+
+    /// Sets the size of the completion queue.
+    #[must_use]
+    pub const fn with_cq_entries(mut self, entries: u32) -> Self {
+        self.cq_entries = entries;
+        self
+    }
+
+    /// Sets the number of direct descriptor slots the kernel allocates from.
+    #[must_use]
+    pub const fn with_auto_direct_files(mut self, count: u32) -> Self {
+        self.auto_direct_files = count;
+        self
+    }
+
+    /// Sets the number of direct descriptor slots reserved for ops that install
+    /// into a chosen slot (e.g. a linked open and read).
+    #[must_use]
+    pub const fn with_manual_direct_files(mut self, count: u32) -> Self {
+        self.manual_direct_files = count;
+        self
+    }
+
+    /// Builds the [`Uring`].
+    ///
+    /// Fails with `EINVAL` if the direct descriptor table would have more than
+    /// `u32::MAX` slots, and with any error from setting up the ring or
+    /// registering the table.
+    pub fn build(self) -> Result<Uring, Errno> {
+        let direct_files = self
+            .manual_direct_files
+            .checked_add(self.auto_direct_files)
+            .ok_or(Errno::INVAL)?;
+
+        let ring = IoUring::options()
+            .with_sq_entries(self.sq_entries)
+            .with_cq_entries(self.cq_entries)
+            .with_single_issuer()
+            .with_defer_taskrun()
+            .with_coop_taskrun()
+            .with_taskrun_flag()
+            .with_submit_all()
+            .build()?;
+
+        // the kernel rejects an empty table
+        if direct_files > 0 {
+            ring.register_files_sparse(direct_files)?;
+            ring.register_file_alloc_range(self.manual_direct_files, self.auto_direct_files)?;
+        }
+
+        let comp = Completions::with_capacity(ring.sq_size());
+
+        Ok(Uring {
+            ring,
+            comp,
+            groups: BufGroups::new(),
+            scratch: Scratch::default(),
+            in_kernel: 0,
+        })
+    }
+}
+
+/// A reactor powered by a managed [`IoUring`].
+///
+/// It handles submitting ops, waiting for events, getting completion results, as well as
+/// other features provided by [`IoUring`] (direct files, fixed buffers, buffer rings).
+/// Ops must implement the [`Op`] trait, as well as either [`SigleOp`] or [`MultiOp`] and
+/// must be managed by a [`Submission`], which also handles results and cancellation.
+///
+/// Most other types and APIs should not use [`Uring`] directly, but instead prefer to be
+/// generic over the [`UringProxy`] trait, which allows users to define their own logic to
+/// provide access to the actual [`Uring`] instance.
 pub struct Uring {
     ring: IoUring,
     comp: Completions,
     groups: BufGroups,
     scratch: Scratch,
-    /// Submitted ops whose final CQE has not been reaped yet, so the kernel
-    /// may still access their memory. Detached ops reference none and are
-    /// not counted.
     in_kernel: u32,
 }
 
@@ -29,58 +132,37 @@ impl Uring {
         "Submission queue full. Consider configuring with more `sq_entries`.";
     const FAILED_TO_ENTER_ERROR: &str = "Failed to enter io_uring";
 
-    /// Size of the direct descriptor table.
-    const DIRECT_FILES: u32 = 1024;
-    /// Slots at the start of the table that the kernel doesn't allocate from,
-    /// for ops that install into a chosen slot (e.g. a linked open and read).
-    /// None yet.
-    const RESERVED_DIRECT_FILES: u32 = 0;
-
+    /// Creates a ring with the default options.
     pub fn new() -> Result<Self, Errno> {
-        Self::with_direct_files(Self::DIRECT_FILES)
+        Self::options().build()
     }
 
-    /// With a direct descriptor table of `direct_files` slots.
-    pub(crate) fn with_direct_files(direct_files: u32) -> Result<Self, Errno> {
-        let ring = IoUring::options()
-            .with_sq_entries(128)
-            .with_cq_entries(256)
-            .with_single_issuer()
-            .with_defer_taskrun()
-            .with_coop_taskrun()
-            .with_taskrun_flag()
-            .with_submit_all()
-            .build()?;
-
-        ring.register_files_sparse(direct_files)?;
-        ring.register_file_alloc_range(
-            Self::RESERVED_DIRECT_FILES,
-            direct_files - Self::RESERVED_DIRECT_FILES,
-        )?;
-
-        let comp = Completions::new(ring.sq_size());
-
-        Ok(Self {
-            ring,
-            comp,
-            groups: BufGroups::new(),
-            scratch: Scratch::default(),
-            in_kernel: 0,
-        })
+    /// Starts configuring a ring; finish with [`UringOptions::build`].
+    #[must_use]
+    pub fn options() -> UringOptions {
+        UringOptions::default()
     }
 
+    /// Returns true if there are no more in-flight ops.
     pub const fn is_done(&self) -> bool {
         self.comp.is_empty()
     }
 
+    /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
+    /// Returns a `Key` which can be used to retrieve the result of the op.
     pub(crate) fn submit<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
     where
         U: UringProxy,
         O: SingleOp<U>,
     {
-        self.push(op, |comp, sqe| unsafe { comp.insert_single(sqe, waker) })
+        self.push(op, |comp, sqe| {
+            // SAFETY: SingleOp implementation guarantees it generates exactly one CQE.
+            unsafe { comp.insert_single(sqe, waker) }
+        })
     }
 
+    /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
+    /// Returns a `Key` which can be used to retrieve the results of the op.
     pub(crate) fn submit_multi<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
     where
         U: UringProxy,
@@ -89,8 +171,6 @@ impl Uring {
         self.push(op, |comp, sqe| comp.insert_multi(sqe, waker))
     }
 
-    /// Preps `op` into the next SQE, then registers it with `insert`, which
-    /// sets the SQE's `user_data`.
     fn push<O, F>(&mut self, op: &mut O, insert: F) -> Key
     where
         O: Op,
@@ -114,13 +194,13 @@ impl Uring {
         key
     }
 
-    /// Submits an SQE built by `prep` without tracking it: a successful
-    /// completion is skipped, a failed one ignored.
+    /// Submits an SQE built by `prep` without tracking it: a successful completion is
+    /// skipped, a failed one ignored.
     ///
     /// # Safety
-    /// Nothing waits for the completion, so the SQE must not reference any
-    /// memory (beyond what the kernel copies while preparing it), nor select a
-    /// buffer from a group, since the CQE carrying it is ignored.
+    /// Nothing waits for the completion, so the SQE must not reference any memory
+    /// (beyond what the kernel copies while preparing it), nor select a buffer from
+    /// a group, since the CQE carrying it is ignored.
     pub(crate) unsafe fn prep_detached<F>(&mut self, prep: F)
     where
         F: FnOnce(&mut Sqe),
@@ -142,8 +222,6 @@ impl Uring {
     }
 
     pub(crate) fn cancel(&mut self, key: &Key, handle: Cancellation, entry: bool) {
-        // stored CQEs that are discarded unread give back their buffer and
-        // their hold on the group
         let pending = self.comp.cancel(key, handle, |result| {
             if let Some(gid) = key.group_id() {
                 if let Some(bid) = result.buffer_id() {
@@ -172,11 +250,8 @@ impl Uring {
     pub(crate) fn result(&mut self, key: &Key) -> Option<CompletionResult> {
         let result = self.comp.result(key)?;
 
-        // the CQE held the group alive until now. `ReadSelect::result` still
-        // owns a group handle, so the group can't die before `take` adds the
-        // `SelectBuf`'s user
-        if !result.has_more()
-            && let Some(gid) = key.group_id()
+        if let Some(gid) = key.group_id()
+            && !result.has_more()
         {
             self.groups.release(gid);
         }
@@ -200,9 +275,6 @@ impl Uring {
                 self.in_kernel -= 1;
             }
 
-            // a stored CQE keeps the op's hold on the group until it is read
-            // (`result`) or discarded (`cancel`), since its buffer id points
-            // into the group's memory
             if !stored && let Some(gid) = key.group_id() {
                 if let Some(bid) = result.buffer_id() {
                     self.groups.recycle(gid, bid);
@@ -218,17 +290,8 @@ impl Uring {
         self.groups.free_dead(&self.ring);
     }
 
-    /// Cancels every op in flight and waits until the kernel is done with all
-    /// of them, so dropping the ring afterwards frees everything. Ops that are
-    /// still awaited complete, usually with `ECANCELED`.
-    ///
-    /// Without it, dropping the ring leaks the memory the kernel may still be
-    /// using: buffers of cancelled ops and buffer groups that are in use.
     pub fn shutdown(&mut self) {
         while self.in_kernel > 0 {
-            // resubmitted every round: requests run in any order, so a cancel
-            // can miss an op that the kernel picks up after it. Each round
-            // posts at least one CQE, the cancel's -ENOENT if nothing matched.
             // SAFETY: the cancel references no memory
             unsafe {
                 self.prep_detached(|sqe| {
@@ -268,8 +331,5 @@ impl Drop for Uring {
     fn drop(&mut self) {
         let _ = self.ring.unregister_buffers();
         let _ = self.ring.unregister_files();
-        // closing the ring is next (fields drop in order), the kernel tears it
-        // down asynchronously, then `BufGroups` leaks every group still in use.
-        // Unregistering the files closes the direct descriptors still open.
     }
 }

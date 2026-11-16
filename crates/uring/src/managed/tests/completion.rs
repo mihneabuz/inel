@@ -9,7 +9,7 @@ use crate::{
     sys::Sqe,
 };
 
-/// Inserts a single-shot entry for an sqe that never reaches a ring.
+/// Inserts a single-shot entry for an SQE that never reaches a ring.
 fn insert_single(comp: &mut Completions, waker: Waker) -> Key {
     // SAFETY: no kernel posts for it, and the tests deliver at most one result
     // to each single-shot entry
@@ -18,7 +18,7 @@ fn insert_single(comp: &mut Completions, waker: Waker) -> Key {
 
 #[test]
 fn single_submit_complete_result() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = insert_single(&mut comp, tw.waker());
@@ -33,7 +33,7 @@ fn single_submit_complete_result() {
 
 #[test]
 fn single_waker_not_woken_before_completion() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = insert_single(&mut comp, tw.waker());
@@ -43,7 +43,7 @@ fn single_waker_not_woken_before_completion() {
 
 #[test]
 fn single_waker_update() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw1 = TestWaker::new();
     let tw2 = TestWaker::new();
 
@@ -57,7 +57,7 @@ fn single_waker_update() {
 
 #[test]
 fn multi_completion_stream() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());
@@ -79,7 +79,7 @@ fn multi_completion_stream() {
 #[test]
 fn cancel_pending_single() {
     let (f, tracked) = flag();
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = insert_single(&mut comp, tw.waker());
@@ -96,7 +96,7 @@ fn cancel_pending_single() {
 #[test]
 fn cancel_already_completed_single() {
     let (f, tracked) = flag();
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = insert_single(&mut comp, tw.waker());
@@ -111,7 +111,7 @@ fn cancel_already_completed_single() {
 #[test]
 fn cancel_pending_multi() {
     let (f, tracked) = flag();
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());
@@ -128,7 +128,7 @@ fn cancel_pending_multi() {
 
 #[test]
 fn keys_reused_after_completion() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let k0 = insert_single(&mut comp, tw.waker());
@@ -141,7 +141,7 @@ fn keys_reused_after_completion() {
 
 #[test]
 fn concurrent_single_ops() {
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw1 = TestWaker::new();
     let tw2 = TestWaker::new();
     let tw3 = TestWaker::new();
@@ -166,7 +166,7 @@ fn concurrent_single_ops() {
 #[test]
 fn cancel_multi_waits_for_final_completion() {
     let (f, tracked) = flag();
-    let mut comp = Completions::new(16);
+    let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
     let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());

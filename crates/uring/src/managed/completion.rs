@@ -8,7 +8,7 @@ use crate::{
     utils::{Deque, UnsafeSlab},
 };
 
-/// Marks a prepared sqe as detached.
+/// Marks a prepared SQE as detached.
 ///
 /// Its completions will be skipped and we don't need to insert an entry for it in
 /// [`Completions`].
@@ -16,10 +16,10 @@ pub const fn mark_detached(sqe: &mut Sqe) {
     sqe.user_data(Key::IGNORE);
 }
 
-/// Decodes a cqe.
+/// Decodes a CQE.
 ///
-/// Returns `None` if the source sqe was marked as detached, otherwise returns a pair
-/// of [`Key`], which can be used to identify the sqe, and [`CompletionResult`] which
+/// Returns `None` if the source SQE was marked as detached, otherwise returns a pair
+/// of [`Key`], which can be used to identify the SQE, and [`CompletionResult`] which
 /// contains the actual result and flags from `cqe`.
 pub const fn parse_cqe(cqe: &Cqe) -> Option<(Key, CompletionResult)> {
     if cqe.user_data() == Key::IGNORE {
@@ -34,9 +34,9 @@ pub const fn parse_cqe(cqe: &Cqe) -> Option<(Key, CompletionResult)> {
     Some((Key::from_raw(cqe.user_data()), result))
 }
 
-/// The results of a cqe.
+/// The results of a CQE.
 ///
-/// It contains the return value and flags of a cqe, with some helpers for reading them.
+/// It contains the return value and flags of a CQE, with some helpers for reading them.
 #[derive(Clone, Copy)]
 pub struct CompletionResult {
     res: i32,
@@ -44,12 +44,12 @@ pub struct CompletionResult {
 }
 
 impl CompletionResult {
-    /// The raw i32 result of the cqe.
+    /// The raw i32 result of the CQE.
     pub const fn result(&self) -> i32 {
         self.res
     }
 
-    /// Returns true if the cqe is not the last one (for multishot ops).
+    /// Returns true if the CQE is not the last one (for multishot ops).
     pub const fn has_more(&self) -> bool {
         self.flags.contains(IoringCqeFlags::MORE)
     }
@@ -71,9 +71,9 @@ impl CompletionResult {
 /// Identifies a submitted op.
 ///
 /// It contains the key to the [`Completions`] slab and it's also written into the
-/// sqe's `user_data` field, so it can be retrieved from the cqe.
+/// SQE's `user_data` field, so it can be retrieved from the CQE.
 ///
-/// This is the only way to smuggle information between the sqe and cqe, so we also
+/// This is the only way to smuggle information between the SQE and CQE, so we also
 /// use it to store the buffer group id for buffer select ops.
 ///
 /// Because we have to write it into the `user_data` field, it is required to keep it
@@ -84,7 +84,7 @@ impl CompletionResult {
 /// # Safety
 ///
 /// A `Key` must not be used anymore after a using it to cancel the op or witnessing
-/// the final result cqe - since the handler it identifies will be cleaned up.
+/// the final result CQE - since the handler it identifies will be cleaned up.
 #[repr(Rust, packed)]
 #[derive(PartialEq, Eq, Debug)]
 pub struct Key {
@@ -123,9 +123,9 @@ impl Key {
 
 /// The slab keeping the completion states.
 ///
-/// Contains the state machine for each sqe which is currently active in the kernel.
-/// When creating a new entry, the user must know if that sqe will post exactly one or
-/// multiple cqes, and call the corresponding method, [`Self::insert_single`] or
+/// Contains the state machine for each SQE which is currently active in the kernel.
+/// When creating a new entry, the user must know if that SQE will post exactly one or
+/// multiple CQEs, and call the corresponding method, [`Self::insert_single`] or
 /// [`Self::insert_multi`] respectively.
 ///
 /// Uses an [`UnsafeSlab`] because it does not add any tracking state to the entries,
@@ -136,9 +136,9 @@ pub struct Completions {
 
 impl Completions {
     /// Create a new completions slab with initial `capacity`.
-    pub fn new(capacity: u32) -> Self {
+    pub fn with_capacity(capacity: u32) -> Self {
         Self {
-            slab: UnsafeSlab::new(capacity),
+            slab: UnsafeSlab::with_capacity(capacity),
         }
     }
 
@@ -148,17 +148,17 @@ impl Completions {
     }
 
     /// Registers the single-shot op prepared in `sqe` and sets its `user_data`.
-    /// Must be called after prep, so the key records the buffer group the sqe selects from.
+    /// Must be called after prep, so the key records the buffer group the SQE selects from.
     ///
     /// # Safety
-    /// The sqe prepped in `sqe` must post a single cqe.
+    /// The SQE prepped in `sqe` must post a single CQE.
     pub unsafe fn insert_single(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
         self.insert(sqe, CompletionHandler::new_single(waker))
     }
 
     /// Registers the multi-shot op prepared in `sqe` and sets its `user_data`.
-    /// Must be called after prep, so the key records the buffer group the sqe selects from.
-    /// Unlike [`Self::insert_single`], this is safe since it can handle any number of cqes.
+    /// Must be called after prep, so the key records the buffer group the SQE selects from.
+    /// Unlike [`Self::insert_single`], this is safe since it can handle any number of CQEs.
     pub fn insert_multi(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
         self.insert(sqe, CompletionHandler::new_multi(waker))
     }
@@ -199,7 +199,7 @@ impl Completions {
 
     /// Attempt to cancel the entry identified by `key`.
     /// Results that were posted but never read are passed to `unread`.
-    /// Returns whether the initial sqe is still active in the kernel.
+    /// Returns whether the initial SQE is still active in the kernel.
     pub fn cancel<F>(&mut self, key: &Key, handle: Cancellation, unread: F) -> bool
     where
         F: FnMut(CompletionResult),
@@ -218,7 +218,7 @@ impl Completions {
     }
 }
 
-/// The state machine of an active sqe.
+/// The state machine of an active SQE.
 ///
 /// The initial state is different based on how the handler was created:
 /// - [`Self::new_single`], single-shot -> [`Self::Single`]

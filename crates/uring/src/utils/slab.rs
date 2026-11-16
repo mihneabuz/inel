@@ -24,13 +24,13 @@ pub struct UnsafeSlab<T, A: Allocator = Global> {
 }
 
 impl<T> UnsafeSlab<T, Global> {
-    pub fn new(capacity: u32) -> Self {
-        Self::new_in(capacity, Global)
+    pub fn with_capacity(capacity: u32) -> Self {
+        Self::with_capacity_in(capacity, Global)
     }
 }
 
 impl<T, A: Allocator> UnsafeSlab<T, A> {
-    pub fn new_in(capacity: u32, alloc: A) -> Self {
+    pub fn with_capacity_in(capacity: u32, alloc: A) -> Self {
         let layout = Self::layout(capacity);
         let ptr = alloc
             .allocate(layout)
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn insert_and_get() {
-        let mut slab = UnsafeSlab::<u64>::new(4);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(4);
 
         let k0 = slab.insert(10);
         let k1 = slab.insert(20);
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn sequential_keys() {
-        let mut slab = UnsafeSlab::<u64>::new(4);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(4);
 
         assert_eq!(slab.insert(0), 0);
         assert_eq!(slab.insert(0), 1);
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn remove_and_reuse() {
-        let mut slab = UnsafeSlab::<u64>::new(4);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(4);
 
         let k0 = slab.insert(10);
         let k1 = slab.insert(20);
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn fill_and_drain() {
-        let mut slab = UnsafeSlab::<u64>::new(4);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(4);
 
         let keys: Vec<u32> = (0..4).map(|i| slab.insert(i as u64)).collect();
 
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn grows_when_full() {
-        let mut slab = UnsafeSlab::<u64>::new(2);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(2);
 
         let keys: Vec<u32> = (0..100).map(|i| slab.insert(i)).collect();
         assert_eq!(keys, (0..100).collect::<Vec<_>>());
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn grows_from_empty() {
-        let mut slab = UnsafeSlab::<u64>::new(0);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(0);
 
         let k = slab.insert(7);
         assert_eq!(unsafe { *slab.get_mut(k) }, 7);
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn reuses_slots_after_growing() {
-        let mut slab = UnsafeSlab::<u64>::new(2);
+        let mut slab = UnsafeSlab::<u64>::with_capacity(2);
 
         let keys: Vec<u32> = (0..5).map(|i| slab.insert(i)).collect();
         unsafe { slab.remove(keys[1]) };
@@ -342,7 +342,7 @@ mod tests {
 
         DROP_COUNT.store(0, Ordering::Relaxed);
 
-        let mut slab = UnsafeSlab::<Tracked>::new(4);
+        let mut slab = UnsafeSlab::<Tracked>::with_capacity(4);
 
         let k0 = slab.insert(Tracked(10));
         let k1 = slab.insert(Tracked(20));
@@ -370,7 +370,7 @@ mod tests {
 
         {
             // grows twice, so the free list spans several growths
-            let mut slab = UnsafeSlab::<Tracked>::new(2);
+            let mut slab = UnsafeSlab::<Tracked>::with_capacity(2);
 
             for i in 0..5 {
                 slab.insert(Tracked(i));
