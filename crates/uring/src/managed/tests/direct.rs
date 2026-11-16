@@ -9,8 +9,7 @@ use rustix::{
 };
 
 use crate::managed::{
-    DirectFd, IoSrc, OpenDirect, RawSrc, Read, Write,
-    submission::Submission,
+    DirectFd, IoSrc, Op, OpenDirect, RawSrc, Read, Write,
     tests::{TestRing, TestWaker, block_on},
 };
 
@@ -18,7 +17,7 @@ const CARGO_TOML: &CStr = c"Cargo.toml";
 
 fn open(ring: &TestRing, path: &CStr, flags: OFlags) -> Result<DirectFd<TestRing>, Errno> {
     let op = OpenDirect::new(path, flags, Mode::empty());
-    block_on(ring, pin!(Submission::new(op, ring.clone())))
+    block_on(ring, pin!(op.run_on(ring.clone())))
 }
 
 /// Opens `path` into a full table, retrying while the close freeing a slot
@@ -35,7 +34,7 @@ fn open_retrying(ring: &TestRing, path: &CStr) -> DirectFd<TestRing> {
 
 fn read_at(ring: &TestRing, src: &impl IoSrc, len: usize, at: usize) -> Result<Vec<u8>, Errno> {
     let op = Read::new_at(src, vec![0; len], at);
-    let (buf, res) = block_on(ring, pin!(Submission::new(op, ring.clone())));
+    let (buf, res) = block_on(ring, pin!(op.run_on(ring.clone())));
     res.map(|n| buf[..n].to_vec())
 }
 
@@ -79,7 +78,7 @@ fn write_direct() {
 
     let fd = open(&ring, &cpath, OFlags::RDWR).unwrap();
     let op = Write::new_at(&fd, "ab", 3);
-    let (_, res) = block_on(&ring, pin!(Submission::new(op, ring.clone())));
+    let (_, res) = block_on(&ring, pin!(op.run_on(ring.clone())));
     drop(fd);
     let contents = fs::read(&path).unwrap();
     let _ = fs::remove_file(PathBuf::from(&path));
@@ -150,10 +149,7 @@ fn drop_during_cancelled_read_closes_after_it() {
     let ring = TestRing::with_direct_files(1);
     let fd = open(&ring, CARGO_TOML, OFlags::RDONLY).unwrap();
 
-    let mut fut = Box::pin(Submission::new(
-        Read::new_at(&fd, vec![0; 8], 0),
-        ring.clone(),
-    ));
+    let mut fut = Box::pin(Read::new_at(&fd, vec![0; 8], 0).run_on(ring.clone()));
     let tw = TestWaker::new();
     let _ = fut
         .as_mut()

@@ -24,7 +24,10 @@ use std::{
 use rustix::io_uring::{IoringTimeoutFlags, Timespec};
 
 use crate::{
-    managed::{IoSrc, RawSrc, Uring, UringProxy, submission::Op},
+    managed::{
+        IoSrc, RawSrc, Uring, UringProxy,
+        submission::{Op, Scratch},
+    },
     sys::Sqe,
 };
 
@@ -100,7 +103,7 @@ pub struct Nop;
 
 // SAFETY: test op, see its docs
 unsafe impl Op for Nop {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         sqe.prep_nop();
     }
 }
@@ -135,7 +138,7 @@ impl OwnedOp {
 
 // SAFETY: test op, see its docs
 unsafe impl Op for OwnedOp {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         sqe.prep_nop();
     }
 
@@ -177,7 +180,7 @@ impl Timeout {
 
 // SAFETY: test op, see its docs
 unsafe impl Op for Timeout {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         sqe.prep_timeout(&*self.ts, self.count, self.flags);
     }
 

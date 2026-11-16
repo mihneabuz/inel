@@ -1,5 +1,5 @@
 use core::ptr;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 
 use rustix::{
     fd::{AsRawFd, RawFd},
@@ -13,7 +13,7 @@ use crate::{
         buffer::{InFlight, IoBuf, IoBufMut},
         cancellation::Cancellation,
         completion::CompletionResult,
-        submission::{Op, SingleOp},
+        submission::{Op, Scratch, SingleOp},
     },
     sys::{FILE_INDEX_ALLOC, Sqe},
 };
@@ -88,7 +88,7 @@ impl<'a, B: IoBufMut> Read<'a, B, At> {
 // SAFETY: the SQE only references the buffer, which lives behind `InFlight`
 // and is handed over on cancel
 unsafe impl<B: IoBufMut, O: Offset> Op for Read<'_, B, O> {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         let (ptr, len) = self.buf.raw_buf_mut();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
         sqe.prep_read(self.src.raw_fd(), ptr, len, self.offset.position());
@@ -144,7 +144,7 @@ impl<'a, B: IoBuf> Write<'a, B, At> {
 // SAFETY: the SQE only references the buffer, which lives behind `InFlight`
 // and is handed over on cancel
 unsafe impl<B: IoBuf, O: Offset> Op for Write<'_, B, O> {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         let (ptr, len) = self.buf.raw_buf();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
         sqe.prep_write(self.src.raw_fd(), ptr, len, self.offset.position());
@@ -204,7 +204,7 @@ impl<'a, U: UringProxy> ReadSelect<'a, U, At> {
 // SAFETY: the SQE references no memory, the kernel picks a buffer from the
 // group, which the ring keeps alive while the op is in flight
 unsafe impl<U: UringProxy, O: Offset> Op for ReadSelect<'_, U, O> {
-    fn prep(&mut self, sqe: &mut Sqe) {
+    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         let size = self.group.buffer_size();
         let offset = self.offset.position();
         sqe.prep_read(self.src.raw_fd(), ptr::null_mut(), size, offset);
@@ -240,41 +240,37 @@ unsafe impl<U: UringProxy, O: Offset> SingleOp<U> for ReadSelect<'_, U, O> {
 ///
 /// Dropping the submission after the kernel opened the file leaks the fd: the
 /// result is discarded unread.
-pub struct Open {
-    path: CString,
+pub struct Open<'a> {
+    path: &'a CStr,
     flags: OFlags,
     mode: Mode,
 }
 
-impl Open {
-    pub fn new(path: &CStr, flags: OFlags, mode: Mode) -> Self {
+impl<'a> Open<'a> {
+    pub const fn new(path: &'a CStr, flags: OFlags, mode: Mode) -> Self {
         Self {
-            path: path.to_owned(),
+            path,
             flags: flags.union(OFlags::CLOEXEC),
             mode,
         }
     }
 }
 
-// SAFETY: the SQE only references the path, which lives on the heap and is
-// handed over on cancel
-unsafe impl Op for Open {
-    fn prep(&mut self, sqe: &mut Sqe) {
+// SAFETY: the SQE only references the path's copy in scratch, which the
+// kernel reads during submit, so the borrowed path only has to live for prep
+unsafe impl Op for Open<'_> {
+    fn prep(&mut self, sqe: &mut Sqe, scratch: &Scratch) {
         sqe.prep_openat(
             CWD.as_raw_fd(),
-            self.path.as_ptr(),
+            scratch.alloc_cstr(self.path),
             self.flags,
             self.mode.bits(),
         );
     }
-
-    fn cancel(self) -> (Cancellation, bool) {
-        (self.path.into(), true)
-    }
 }
 
 // SAFETY: a plain open, one CQE
-unsafe impl<U: UringProxy> SingleOp<U> for Open {
+unsafe impl<U: UringProxy> SingleOp<U> for Open<'_> {
     type Output = Result<UringFd<U>, Errno>;
 
     fn result(self, cqe: CompletionResult, ring: &U) -> Self::Output {
@@ -292,42 +288,38 @@ unsafe impl<U: UringProxy> SingleOp<U> for Open {
 ///
 /// Dropping the submission after the kernel opened the file leaks the slot
 /// (until the ring is dropped): the result is discarded unread.
-pub struct OpenDirect {
-    path: CString,
+pub struct OpenDirect<'a> {
+    path: &'a CStr,
     flags: OFlags,
     mode: Mode,
 }
 
-impl OpenDirect {
-    pub fn new(path: &CStr, flags: OFlags, mode: Mode) -> Self {
+impl<'a> OpenDirect<'a> {
+    pub const fn new(path: &'a CStr, flags: OFlags, mode: Mode) -> Self {
         Self {
-            path: path.to_owned(),
+            path,
             flags: flags.difference(OFlags::CLOEXEC),
             mode,
         }
     }
 }
 
-// SAFETY: the SQE only references the path, which lives on the heap and is
-// handed over on cancel
-unsafe impl Op for OpenDirect {
-    fn prep(&mut self, sqe: &mut Sqe) {
+// SAFETY: the SQE only references the path's copy in scratch, which the
+// kernel reads during submit, so the borrowed path only has to live for prep
+unsafe impl Op for OpenDirect<'_> {
+    fn prep(&mut self, sqe: &mut Sqe, scratch: &Scratch) {
         sqe.prep_openat(
             CWD.as_raw_fd(),
-            self.path.as_ptr(),
+            scratch.alloc_cstr(self.path),
             self.flags,
             self.mode.bits(),
         );
         sqe.set_file_index(FILE_INDEX_ALLOC);
     }
-
-    fn cancel(self) -> (Cancellation, bool) {
-        (self.path.into(), true)
-    }
 }
 
 // SAFETY: a plain open, one CQE
-unsafe impl<U: UringProxy> SingleOp<U> for OpenDirect {
+unsafe impl<U: UringProxy> SingleOp<U> for OpenDirect<'_> {
     type Output = Result<DirectFd<U>, Errno>;
 
     fn result(self, cqe: CompletionResult, ring: &U) -> Self::Output {

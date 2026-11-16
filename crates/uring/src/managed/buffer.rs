@@ -388,6 +388,7 @@ unsafe impl<B: IoBufMut, R: RangeBounds<usize>> IoBufMut for View<B, R> {
 ///
 /// Always reserve capacity before reading, a full `Vec<u8>` has no spare
 /// capacity and reads 0 bytes, which looks like EOF.
+#[repr(transparent)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Accumulating(Vec<u8>);
 
@@ -470,6 +471,8 @@ unsafe impl IoBufMut for Accumulating {
 /// This is a helper type for handling the conversion between the normal
 /// and raw form for [IoBuf] and [IoBufMut] buffers. Any ops which pass
 /// buffers into the kernel should use this type to ensure safety.
+#[repr(transparent)]
+#[derive(Debug)]
 pub struct InFlight<B: RawBuf> {
     raw: B::Raw,
 }

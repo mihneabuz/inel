@@ -15,7 +15,12 @@
 //! - requests are picked from the queue in random order, and every request
 //!   (including NOPs) completes asynchronously;
 //! - user memory is accessed as late as possible (buffers when the op runs,
-//!   not at submission);
+//!   not at submission), except for what a real kernel copies while preparing
+//!   the request: that must be read during submission, exactly like the
+//!   kernel, since the user side may free it as soon as `io_uring_enter`
+//!   returns (e.g. the managed layer's `Scratch` memory). This covers the
+//!   openat path and the timeout timespec, and will cover things like the
+//!   connect sockaddr;
 //! - consumed SQE slots are filled with garbage, so `prep_*` functions that
 //!   rely on stale fields fail with `-EINVAL`;
 //! - cancellation may return `-EALREADY` and let the request run to

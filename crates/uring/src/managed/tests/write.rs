@@ -12,9 +12,8 @@ use rustix::{
 };
 
 use crate::managed::{
-    IoBuf,
+    IoBuf, Op,
     ops::Write,
-    submission::Submission,
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
@@ -23,10 +22,7 @@ fn write_pipe<B: IoBuf>(buf: B, expected: &[u8]) -> B {
     let ring = TestRing::new();
     let (rx, tx) = pipe::pipe().unwrap();
 
-    let (buf, res) = block_on(
-        &ring,
-        pin!(Submission::new(Write::new(&tx, buf), ring.clone())),
-    );
+    let (buf, res) = block_on(&ring, pin!(Write::new(&tx, buf).run_on(ring.clone())));
     assert_eq!(res, Ok(expected.len()));
 
     drop(tx);
@@ -86,10 +82,7 @@ fn write_view_clamps_past_end() {
 #[test]
 fn write_bad_fd() {
     let ring = TestRing::new();
-    let fut = pin!(Submission::new(
-        Write::new(&BadFd, b"keep".to_vec()),
-        ring.clone()
-    ));
+    let fut = pin!(Write::new(&BadFd, b"keep".to_vec()).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Err(Errno::BADF));
@@ -102,7 +95,7 @@ fn write_closed_pipe() {
     let (rx, tx) = pipe::pipe().unwrap();
     drop(rx);
 
-    let fut = pin!(Submission::new(Write::new(&tx, "hello"), ring.clone()));
+    let fut = pin!(Write::new(&tx, "hello").run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
 
     assert_eq!(res, Err(Errno::PIPE));
@@ -112,11 +105,8 @@ fn write_closed_pipe() {
 fn write_drop_unsubmitted() {
     let ring = TestRing::new();
     let (_rx, tx) = pipe::pipe().unwrap();
-    drop(Submission::new(
-        Write::new(&tx, b"abc".to_vec()),
-        ring.clone(),
-    ));
-    drop(Submission::new(Write::new(&tx, String::from("abc")), ring));
+    drop(Write::new(&tx, b"abc".to_vec()).run_on(ring.clone()));
+    drop(Write::new(&tx, String::from("abc")).run_on(ring));
 }
 
 /// Drops a write that reached the kernel, so the kernel may still be reading
@@ -128,11 +118,11 @@ fn drop_in_flight<B: IoBuf>(buf: B) {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
 
-    let mut write = Box::pin(Submission::new(Write::new(&tx, buf), ring.clone()));
+    let mut write = Box::pin(Write::new(&tx, buf).run_on(ring.clone()));
     assert!(write.as_mut().poll(&mut cx).is_pending());
 
     // enter the ring so the write reaches the kernel, without reaping it
-    let nop = pin!(Submission::new(Nop, ring.clone()));
+    let nop = pin!(Nop.run_on(ring.clone()));
     assert_eq!(block_on(&ring, nop), 0);
 
     drop(write);
@@ -198,13 +188,13 @@ fn write_at_offset() {
     let ring = TestRing::new();
     let (tmp, file) = TempFile::new("write_at_offset", b"0123456789");
 
-    let fut = pin!(Submission::new(Write::new_at(&file, "ab", 3), ring.clone()));
+    let fut = pin!(Write::new_at(&file, "ab", 3).run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(2));
     assert_eq!(tmp.contents(), b"012ab56789");
 
     // a positioned write doesn't move the file position
-    let fut = pin!(Submission::new(Write::new(&file, "X"), ring.clone()));
+    let fut = pin!(Write::new(&file, "X").run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(1));
     assert_eq!(tmp.contents(), b"X12ab56789");
@@ -220,11 +210,11 @@ fn write_current_advances() {
     let ring = TestRing::new();
     let (tmp, file) = TempFile::new("write_current_advances", b"0123456789");
 
-    let fut = pin!(Submission::new(Write::new(&file, "ab"), ring.clone()));
+    let fut = pin!(Write::new(&file, "ab").run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(2));
 
-    let fut = pin!(Submission::new(Write::new(&file, "cd"), ring.clone()));
+    let fut = pin!(Write::new(&file, "cd").run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(2));
 

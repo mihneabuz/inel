@@ -13,8 +13,7 @@ use rustix::{
 
 use crate::{
     managed::{
-        Read, UringProxy,
-        submission::Submission,
+        Op, Read, UringProxy,
         tests::{Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag},
     },
     sys::TIMEOUT_MULTISHOT,
@@ -44,7 +43,7 @@ fn single_nop() {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
 
-    let mut fut = pin!(Submission::new(Nop, ring.clone()));
+    let mut fut = pin!(Nop.run_on(ring.clone()));
 
     assert!(fut.as_mut().poll(&mut cx).is_pending());
     ring.wait();
@@ -55,10 +54,7 @@ fn single_nop() {
 #[test]
 fn single_timeout() {
     let ring = TestRing::new();
-    let fut = pin!(Submission::new(
-        Timeout::new(1, 0, IoringTimeoutFlags::empty()),
-        ring.clone()
-    ));
+    let fut = pin!(Timeout::new(1, 0, IoringTimeoutFlags::empty()).run_on(ring.clone()));
     assert_eq!(block_on(&ring, fut), ETIME);
 }
 
@@ -69,7 +65,7 @@ fn single_fused_after_completion() {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
 
-    let mut fut = pin!(Submission::new(Nop, ring.clone()));
+    let mut fut = pin!(Nop.run_on(ring.clone()));
 
     assert!(!fut.is_terminated());
     let _ = fut.as_mut().poll(&mut cx);
@@ -86,7 +82,7 @@ fn single_wakes_latest_waker() {
     let (tw1, tw2) = (TestWaker::new(), TestWaker::new());
     let (w1, w2) = (tw1.waker(), tw2.waker());
 
-    let mut fut = pin!(Submission::new(Nop, ring.clone()));
+    let mut fut = pin!(Nop.run_on(ring.clone()));
     assert!(
         fut.as_mut()
             .poll(&mut Context::from_waker(&w1))
@@ -111,7 +107,7 @@ fn multi_wakes_latest_waker() {
     let (tw1, tw2) = (TestWaker::new(), TestWaker::new());
     let (w1, w2) = (tw1.waker(), tw2.waker());
 
-    let mut stream = pin!(Submission::new(Nop, ring.clone()));
+    let mut stream = pin!(Nop.run_on(ring.clone()));
     let poll = stream.as_mut().poll_next(&mut Context::from_waker(&w1));
     assert!(poll.is_pending());
     let poll = stream.as_mut().poll_next(&mut Context::from_waker(&w2));
@@ -135,11 +131,11 @@ fn more_in_flight_than_sq_entries() {
     let mut reads = Vec::new();
     for _ in 0..2 {
         for _ in 0..70 {
-            let mut fut = Box::pin(Submission::new(Read::new(&rx, vec![0; 8]), ring.clone()));
+            let mut fut = Box::pin(Read::new(&rx, vec![0; 8]).run_on(ring.clone()));
             assert!(fut.as_mut().poll(&mut cx).is_pending());
             reads.push(fut);
         }
-        let mut nop = pin!(Submission::new(Nop, ring.clone()));
+        let mut nop = pin!(Nop.run_on(ring.clone()));
         assert!(nop.as_mut().poll(&mut cx).is_pending());
         assert_eq!(block_on(&ring, nop), 0);
     }
@@ -157,7 +153,7 @@ fn single_drop_before_poll() {
     let ring = TestRing::new();
 
     // Drop in Initial state — op dropped normally
-    let fut = Submission::new(OwnedOp::new(df), ring);
+    let fut = OwnedOp::new(df).run_on(ring);
     drop(fut);
     assert!(dropped(&f));
 }
@@ -171,7 +167,7 @@ fn single_drop_while_submitted() {
     let mut cx = Context::from_waker(&waker);
 
     {
-        let mut fut = pin!(Submission::new(OwnedOp::new(df), ring.clone()));
+        let mut fut = pin!(OwnedOp::new(df).run_on(ring.clone()));
         let _ = fut.as_mut().poll(&mut cx);
         // Dropped in Submitted state — Op::cancel moves resource into Cancellation
     }
@@ -191,7 +187,7 @@ fn multi_nop() {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
 
-    let mut stream = pin!(Submission::new(Nop, ring.clone()));
+    let mut stream = pin!(Nop.run_on(ring.clone()));
 
     assert!(stream.as_mut().poll_next(&mut cx).is_pending());
     ring.wait();
@@ -202,10 +198,7 @@ fn multi_nop() {
 #[test]
 fn multi_stream_items() {
     let ring = TestRing::new();
-    let stream = pin!(Submission::new(
-        Timeout::new(1, 3, TIMEOUT_MULTISHOT),
-        ring.clone()
-    ));
+    let stream = pin!(Timeout::new(1, 3, TIMEOUT_MULTISHOT).run_on(ring.clone()));
 
     assert_eq!(collect(&ring, stream), [ETIME, ETIME, ETIME]);
     assert!(ring.is_done());
@@ -220,7 +213,7 @@ fn multi_drop_while_streaming() {
     let mut cx = Context::from_waker(&waker);
 
     {
-        let mut stream = pin!(Submission::new(OwnedOp::new(df), ring.clone()));
+        let mut stream = pin!(OwnedOp::new(df).run_on(ring.clone()));
         let _ = stream.as_mut().poll_next(&mut cx);
         // Dropped in Submitted state
     }
@@ -238,10 +231,7 @@ fn multi_drop_infinite_stream() {
     let mut cx = Context::from_waker(&waker);
 
     {
-        let mut stream = pin!(Submission::new(
-            Timeout::new(1, 0, TIMEOUT_MULTISHOT),
-            ring.clone()
-        ));
+        let mut stream = pin!(Timeout::new(1, 0, TIMEOUT_MULTISHOT).run_on(ring.clone()));
 
         let mut items = 0;
         while items < 2 {
@@ -267,10 +257,7 @@ fn single_cancelled_result() {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
 
-    let mut fut = pin!(Submission::new(
-        Timeout::new(60_000, 0, IoringTimeoutFlags::empty()),
-        ring.clone()
-    ));
+    let mut fut = pin!(Timeout::new(60_000, 0, IoringTimeoutFlags::empty()).run_on(ring.clone()));
     assert!(fut.as_mut().poll(&mut cx).is_pending());
 
     // cancel everything from the outside

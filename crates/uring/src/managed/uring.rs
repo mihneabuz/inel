@@ -7,7 +7,7 @@ use crate::{
         cancellation::Cancellation,
         completion::{CompletionEntry, CompletionResult, Completions, Key},
         group::{BufGroupId, BufGroups, BufId},
-        submission::{MultiOp, Op, SingleOp},
+        submission::{MultiOp, Op, Scratch, SingleOp},
     },
     sys::{IoUring, Sqe},
 };
@@ -115,6 +115,7 @@ pub struct Uring {
     ring: IoUring,
     comp: Completions,
     groups: BufGroups,
+    scratch: Scratch,
     /// Submitted ops whose final CQE has not been reaped yet, so the kernel
     /// may still access their memory. Detached ops reference none and are
     /// not counted.
@@ -161,6 +162,7 @@ impl Uring {
             ring,
             comp,
             groups: BufGroups::new(),
+            scratch: Scratch::default(),
             in_kernel: 0,
         })
     }
@@ -194,7 +196,7 @@ impl Uring {
         unsafe {
             self.ring
                 .push_sqe(|sqe| {
-                    op.prep(sqe);
+                    op.prep(sqe, &self.scratch);
                     sqe.user_data(key.add_group_id(sqe).as_raw());
                 })
                 .expect(Self::SUBMISSION_QUEUE_FULL_ERROR);
@@ -310,6 +312,10 @@ impl Uring {
                 }
             }
         });
+
+        // every SQE was consumed by the submit above (`SUBMIT_ALL`, failures
+        // panic), so the kernel has copied everything that lives in scratch
+        self.scratch.reset();
 
         self.groups.free_dead(&self.ring);
     }

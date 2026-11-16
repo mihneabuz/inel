@@ -6,9 +6,8 @@ use rustix::{
 };
 
 use crate::managed::{
-    Accumulating, IoBuf, IoBufMut,
+    Accumulating, IoBuf, IoBufMut, Op,
     ops::Read,
-    submission::Submission,
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
@@ -22,7 +21,7 @@ fn read_box() {
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"hello").unwrap();
 
-    let fut = pin!(Submission::new(Read::new(&rx, boxed(16)), ring.clone()));
+    let fut = pin!(Read::new(&rx, boxed(16)).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(5));
@@ -39,7 +38,7 @@ fn read_box_waits_for_data() {
         io::write(&tx, b"abc").unwrap();
     });
 
-    let fut = pin!(Submission::new(Read::new(&rx, boxed(16)), ring.clone()));
+    let fut = pin!(Read::new(&rx, boxed(16)).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
     writer.join().unwrap();
 
@@ -50,7 +49,7 @@ fn read_box_waits_for_data() {
 #[test]
 fn read_box_bad_fd() {
     let ring = TestRing::new();
-    let fut = pin!(Submission::new(Read::new(&BadFd, boxed(16)), ring.clone()));
+    let fut = pin!(Read::new(&BadFd, boxed(16)).run_on(ring.clone()));
     let (_, res) = block_on(&ring, fut);
 
     assert_eq!(res, Err(Errno::BADF));
@@ -60,10 +59,7 @@ fn read_box_bad_fd() {
 fn read_vec_error_keeps_contents() {
     let ring = TestRing::new();
 
-    let fut = pin!(Submission::new(
-        Read::new(&BadFd, b"keep".to_vec()),
-        ring.clone()
-    ));
+    let fut = pin!(Read::new(&BadFd, b"keep".to_vec()).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Err(Errno::BADF));
@@ -79,7 +75,7 @@ fn read_box_drop_blocked() {
     let mut cx = Context::from_waker(&waker);
 
     {
-        let mut fut = pin!(Submission::new(Read::new(&rx, boxed(16)), ring.clone()));
+        let mut fut = pin!(Read::new(&rx, boxed(16)).run_on(ring.clone()));
         assert!(fut.as_mut().poll(&mut cx).is_pending());
     }
 
@@ -98,11 +94,11 @@ fn drop_in_flight<B: IoBufMut>(buf: B) {
     let mut cx = Context::from_waker(&waker);
 
     io::write(&tx, &[1; 64]).unwrap();
-    let mut read = Box::pin(Submission::new(Read::new(&rx, buf), ring.clone()));
+    let mut read = Box::pin(Read::new(&rx, buf).run_on(ring.clone()));
     assert!(read.as_mut().poll(&mut cx).is_pending());
 
     // enter the ring so the read reaches the kernel, without reaping it
-    let nop = pin!(Submission::new(Nop, ring.clone()));
+    let nop = pin!(Nop.run_on(ring.clone()));
     assert_eq!(block_on(&ring, nop), 0);
 
     drop(read);
@@ -128,8 +124,8 @@ fn read_view_drop_in_flight() {
 fn read_drop_unsubmitted() {
     let ring = TestRing::new();
     let (rx, _tx) = pipe::pipe().unwrap();
-    drop(Submission::new(Read::new(&rx, boxed(16)), ring.clone()));
-    drop(Submission::new(Read::new(&rx, vec![1, 2, 3]), ring));
+    drop(Read::new(&rx, boxed(16)).run_on(ring.clone()));
+    drop(Read::new(&rx, vec![1, 2, 3]).run_on(ring));
 }
 
 #[test]
@@ -141,7 +137,7 @@ fn read_vec_replaces_contents() {
     let mut buf = Vec::with_capacity(16);
     buf.extend_from_slice(b">> ");
 
-    let fut = pin!(Submission::new(Read::new(&rx, buf), ring.clone()));
+    let fut = pin!(Read::new(&rx, buf).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(5));
@@ -158,7 +154,7 @@ fn read_accumulating_appends() {
     let mut buf = Accumulating::with_capacity(16);
     buf.extend_from_slice(b">> ");
 
-    let fut = pin!(Submission::new(Read::new(&rx, buf), ring.clone()));
+    let fut = pin!(Read::new(&rx, buf).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(5));
@@ -173,7 +169,7 @@ fn read_accumulating_full_reads_nothing() {
     io::write(&tx, b"hello").unwrap();
 
     let buf = Accumulating::new(vec![7u8; 4]);
-    let fut = pin!(Submission::new(Read::new(&rx, buf), ring.clone()));
+    let fut = pin!(Read::new(&rx, buf).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(0));
@@ -192,16 +188,13 @@ fn read_at_offset() {
     let ring = TestRing::new();
     let file = rustix::fd::OwnedFd::from(std::fs::File::open("Cargo.toml").unwrap());
 
-    let fut = pin!(Submission::new(
-        Read::new_at(&file, boxed(8), 1),
-        ring.clone()
-    ));
+    let fut = pin!(Read::new_at(&file, boxed(8), 1).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(8));
     assert_eq!(&*buf, b"package]");
 
     // a positioned read doesn't move the file position
-    let fut = pin!(Submission::new(Read::new(&file, boxed(9)), ring.clone()));
+    let fut = pin!(Read::new(&file, boxed(9)).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(9));
     assert_eq!(&*buf, b"[package]");
@@ -219,11 +212,11 @@ fn read_current_advances() {
     let ring = TestRing::new();
     let file = rustix::fd::OwnedFd::from(std::fs::File::open("Cargo.toml").unwrap());
 
-    let fut = pin!(Submission::new(Read::new(&file, boxed(1)), ring.clone()));
+    let fut = pin!(Read::new(&file, boxed(1)).run_on(ring.clone()));
     let (buf, _) = block_on(&ring, fut);
     assert_eq!(&*buf, b"[");
 
-    let fut = pin!(Submission::new(Read::new(&file, boxed(8)), ring.clone()));
+    let fut = pin!(Read::new(&file, boxed(8)).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
     assert_eq!(res, Ok(8));
     assert_eq!(&*buf, b"package]");
@@ -236,7 +229,7 @@ fn read_into_box_view() {
     io::write(&tx, b"hello world").unwrap();
 
     let buf = vec![b'.'; 8].into_boxed_slice().view(2..6);
-    let fut = pin!(Submission::new(Read::new(&rx, buf), ring.clone()));
+    let fut = pin!(Read::new(&rx, buf).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     assert_eq!(res, Ok(4));
@@ -253,7 +246,7 @@ fn read_into_vec_view_overwrites() {
     let mut buf = Vec::with_capacity(32);
     buf.extend_from_slice(b"0123456789");
 
-    let fut = pin!(Submission::new(Read::new(&rx, buf.view(4..)), ring.clone()));
+    let fut = pin!(Read::new(&rx, buf.view(4..)).run_on(ring.clone()));
     let (buf, res) = block_on(&ring, fut);
 
     // overwritten in place, the length doesn't change

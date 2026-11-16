@@ -11,13 +11,12 @@ use rustix::{
 };
 
 use crate::managed::{
-    IoSrc, ReadSelect, SelectBuf, SelectGroup, UringProxy,
-    submission::Submission,
+    IoSrc, Op, ReadSelect, SelectBuf, SelectGroup, UringProxy,
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
 fn read(ring: &TestRing, src: &impl IoSrc, group: &SelectGroup<TestRing>) -> ReadResult {
-    let fut = pin!(Submission::new(ReadSelect::new(src, group), ring.clone()));
+    let fut = pin!(ReadSelect::new(src, group).run_on(ring.clone()));
     block_on(ring, fut)
 }
 
@@ -120,8 +119,8 @@ fn concurrent_reads_get_different_buffers() {
     let (rx1, tx1) = pipe::pipe().unwrap();
     let (rx2, tx2) = pipe::pipe().unwrap();
 
-    let mut first = pin!(Submission::new(ReadSelect::new(&rx1, &group), ring.clone()));
-    let mut second = pin!(Submission::new(ReadSelect::new(&rx2, &group), ring.clone()));
+    let mut first = pin!(ReadSelect::new(&rx1, &group).run_on(ring.clone()));
+    let mut second = pin!(ReadSelect::new(&rx2, &group).run_on(ring.clone()));
     submit(first.as_mut());
     submit(second.as_mut());
 
@@ -207,10 +206,7 @@ fn error_after_pick_recycles_buffer() {
     // the kernel picks the buffer before the read fails, and hands it back
     // with the error
     for _ in 0..3 {
-        let fut = pin!(Submission::new(
-            ReadSelect::new_at(&dir, &group, 0),
-            ring.clone()
-        ));
+        let fut = pin!(ReadSelect::new_at(&dir, &group, 0).run_on(ring.clone()));
         assert_eq!(block_on(&ring, fut).err(), Some(Errno::ISDIR));
     }
 }
@@ -221,10 +217,7 @@ fn drop_blocked() {
     let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
-    submit(pin!(Submission::new(
-        ReadSelect::new(&rx, &group),
-        ring.clone()
-    )));
+    submit(pin!(ReadSelect::new(&rx, &group).run_on(ring.clone())));
     ring.drain();
 
     io::write(&tx, b"abc").unwrap();
@@ -238,11 +231,11 @@ fn drop_in_flight() {
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, &[1; 64]).unwrap();
 
-    let mut fut = Box::pin(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+    let mut fut = Box::pin(ReadSelect::new(&rx, &group).run_on(ring.clone()));
     submit(fut.as_mut());
 
     // enter the ring so the read reaches the kernel, without reaping it
-    let nop = pin!(Submission::new(Nop, ring.clone()));
+    let nop = pin!(Nop.run_on(ring.clone()));
     assert_eq!(block_on(&ring, nop), 0);
 
     drop(fut);
@@ -265,7 +258,7 @@ fn drop_completed_unread() {
     let waker = tw.waker();
     let mut cx = Context::from_waker(&waker);
     {
-        let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+        let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
         assert!(fut.as_mut().poll(&mut cx).is_pending());
         while !tw.was_woken() {
             ring.wait();
@@ -289,7 +282,7 @@ fn drop_completed_unread_last_handle() {
     {
         // the op holds the only handle, so dropping it frees the group while
         // its unread CQE still holds a buffer
-        let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+        let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
         drop(group);
         assert!(fut.as_mut().poll(&mut cx).is_pending());
         while !tw.was_woken() {
@@ -305,7 +298,7 @@ fn drop_unsubmitted() {
     let ring = TestRing::new();
     let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
-    drop(Submission::new(ReadSelect::new(&rx, &group), ring));
+    drop(ReadSelect::new(&rx, &group).run_on(ring));
 }
 
 #[test]
@@ -360,7 +353,7 @@ fn op_outlives_group() {
     drop(group);
 
     io::write(&tx, b"abc").unwrap();
-    let fut = pin!(Submission::new(op, ring.clone()));
+    let fut = pin!(op.run_on(ring.clone()));
     assert_eq!(&*block_on(&ring, fut).unwrap(), b"abc");
 }
 
@@ -370,7 +363,7 @@ fn in_flight_op_outlives_group() {
     let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
-    let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+    let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
     submit(fut.as_mut());
     drop(group);
 
@@ -385,7 +378,7 @@ fn group_dropped_with_blocked_op() {
     let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
 
-    let mut fut = Box::pin(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+    let mut fut = Box::pin(ReadSelect::new(&rx, &group).run_on(ring.clone()));
     submit(fut.as_mut());
     drop(group);
     drop(fut);

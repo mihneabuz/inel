@@ -6,8 +6,7 @@ use std::{
 use rustix::{io::Errno, pipe};
 
 use crate::managed::{
-    Read, ReadSelect, SelectGroup, UringProxy,
-    submission::Submission,
+    Op, Read, ReadSelect, SelectGroup, UringProxy,
     tests::{Nop, TestRing, TestWaker, block_on},
 };
 
@@ -30,7 +29,7 @@ fn idle() {
 #[test]
 fn completes_awaited_ops() {
     let ring = TestRing::new();
-    let mut fut = pin!(Submission::new(Nop, ring.clone()));
+    let mut fut = pin!(Nop.run_on(ring.clone()));
     submit(fut.as_mut());
 
     ring.shutdown();
@@ -42,7 +41,7 @@ fn completes_awaited_ops() {
 fn cancels_blocked_read() {
     let ring = TestRing::new();
     let (rx, _tx) = pipe::pipe().unwrap();
-    let mut fut = pin!(Submission::new(Read::new(&rx, vec![0; 8]), ring.clone()));
+    let mut fut = pin!(Read::new(&rx, vec![0; 8]).run_on(ring.clone()));
     submit(fut.as_mut());
 
     ring.shutdown();
@@ -55,7 +54,7 @@ fn waits_for_dropped_ops() {
     let ring = TestRing::new();
     let (rx, _tx) = pipe::pipe().unwrap();
     {
-        let mut fut = pin!(Submission::new(Read::new(&rx, vec![0; 8]), ring.clone()));
+        let mut fut = pin!(Read::new(&rx, vec![0; 8]).run_on(ring.clone()));
         submit(fut.as_mut());
     }
 
@@ -71,7 +70,7 @@ fn frees_groups_after_shutdown() {
     let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
     {
-        let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+        let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
         submit(fut.as_mut());
     }
     drop(group);
@@ -86,7 +85,7 @@ fn drop_without_shutdown_leaks_groups_in_use() {
     let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
     {
-        let mut fut = pin!(Submission::new(ReadSelect::new(&rx, &group), ring.clone()));
+        let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
         submit(fut.as_mut());
     }
     drop(group);

@@ -9,8 +9,7 @@ use rustix::{
 };
 
 use crate::managed::{
-    IoSrc, Open, Read, UringFd, Write,
-    submission::Submission,
+    IoSrc, Op, Open, Read, UringFd, Write,
     tests::{TestRing, block_on},
 };
 
@@ -18,12 +17,12 @@ const CARGO_TOML: &CStr = c"Cargo.toml";
 
 fn open(ring: &TestRing, path: &CStr, flags: OFlags) -> Result<UringFd<TestRing>, Errno> {
     let op = Open::new(path, flags, Mode::empty());
-    block_on(ring, pin!(Submission::new(op, ring.clone())))
+    block_on(ring, pin!(op.run_on(ring.clone())))
 }
 
 fn read_at(ring: &TestRing, src: &impl IoSrc, len: usize, at: usize) -> Result<Vec<u8>, Errno> {
     let op = Read::new_at(src, vec![0; len], at);
-    let (buf, res) = block_on(ring, pin!(Submission::new(op, ring.clone())));
+    let (buf, res) = block_on(ring, pin!(op.run_on(ring.clone())));
     res.map(|n| buf[..n].to_vec())
 }
 
@@ -58,7 +57,7 @@ fn write_regular() {
 
     let fd = open(&ring, &cpath, OFlags::RDWR).unwrap();
     let op = Write::new_at(&fd, "ab", 3);
-    let (_, res) = block_on(&ring, pin!(Submission::new(op, ring.clone())));
+    let (_, res) = block_on(&ring, pin!(op.run_on(ring.clone())));
     drop(fd);
     ring.drain();
     let contents = fs::read(&path).unwrap();
