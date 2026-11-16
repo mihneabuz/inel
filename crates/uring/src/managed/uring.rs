@@ -4,112 +4,14 @@ use rustix::{io::Errno, io_uring::IoringAsyncCancelFlags};
 
 use crate::{
     managed::{
+        UringProxy,
         cancellation::Cancellation,
-        completion::{CompletionEntry, CompletionResult, Completions, Key},
+        completion::{CompletionResult, Completions, Key, mark_detached, parse_cqe},
         group::{BufGroupId, BufGroups, BufId},
         submission::{MultiOp, Op, Scratch, SingleOp},
     },
     sys::{IoUring, Sqe},
 };
-
-/// Access to a [`Uring`], wrapped in whatever the consumer likes (a
-/// `ThreadLocal<RefCell<_>>`, an `Rc<RefCell<_>>`, ...). The managed types
-/// only reach the ring through this trait.
-///
-/// # Safety
-/// Every call to [`Self::with`], on this proxy or any of its clones, must pass
-/// `f` the same [`Uring`]. In particular, it must not be replaced by another
-/// one while anything created through the proxy (ops, buffer groups,
-/// buffers) is alive: keys and buffer ids are only meaningful to the ring
-/// that handed them out.
-pub unsafe trait UringProxy: Clone {
-    fn with<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut Uring) -> T;
-
-    fn wait(&self) {
-        self.with(|uring| uring.wait());
-    }
-
-    fn is_done(&self) -> bool {
-        self.with(|uring| uring.is_done())
-    }
-
-    fn shutdown(&self) {
-        self.with(|uring| uring.shutdown());
-    }
-}
-
-// SAFETY: forwards to `P`, so it reaches the same ring
-unsafe impl<P: UringProxy> UringProxy for &P {
-    fn with<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut Uring) -> T,
-    {
-        (*self).with(f)
-    }
-}
-
-/// The ring protocol used by the managed types. Crate-private and implemented
-/// for every proxy, so it can neither be called nor overridden from outside:
-/// its methods trust their keys and buffer ids.
-pub trait UringProxyExt: UringProxy {
-    fn submit<O: SingleOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {
-        self.with(|uring| uring.submit::<Self, _>(op, waker))
-    }
-
-    fn submit_multi<O: MultiOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {
-        self.with(|uring| uring.submit_multi::<Self, _>(op, waker))
-    }
-
-    /// # Safety
-    /// See [`Uring::prep_detached`].
-    unsafe fn prep_detached<F: FnOnce(&mut Sqe)>(&self, prep: F) {
-        // SAFETY: forwarded to the caller
-        self.with(|uring| unsafe { uring.prep_detached(prep) })
-    }
-
-    fn cancel(&self, key: Key, handle: Cancellation, entry: bool) {
-        self.with(|uring| uring.cancel(key, handle, entry))
-    }
-
-    fn update(&self, key: Key, waker: &Waker) {
-        self.with(|uring| uring.update(key, waker))
-    }
-
-    fn result(&self, key: Key) -> Option<CompletionResult> {
-        self.with(|uring| uring.result(key))
-    }
-
-    /// Allocates and registers a group of `count` buffers of `size` bytes.
-    fn create_buf_group(&self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
-        self.with(|uring| uring.create_buf_group(count, size))
-    }
-
-    /// A handle to the group was cloned.
-    fn clone_buf_group(&self, id: BufGroupId) {
-        self.with(|uring| uring.clone_buf_group(id))
-    }
-
-    /// A handle to the group was dropped. The group is freed once no handle,
-    /// op or buffer uses it anymore.
-    fn drop_buf_group(&self, id: BufGroupId) {
-        self.with(|uring| uring.drop_buf_group(id))
-    }
-
-    /// Hands out buffer `bid` of group `id`, keeping the group alive until it
-    /// is returned with [`Self::return_buf`].
-    fn take_buf(&self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
-        self.with(|uring| uring.take_buf(id, bid))
-    }
-
-    /// Puts a buffer from [`Self::take_buf`] back in its group's ring.
-    fn return_buf(&self, id: BufGroupId, bid: BufId) {
-        self.with(|uring| uring.return_buf(id, bid))
-    }
-}
-
-impl<P: UringProxy> UringProxyExt for P {}
 
 pub struct Uring {
     ring: IoUring,
@@ -176,9 +78,7 @@ impl Uring {
         U: UringProxy,
         O: SingleOp<U>,
     {
-        let mut key = self.comp.insert_single(waker);
-        self.push(op, &mut key);
-        key
+        self.push(op, |comp, sqe| unsafe { comp.insert_single(sqe, waker) })
     }
 
     pub(crate) fn submit_multi<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
@@ -186,27 +86,32 @@ impl Uring {
         U: UringProxy,
         O: MultiOp<U>,
     {
-        let mut key = self.comp.insert_multi(waker);
-        self.push(op, &mut key);
-        key
+        self.push(op, |comp, sqe| comp.insert_multi(sqe, waker))
     }
 
-    fn push<O: Op>(&mut self, op: &mut O, key: &mut Key) {
+    /// Preps `op` into the next SQE, then registers it with `insert`, which
+    /// sets the SQE's `user_data`.
+    fn push<O, F>(&mut self, op: &mut O, insert: F) -> Key
+    where
+        O: Op,
+        F: FnOnce(&mut Completions, &mut Sqe) -> Key,
+    {
         // SAFETY: Op implementation must guarantee safety
-        unsafe {
+        let key = unsafe {
             self.ring
                 .push_sqe(|sqe| {
                     op.prep(sqe, &self.scratch);
-                    sqe.user_data(key.add_group_id(sqe).as_raw());
+                    insert(&mut self.comp, sqe)
                 })
-                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR);
-        }
+                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
+        };
 
         if let Some(group) = key.group_id() {
             self.groups.acquire(group);
         }
 
         self.in_kernel += 1;
+        key
     }
 
     /// Submits an SQE built by `prep` without tracking it: a successful
@@ -225,18 +130,18 @@ impl Uring {
             self.ring
                 .push_sqe(|sqe| {
                     prep(sqe);
-                    sqe.user_data(Key::IGNORE.as_raw());
+                    mark_detached(sqe);
                     sqe.skip_success_cqe();
                 })
                 .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, waker: &Waker) {
+    pub(crate) fn update(&mut self, key: &Key, waker: &Waker) {
         self.comp.update(key, waker);
     }
 
-    pub(crate) fn cancel(&mut self, key: Key, handle: Cancellation, entry: bool) {
+    pub(crate) fn cancel(&mut self, key: &Key, handle: Cancellation, entry: bool) {
         // stored CQEs that are discarded unread give back their buffer and
         // their hold on the group
         let pending = self.comp.cancel(key, handle, |result| {
@@ -264,7 +169,7 @@ impl Uring {
         }
     }
 
-    pub(crate) fn result(&mut self, key: Key) -> Option<CompletionResult> {
+    pub(crate) fn result(&mut self, key: &Key) -> Option<CompletionResult> {
         let result = self.comp.result(key)?;
 
         // the CQE held the group alive until now. `ReadSelect::result` still
@@ -285,14 +190,11 @@ impl Uring {
             .expect(Self::FAILED_TO_ENTER_ERROR);
 
         self.ring.for_each_cqe(|cqe| {
-            let completion = CompletionEntry::from_cqe(cqe);
-            if completion.should_ignore() {
+            let Some((key, result)) = parse_cqe(cqe) else {
                 return;
-            }
-            let key = completion.key();
+            };
 
-            let result = completion.result();
-            let stored = self.comp.notify(key, result);
+            let stored = self.comp.notify(&key, result);
 
             if !result.has_more() {
                 self.in_kernel -= 1;
@@ -301,9 +203,7 @@ impl Uring {
             // a stored CQE keeps the op's hold on the group until it is read
             // (`result`) or discarded (`cancel`), since its buffer id points
             // into the group's memory
-            if let Some(gid) = key.group_id()
-                && !stored
-            {
+            if !stored && let Some(gid) = key.group_id() {
                 if let Some(bid) = result.buffer_id() {
                     self.groups.recycle(gid, bid);
                 }
@@ -313,8 +213,6 @@ impl Uring {
             }
         });
 
-        // every SQE was consumed by the submit above (`SUBMIT_ALL`, failures
-        // panic), so the kernel has copied everything that lives in scratch
         self.scratch.reset();
 
         self.groups.free_dead(&self.ring);
@@ -341,26 +239,26 @@ impl Uring {
         }
     }
 
-    fn create_buf_group(&mut self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
+    pub(crate) fn create_buf_group(&mut self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
         let id = self.groups.insert(count, size)?;
         self.groups.register_or_drop(id, &self.ring)?;
         Ok(id)
     }
 
-    fn clone_buf_group(&mut self, id: BufGroupId) {
+    pub(crate) fn clone_buf_group(&mut self, id: BufGroupId) {
         self.groups.clone_handle(id);
     }
 
-    fn drop_buf_group(&mut self, id: BufGroupId) {
+    pub(crate) fn drop_buf_group(&mut self, id: BufGroupId) {
         self.groups.drop_handle(id);
         self.groups.free_dead(&self.ring);
     }
 
-    fn take_buf(&mut self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
+    pub(crate) fn take_buf(&mut self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
         self.groups.take(id, bid)
     }
 
-    fn return_buf(&mut self, id: BufGroupId, bid: BufId) {
+    pub(crate) fn return_buf(&mut self, id: BufGroupId, bid: BufId) {
         self.groups.recycle(id, bid);
         self.groups.release(id);
     }

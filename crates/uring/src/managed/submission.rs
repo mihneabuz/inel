@@ -1,6 +1,6 @@
 use core::{
     ffi::{CStr, c_char},
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -140,14 +140,14 @@ pub trait MultiOp<U: UringProxy>: Op {
 
 /// The state of an op.
 ///
-/// Initial -> Submitted -> Completed
+/// `Initial` -> `Submitted` -> `Completed`
 ///
-/// - Initial - the future has not been polled yet, so the entry is not yet registered in
-///   the kernel.
-/// - Submitted - the entry was registered in the kernel and we have a key which can be
+/// - `Initial` - the future has not been polled yet, so the entry is not yet registered
+///   in the kernel.
+/// - `Submitted` - the entry was registered in the kernel and we have a key which can be
 ///   used to identify it.
-/// - Completed - the entry was completed, all results taken, and the future is done, it
-///   should not be polled anymore.
+/// - `Completed` - the entry was completed, all results taken, and the future is done,
+///   it should not be polled anymore.
 #[derive(Debug)]
 enum SubmissionState {
     Initial,
@@ -183,7 +183,7 @@ impl<O: Op, U: UringProxy> Unpin for Submission<O, U> {}
 /// Dropping a submission must cancel its inner `O`, but only in the `Submitted` state.
 impl<O: Op, U: UringProxy> Drop for Submission<O, U> {
     fn drop(&mut self) {
-        match self.state {
+        match mem::replace(&mut self.state, SubmissionState::Completed) {
             SubmissionState::Initial => {
                 // SAFETY: the op was never submitted so there are no active references.
                 unsafe { ManuallyDrop::drop(&mut self.op) };
@@ -194,7 +194,7 @@ impl<O: Op, U: UringProxy> Drop for Submission<O, U> {
                 // Cancellation handle for deffered destruction
                 let op = unsafe { self.take_op() };
                 let (handle, entry) = op.cancel();
-                self.uring.cancel(key, handle, entry);
+                self.uring.cancel(&key, handle, entry);
             }
             SubmissionState::Completed => {
                 // SAFETY: the op was already dropped
@@ -239,7 +239,7 @@ impl<O: SingleOp<U>, U: UringProxy> Future for Submission<O, U> {
                 this.state = SubmissionState::Submitted(key);
             }
 
-            SubmissionState::Submitted(key) => {
+            SubmissionState::Submitted(ref key) => {
                 if let Some(result) = this.uring.result(key) {
                     this.state = SubmissionState::Completed;
                     // SAFETY: we got the completion of the op so there are no more
@@ -280,7 +280,7 @@ impl<O: MultiOp<U>, U: UringProxy> Stream for Submission<O, U> {
             }
 
             #[allow(clippy::option_if_let_else)]
-            SubmissionState::Submitted(key) => match this.uring.result(key) {
+            SubmissionState::Submitted(ref key) => match this.uring.result(key) {
                 Some(result) => {
                     let has_more = result.has_more();
                     let res = this.op.result(result, &this.uring);

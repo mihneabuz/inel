@@ -43,6 +43,13 @@ pub const TIMEOUT_MULTISHOT: IoringTimeoutFlags = IoringTimeoutFlags::from_bits_
 pub struct Sqe(io_uring_sqe);
 
 impl Sqe {
+    /// An all-zeroes SQE, for tests that need one outside a ring.
+    #[cfg(test)]
+    pub(crate) const fn zeroed() -> Self {
+        // SAFETY: all-zeroes is a valid `io_uring_sqe`
+        Self(unsafe { mem::zeroed() })
+    }
+
     pub(crate) const fn init(&mut self) {
         // SAFETY: all-zeroes is a valid `io_uring_sqe`
         self.0 = unsafe { mem::zeroed() };
@@ -482,9 +489,10 @@ impl IoUring {
         Ok(submitted)
     }
 
-    /// Builds the next SQE in place with `build`. It is picked up by the
-    /// kernel on the next [`submit`](Self::submit). Fails with `NOBUFS` if the
-    /// submission queue is full.
+    /// Builds the next SQE in place with `build`, returning what it returns.
+    /// It is picked up by the kernel on the next [`submit`](Self::submit).
+    /// Fails with `NOBUFS` if the submission queue is full, without calling
+    /// `build`.
     ///
     /// # Safety
     /// Everything the SQE references (buffers, iovecs, paths, timespecs, ...)
@@ -493,9 +501,9 @@ impl IoUring {
     /// kernel only reads while preparing the op (e.g. a timeout's timespec)
     /// only needs to outlive the kernel consuming the SQE: after `submit`
     /// returns, or at an unknown point with SQPOLL.
-    pub unsafe fn push_sqe<F>(&mut self, build: F) -> Result<(), Errno>
+    pub unsafe fn push_sqe<F, T>(&mut self, build: F) -> Result<T, Errno>
     where
-        F: FnOnce(&mut Sqe),
+        F: FnOnce(&mut Sqe) -> T,
     {
         self.get_next_sqe().map(build).ok_or(Errno::NOBUFS)
     }

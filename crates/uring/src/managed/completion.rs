@@ -8,60 +8,35 @@ use crate::{
     utils::{Deque, UnsafeSlab},
 };
 
-/// Identifies a submitted op. It is the op's `user_data`, so it comes back
-/// with every CQE and cancellation can match it exactly.
+/// Marks a prepared sqe as detached.
 ///
-/// Packed so it has no padding: 6 bytes instead of 8, which keeps the
-/// `SubmissionState` holding it at 7 bytes instead of 12.
-#[repr(Rust, packed)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Key {
-    /// The op's slot in `Completions`.
-    slot: u32,
-    /// The buffer group the op picks a buffer from, if any.
-    gid: Option<BufGroupId>,
+/// Its completions will be skipped and we don't need to insert an entry for it in
+/// [`Completions`].
+pub const fn mark_detached(sqe: &mut Sqe) {
+    sqe.user_data(Key::IGNORE);
 }
 
-impl Key {
-    /// The key of ops whose completions are ignored. Never a valid key, since
-    /// slots never reach `u32::MAX`.
-    pub const IGNORE: Self = Self::new(u32::MAX);
-
-    const fn new(slot: u32) -> Self {
-        Self { slot, gid: None }
+/// Decodes a cqe.
+///
+/// Returns `None` if the source sqe was marked as detached, otherwise returns a pair
+/// of [`Key`], which can be used to identify the sqe, and [`CompletionResult`] which
+/// contains the actual result and flags from `cqe`.
+pub const fn parse_cqe(cqe: &Cqe) -> Option<(Key, CompletionResult)> {
+    if cqe.user_data() == Key::IGNORE {
+        return None;
     }
 
-    /// Records the buffer group a prepared SQE selects from, so completions
-    /// and cancellation know which group a returned buffer belongs to.
-    pub fn add_group_id(&mut self, sqe: &Sqe) -> &mut Self {
-        self.gid = sqe.buf_group().and_then(BufGroupId::from_raw);
-        self
-    }
+    let result = CompletionResult {
+        res: cqe.result(),
+        flags: cqe.flags(),
+    };
 
-    /// The buffer group the op picks a buffer from, if any.
-    pub const fn group_id(&self) -> Option<BufGroupId> {
-        self.gid
-    }
-
-    /// Encodes the key as `user_data`: slot in bits 0..32, group in 32..48
-    /// (0 for none).
-    pub const fn as_raw(&self) -> u64 {
-        let gid = match self.gid {
-            Some(gid) => gid.as_raw(),
-            None => 0,
-        };
-        self.slot as u64 | (gid as u64) << 32
-    }
-
-    /// Decodes a CQE's `user_data`. Inverse of [`Self::as_raw`].
-    pub const fn from_raw(raw: u64) -> Self {
-        Self {
-            slot: raw as u32,
-            gid: BufGroupId::from_raw((raw >> 32) as u16),
-        }
-    }
+    Some((Key::from_raw(cqe.user_data()), result))
 }
 
+/// The results of a cqe.
+///
+/// It contains the return value and flags of a cqe, with some helpers for reading them.
 #[derive(Clone, Copy)]
 pub struct CompletionResult {
     res: i32,
@@ -69,14 +44,17 @@ pub struct CompletionResult {
 }
 
 impl CompletionResult {
+    /// The raw i32 result of the cqe.
     pub const fn result(&self) -> i32 {
         self.res
     }
 
+    /// Returns true if the cqe is not the last one (for multishot ops).
     pub const fn has_more(&self) -> bool {
         self.flags.contains(IoringCqeFlags::MORE)
     }
 
+    /// Returns the buffer id associated with this completion.
     pub fn buffer_id(&self) -> Option<BufId> {
         self.flags
             .contains(IoringCqeFlags::BUFFER)
@@ -90,62 +68,121 @@ impl CompletionResult {
     }
 }
 
-pub struct CompletionEntry {
-    key: Key,
-    result: CompletionResult,
+/// Identifies a submitted op.
+///
+/// It contains the key to the [`Completions`] slab and it's also written into the
+/// sqe's `user_data` field, so it can be retrieved from the cqe.
+///
+/// This is the only way to smuggle information between the sqe and cqe, so we also
+/// use it to store the buffer group id for buffer select ops.
+///
+/// Because we have to write it into the `user_data` field, it is required to keep it
+/// at or under 8 bytes. Right now, we are also using `repr(packed)` to keep the
+/// `SubmissionState` that holds it under 8 bytes. This is a nice optimization that
+/// we would like to keep - since it benefits all ops.
+///
+/// # Safety
+///
+/// A `Key` must not be used anymore after a using it to cancel the op or witnessing
+/// the final result cqe - since the handler it identifies will be cleaned up.
+#[repr(Rust, packed)]
+#[derive(PartialEq, Eq, Debug)]
+pub struct Key {
+    slot: u32,
+    gid: Option<BufGroupId>,
 }
 
-impl CompletionEntry {
-    pub const fn from_cqe(cqe: &Cqe) -> Self {
+impl Key {
+    /// The `user_data` of ops whose completions are ignored (detached).
+    /// Valid keys should never reach this value.
+    const IGNORE: u64 = u32::MAX as u64;
+
+    /// The buffer group the op picks a buffer from, if any.
+    pub const fn group_id(&self) -> Option<BufGroupId> {
+        self.gid
+    }
+
+    /// Encodes the key as `user_data`: slot in bits 0..32, group in 32..48.
+    pub const fn as_raw(&self) -> u64 {
+        let gid = match self.gid {
+            Some(gid) => gid.as_raw(),
+            None => 0,
+        };
+
+        self.slot as u64 | (gid as u64) << 32
+    }
+
+    /// Decodes a CQE's `user_data`. Inverse of [`Self::as_raw`].
+    const fn from_raw(raw: u64) -> Self {
         Self {
-            key: Key::from_raw(cqe.user_data()),
-            result: CompletionResult {
-                res: cqe.result(),
-                flags: cqe.flags(),
-            },
+            slot: raw as u32,
+            gid: BufGroupId::from_raw((raw >> 32) as u16),
         }
     }
-
-    pub const fn key(&self) -> Key {
-        self.key
-    }
-
-    pub fn should_ignore(&self) -> bool {
-        self.key == Key::IGNORE
-    }
-
-    pub const fn result(&self) -> CompletionResult {
-        self.result
-    }
 }
 
+/// The slab keeping the completion states.
+///
+/// Contains the state machine for each sqe which is currently active in the kernel.
+/// When creating a new entry, the user must know if that sqe will post exactly one or
+/// multiple cqes, and call the corresponding method, [`Self::insert_single`] or
+/// [`Self::insert_multi`] respectively.
+///
+/// Uses an [`UnsafeSlab`] because it does not add any tracking state to the entries,
+/// meaning we can keep them at 32 bytes size.
 pub struct Completions {
     slab: UnsafeSlab<CompletionHandler>,
 }
 
 impl Completions {
+    /// Create a new completions slab with initial `capacity`.
     pub fn new(capacity: u32) -> Self {
         Self {
             slab: UnsafeSlab::new(capacity),
         }
     }
 
+    /// Returns true if there are no active entries in the slab.
     pub const fn is_empty(&self) -> bool {
         self.slab.len() == 0
     }
 
-    pub fn insert_single(&mut self, waker: Waker) -> Key {
-        Key::new(self.slab.insert(CompletionHandler::new_single(waker)))
+    /// Registers the single-shot op prepared in `sqe` and sets its `user_data`.
+    /// Must be called after prep, so the key records the buffer group the sqe selects from.
+    ///
+    /// # Safety
+    /// The sqe prepped in `sqe` must post a single cqe.
+    pub unsafe fn insert_single(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
+        self.insert(sqe, CompletionHandler::new_single(waker))
     }
 
-    pub fn insert_multi(&mut self, waker: Waker) -> Key {
-        Key::new(self.slab.insert(CompletionHandler::new_multi(waker)))
+    /// Registers the multi-shot op prepared in `sqe` and sets its `user_data`.
+    /// Must be called after prep, so the key records the buffer group the sqe selects from.
+    /// Unlike [`Self::insert_single`], this is safe since it can handle any number of cqes.
+    pub fn insert_multi(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
+        self.insert(sqe, CompletionHandler::new_multi(waker))
     }
 
-    fn with_completion<T, F>(&mut self, key: Key, fun: F) -> T
+    fn insert(&mut self, sqe: &mut Sqe, handler: CompletionHandler) -> Key {
+        let key = Key {
+            slot: self.slab.insert(handler),
+            gid: sqe.buf_group().and_then(BufGroupId::from_raw),
+        };
+
+        sqe.user_data(key.as_raw());
+
+        key
+    }
+
+    fn with_completion<T, F>(&mut self, key: &Key, fun: F) -> T
     where
         F: FnOnce(&mut CompletionHandler) -> T,
     {
+        // TODO: this is not technically safe, since it relies on the fact that key
+        // is not used after the completion handler has been removed, which is not
+        // guaranteed today by the unsafe boundaries. We would have to either add
+        // the explitic contract somwhere or move to a safer design where keys are
+        // passed by value.
         let completion = unsafe { self.slab.get_mut(key.slot) };
         let value = fun(completion);
         if completion.is_finished() {
@@ -154,34 +191,49 @@ impl Completions {
         value
     }
 
+    /// Push a new `result` to the entry identified by `key`.
     /// Returns whether the result was stored for the op.
-    pub fn notify(&mut self, key: Key, result: CompletionResult) -> bool {
+    pub fn notify(&mut self, key: &Key, result: CompletionResult) -> bool {
         self.with_completion(key, move |comp| comp.try_notify(result))
     }
 
+    /// Attempt to cancel the entry identified by `key`.
     /// Results that were posted but never read are passed to `unread`.
-    pub fn cancel<F>(&mut self, key: Key, handle: Cancellation, unread: F) -> bool
+    /// Returns whether the initial sqe is still active in the kernel.
+    pub fn cancel<F>(&mut self, key: &Key, handle: Cancellation, unread: F) -> bool
     where
         F: FnMut(CompletionResult),
     {
         self.with_completion(key, move |comp| comp.try_cancel(handle, unread))
     }
 
-    pub fn update(&mut self, key: Key, waker: &Waker) {
+    /// Update the `waker` of the entry identified by `key`.
+    pub fn update(&mut self, key: &Key, waker: &Waker) {
         self.with_completion(key, move |comp| comp.update_waker(waker));
     }
 
-    pub fn result(&mut self, key: Key) -> Option<CompletionResult> {
+    /// Pop the next result of the entry identified by `key`.
+    pub fn result(&mut self, key: &Key) -> Option<CompletionResult> {
         self.with_completion(key, move |comp| comp.take_result())
     }
 }
 
+/// The state machine of an active sqe.
+///
+/// The initial state is different based on how the handler was created:
+/// - [`Self::new_single`], single-shot -> [`Self::Single`]
+/// - [`Self::new_multi`], multi-shot -> [`Self::Multi`]
+///
+/// The [`Self::Single`] uses a single [`Option`] to keep its result, while the
+/// [`Self::Multi`] has a queue of results to maintain a fifo order.
+///
+/// `(Single | Multi)` -> `[Cancelled]` -> `Finished`
+///
+/// Once an entry reaches the [`Self::Finished`] state, it is cleaned up by the slab.
 enum CompletionHandler {
-    Pending {
-        waker: Waker,
-    },
     Single {
-        result: CompletionResult,
+        waker: Waker,
+        slot: Option<CompletionResult>,
     },
     Multi {
         waker: Waker,
@@ -194,10 +246,12 @@ enum CompletionHandler {
 }
 
 impl CompletionHandler {
+    /// Create a new handler for a single-shot op.
     const fn new_single(waker: Waker) -> Self {
-        Self::Pending { waker }
+        Self::Single { waker, slot: None }
     }
 
+    /// Create a new handler for a multi-shot op.
     const fn new_multi(waker: Waker) -> Self {
         Self::Multi {
             waker,
@@ -205,23 +259,14 @@ impl CompletionHandler {
         }
     }
 
-    /// Replaces the stored waker, unless it already wakes the same task.
-    fn update_waker(&mut self, new_waker: &Waker) {
-        match self {
-            Self::Pending { waker } | Self::Multi { waker, .. } => {
-                if !waker.will_wake(new_waker) {
-                    *waker = new_waker.clone();
-                }
-            }
-            _ => unreachable!("Cannot update waker in this state"),
-        }
-    }
-
+    /// Push a new `result` to the handler.
+    /// Returns whether the result was stored.
     fn try_notify(&mut self, result: CompletionResult) -> bool {
         match self {
-            Self::Pending { waker } => {
+            Self::Single { waker, slot } => {
+                debug_assert!(!result.has_more());
                 waker.wake_by_ref();
-                *self = Self::Single { result };
+                *slot = Some(result);
                 true
             }
             Self::Multi { waker, queue } => {
@@ -241,20 +286,24 @@ impl CompletionHandler {
         }
     }
 
+    /// Try to move a handler to the cancelled state.
+    /// Returns false if the handler was already completed by having its final
+    /// result, in which case it is also moved to the finished state.
     fn try_cancel<F>(&mut self, handle: Cancellation, mut unread: F) -> bool
     where
         F: FnMut(CompletionResult),
     {
         match self {
-            Self::Pending { .. } => {
-                *self = Self::Cancelled { handle };
-                true
-            }
-            Self::Single { result } => {
-                unread(*result);
-                handle.drop_raw();
-                *self = Self::Finished;
-                false
+            Self::Single { slot, .. } => {
+                if let Some(result) = slot {
+                    unread(*result);
+                    handle.drop_raw();
+                    *self = Self::Finished;
+                    false
+                } else {
+                    *self = Self::Cancelled { handle };
+                    true
+                }
             }
             Self::Multi { queue, .. } => {
                 let mut done = false;
@@ -277,14 +326,14 @@ impl CompletionHandler {
         }
     }
 
+    /// Pop the next result from the handler.
+    /// If it is the last one, also moves the handler to the finished state.
     fn take_result(&mut self) -> Option<CompletionResult> {
         match self {
-            Self::Pending { .. } => None,
-            Self::Single { result } => {
-                let res = Some(*result);
+            Self::Single { slot, .. } => slot.and_then(|result| {
                 *self = Self::Finished;
-                res
-            }
+                Some(result)
+            }),
             Self::Multi { queue, .. } => {
                 let res = queue.pop();
                 if res.is_some_and(|res| !res.has_more()) {
@@ -296,6 +345,19 @@ impl CompletionHandler {
         }
     }
 
+    /// Update the waker of an active handler.
+    fn update_waker(&mut self, new_waker: &Waker) {
+        match self {
+            Self::Single { waker, .. } | Self::Multi { waker, .. } => {
+                if !waker.will_wake(new_waker) {
+                    *waker = new_waker.clone();
+                }
+            }
+            _ => unreachable!("Cannot update waker in this state"),
+        }
+    }
+
+    /// Returns whether the handler is in the finished state.
     const fn is_finished(&self) -> bool {
         matches!(self, Self::Finished)
     }
