@@ -10,7 +10,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use rustix::io::Errno;
 
 use crate::{
-    managed::{CompletionResult, UringProxy, UringProxyExt, completion::Key},
+    managed::{Cancellation, CompletionResult, UringProxy, UringProxyExt, completion::Key},
     sys::{IoBufRing, IoUring},
     utils::Slab,
 };
@@ -74,8 +74,8 @@ impl BufId {
 ///
 /// Cloning gives another handle to the same group, so it can be shared between
 /// tasks without an `Rc`. The memory is owned by the ring and outlives the
-/// handles: it is only freed once every handle is dropped, no op that may
-/// still pick a buffer is in flight, and every [`SelectBuf`] is gone.
+/// handles: it is only freed once every handle (including the ones held by
+/// ops that may still pick a buffer) and every [`SelectBuf`] is gone.
 pub struct SelectGroup<U: UringProxy> {
     gid: BufGroupId,
     size: u32,
@@ -144,6 +144,14 @@ impl<U: UringProxy> Drop for SelectGroup<U> {
     }
 }
 
+/// Keeps the group alive until the cancelled op's final CQE, since the kernel
+/// may still pick a buffer from it until then.
+impl<U: UringProxy> From<SelectGroup<U>> for Cancellation {
+    fn from(group: SelectGroup<U>) -> Self {
+        Box::new(group).into()
+    }
+}
+
 /// A buffer picked by the kernel from a [`SelectGroup`], holding the bytes it
 /// read. Dropping it returns the buffer to the group.
 pub struct SelectBuf<U: UringProxy> {
@@ -197,8 +205,9 @@ struct BufGroup<A: Allocator = Global> {
     /// `count * size` bytes, buffer `bid` at offset `bid * size`.
     mem: NonNull<u8>,
 
-    /// Live `SelectGroup` handles, in-flight ops that may pick a buffer, and
-    /// live `SelectBuf`s. The memory can't be freed while any of them exists.
+    /// Live `SelectGroup` handles and `SelectBuf`s. An op that may pick a
+    /// buffer holds a handle until its final CQE, even when cancelled. The
+    /// memory can't be freed while any of them exists.
     users: u32,
 
     alloc: A,
@@ -299,23 +308,11 @@ impl BufGroups {
         }
     }
 
-    pub fn handle_result(&mut self, key: &Key, result: &CompletionResult) {
-        if let Some(gid) = key.group_id()
-            && !result.has_more()
-        {
-            self.release(gid);
-        }
-    }
-
+    /// Puts the buffer of a result nobody will read (its op was cancelled)
+    /// back in the ring.
     pub fn handle_lost(&mut self, key: &Key, result: &CompletionResult) {
-        if let Some(gid) = key.group_id() {
-            if let Some(bid) = result.buffer_id() {
-                self.recycle(gid, bid);
-            }
-
-            if !result.has_more() {
-                self.release(gid);
-            }
+        if let (Some(gid), Some(bid)) = (key.group_id(), result.buffer_id()) {
+            self.recycle(gid, bid);
         }
     }
 
@@ -337,8 +334,7 @@ impl BufGroups {
         Ok(id)
     }
 
-    /// A `SelectGroup` handle was cloned, or an op that may pick a buffer from
-    /// the group was submitted.
+    /// A `SelectGroup` handle was cloned.
     pub fn acquire(&mut self, id: BufGroupId) {
         self.get(id).users += 1;
     }
@@ -351,7 +347,7 @@ impl BufGroups {
         group.buf(bid)
     }
 
-    /// A handle, op or `SelectBuf` is done with the group.
+    /// A handle or `SelectBuf` is done with the group.
     pub fn release(&mut self, id: BufGroupId) {
         self.get(id).users -= 1;
         self.mark_if_dead(id);

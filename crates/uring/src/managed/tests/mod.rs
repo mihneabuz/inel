@@ -10,7 +10,6 @@ mod submission;
 mod write;
 
 use std::{
-    cell::RefCell,
     marker::PhantomData,
     pin::Pin,
     rc::Rc,
@@ -40,34 +39,34 @@ use super::{
 /// A real ring (fake under miri) behind the proxy interface.
 #[derive(Clone)]
 pub struct TestRing {
-    ring: Rc<RefCell<Uring>>,
+    ring: Rc<Uring>,
 }
 
 // SAFETY: every clone shares the same `Uring` through the `Rc`
 unsafe impl UringProxy for TestRing {
     fn with<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut Uring) -> T,
+        F: FnOnce(&Uring) -> T,
     {
-        f(&mut self.ring.borrow_mut())
+        f(&self.ring)
     }
 }
 
 impl TestRing {
     pub fn new() -> Self {
         Self {
-            ring: Rc::new(RefCell::new(Uring::new().unwrap())),
+            ring: Rc::new(Uring::new().unwrap()),
         }
     }
 
     pub fn with_direct_files(direct_files: u32) -> Self {
         Self {
-            ring: Rc::new(RefCell::new(
+            ring: Rc::new(
                 Uring::options()
                     .with_auto_direct_files(direct_files)
                     .build()
                     .unwrap(),
-            )),
+            ),
         }
     }
 

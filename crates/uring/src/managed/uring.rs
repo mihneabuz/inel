@@ -1,4 +1,4 @@
-use core::{ptr::NonNull, task::Waker};
+use core::{cell::RefCell, ptr::NonNull, task::Waker};
 
 use rustix::{io::Errno, io_uring::IoringAsyncCancelFlags};
 
@@ -100,11 +100,13 @@ impl UringOptions {
         let comp = Completions::with_capacity(ring.sq_size());
 
         Ok(Uring {
-            ring,
-            comp,
-            active: 0,
-            groups: BufGroups::new(),
-            scratch: Scratch::default(),
+            core: RefCell::new(Core {
+                ring,
+                comp,
+                active: 0,
+                scratch: Scratch::default(),
+            }),
+            groups: RefCell::new(BufGroups::new()),
         })
     }
 }
@@ -119,12 +121,60 @@ impl UringOptions {
 /// Most other types and APIs should not use [`Uring`] directly, but instead prefer to be
 /// generic over the [`UringProxy`] trait, which allows users to define their own logic to
 /// provide access to the actual [`Uring`] instance.
+///
+/// The buffer groups are kept apart from the rest, so a [`Cancellation`] dropped while
+/// the ring is busy (e.g. from [`Self::wait`]) can still release the group handles and
+/// buffers it holds.
 pub struct Uring {
+    core: RefCell<Core>,
+    groups: RefCell<BufGroups>,
+}
+
+/// Everything in [`Uring`] except the buffer groups.
+struct Core {
     ring: IoUring,
     comp: Completions,
     active: u32,
-    groups: BufGroups,
     scratch: Scratch,
+}
+
+impl Core {
+    fn push<O, F>(&mut self, op: &mut O, insert: F) -> Key
+    where
+        O: Op,
+        F: FnOnce(&mut Completions, &mut Sqe) -> Key,
+    {
+        // SAFETY: Op implementation must guarantee safety
+        let key = unsafe {
+            self.ring
+                .push_sqe(|sqe| {
+                    op.prep(sqe, &self.scratch);
+                    insert(&mut self.comp, sqe)
+                })
+                .expect(Uring::SUBMISSION_QUEUE_FULL_ERROR)
+        };
+
+        self.active += 1;
+        key
+    }
+
+    /// # Safety
+    /// See [`Uring::prep_detached`].
+    unsafe fn prep_detached<F>(&mut self, prep: F)
+    where
+        F: FnOnce(&mut Sqe),
+    {
+        // SAFETY: the caller guarantees the SQE references no memory
+        unsafe {
+            self.ring
+                .push_sqe(|sqe| {
+                    prep(sqe);
+                    mark_detached(sqe);
+                    sqe.skip_success_cqe();
+                })
+                .expect(Uring::SUBMISSION_QUEUE_FULL_ERROR)
+        }
+    }
 }
 
 impl Uring {
@@ -144,18 +194,18 @@ impl Uring {
     }
 
     /// Returns true if there are no more in-flight ops.
-    pub const fn is_done(&self) -> bool {
-        self.comp.is_empty()
+    pub fn is_done(&self) -> bool {
+        self.core.borrow().comp.is_empty()
     }
 
     /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
     /// Returns a `Key` which can be used to retrieve the result of the op.
-    pub(crate) fn submit<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
+    pub(crate) fn submit<U, O>(&self, op: &mut O, waker: Waker) -> Key
     where
         U: UringProxy,
         O: SingleOp<U>,
     {
-        self.push(op, |comp, sqe| {
+        self.core.borrow_mut().push(op, |comp, sqe| {
             // SAFETY: SingleOp implementation guarantees it generates exactly one CQE.
             unsafe { comp.insert_single(sqe, waker) }
         })
@@ -163,35 +213,14 @@ impl Uring {
 
     /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
     /// Returns a `Key` which can be used to retrieve the results of the op.
-    pub(crate) fn submit_multi<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
+    pub(crate) fn submit_multi<U, O>(&self, op: &mut O, waker: Waker) -> Key
     where
         U: UringProxy,
         O: MultiOp<U>,
     {
-        self.push(op, |comp, sqe| comp.insert_multi(sqe, waker))
-    }
-
-    fn push<O, F>(&mut self, op: &mut O, insert: F) -> Key
-    where
-        O: Op,
-        F: FnOnce(&mut Completions, &mut Sqe) -> Key,
-    {
-        // SAFETY: Op implementation must guarantee safety
-        let key = unsafe {
-            self.ring
-                .push_sqe(|sqe| {
-                    op.prep(sqe, &self.scratch);
-                    insert(&mut self.comp, sqe)
-                })
-                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
-        };
-
-        if let Some(group) = key.group_id() {
-            self.groups.acquire(group);
-        }
-
-        self.active += 1;
-        key
+        self.core
+            .borrow_mut()
+            .push(op, |comp, sqe| comp.insert_multi(sqe, waker))
     }
 
     /// Submits an SQE built by `prep` without tracking it: a successful completion is
@@ -201,77 +230,79 @@ impl Uring {
     /// Nothing waits for the completion, so the SQE must not reference any memory
     /// (beyond what the kernel copies while preparing it), nor select a buffer from
     /// a group, since the CQE carrying it is ignored.
-    pub(crate) unsafe fn prep_detached<F>(&mut self, prep: F)
+    pub(crate) unsafe fn prep_detached<F>(&self, prep: F)
     where
         F: FnOnce(&mut Sqe),
     {
-        // SAFETY: the caller guarantees the SQE references no memory
-        unsafe {
-            self.ring
-                .push_sqe(|sqe| {
-                    prep(sqe);
-                    mark_detached(sqe);
-                    sqe.skip_success_cqe();
-                })
-                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
-        }
+        // SAFETY: forwarded to the caller
+        unsafe { self.core.borrow_mut().prep_detached(prep) }
     }
 
-    pub(crate) fn update(&mut self, key: &Key, waker: &Waker) {
-        self.comp.update(key, waker);
+    pub(crate) fn update(&self, key: &Key, waker: &Waker) {
+        self.core.borrow_mut().comp.update(key, waker);
     }
 
-    pub(crate) fn cancel(&mut self, key: &Key, handle: Cancellation, entry: bool) {
-        let pending = self.comp.cancel(key, handle, |missed| {
-            self.groups.handle_lost(key, &missed);
+    pub(crate) fn result(&self, key: &Key) -> Option<CompletionResult> {
+        self.core.borrow_mut().comp.result(key)
+    }
+
+    /// The `handle` may hold group handles or buffers, so it can be dropped here
+    /// while `groups` is free: missed results only borrow it one at a time.
+    pub(crate) fn cancel(&self, key: &Key, handle: Cancellation, entry: bool) {
+        let mut core = self.core.borrow_mut();
+
+        let pending = core.comp.cancel(key, handle, |missed| {
+            self.groups.borrow_mut().handle_lost(key, &missed);
         });
 
         if pending && entry {
             // SAFETY: the cancel only carries the key, it references no memory
             unsafe {
-                self.prep_detached(|sqe| {
+                core.prep_detached(|sqe| {
                     sqe.prep_cancel(key.as_raw(), IoringAsyncCancelFlags::empty());
                 });
             };
         }
     }
 
-    pub(crate) fn result(&mut self, key: &Key) -> Option<CompletionResult> {
-        let result = self.comp.result(key)?;
+    pub fn wait(&self) {
+        let mut core = self.core.borrow_mut();
+        let Core {
+            ring,
+            comp,
+            active,
+            scratch,
+        } = &mut *core;
 
-        self.groups.handle_result(key, &result);
+        ring.submit_and_wait(1).expect(Self::FAILED_TO_ENTER_ERROR);
 
-        Some(result)
-    }
-
-    pub fn wait(&mut self) {
-        self.ring
-            .submit_and_wait(1)
-            .expect(Self::FAILED_TO_ENTER_ERROR);
-
-        self.ring.for_each_cqe(|cqe| {
+        ring.for_each_cqe(|cqe| {
             let Some((key, result)) = parse_cqe(cqe) else {
                 return;
             };
 
-            let stored = self.comp.notify(&key, result);
+            // may drop a `Cancellation`, which can release group handles and
+            // buffers, so `groups` must not be borrowed here
+            let stored = comp.notify(&key, result);
 
             if !result.has_more() {
-                self.active -= 1;
+                *active -= 1;
             }
 
+            // a group released above is only freed below, so the buffer can
+            // still be recycled into it
             if !stored {
-                self.groups.handle_lost(&key, &result);
+                self.groups.borrow_mut().handle_lost(&key, &result);
             }
         });
 
-        self.scratch.reset();
+        scratch.reset();
 
-        self.groups.free_dead(&self.ring);
+        self.groups.borrow_mut().free_dead(ring);
     }
 
-    pub fn shutdown(&mut self) {
-        while self.active > 0 {
+    pub fn shutdown(&self) {
+        while self.core.borrow().active > 0 {
             // SAFETY: the cancel references no memory
             unsafe {
                 self.prep_detached(|sqe| {
@@ -282,34 +313,43 @@ impl Uring {
         }
     }
 
-    pub(crate) fn create_buf_group(&mut self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
-        let id = self.groups.insert(count, size)?;
-        self.groups.register_or_drop(id, &self.ring)?;
+    pub(crate) fn create_buf_group(&self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
+        let mut groups = self.groups.borrow_mut();
+        let id = groups.insert(count, size)?;
+        groups.register_or_drop(id, &self.core.borrow().ring)?;
         Ok(id)
     }
 
-    pub(crate) fn clone_buf_group(&mut self, gid: BufGroupId) {
-        self.groups.acquire(gid);
+    pub(crate) fn clone_buf_group(&self, id: BufGroupId) {
+        self.groups.borrow_mut().acquire(id);
     }
 
-    pub(crate) fn drop_buf_group(&mut self, gid: BufGroupId) {
-        self.groups.release(gid);
-        self.groups.free_dead(&self.ring);
+    /// Releases a group handle. If the ring is busy (the handle was dropped from a
+    /// [`Cancellation`] in [`Self::wait`] or [`Self::cancel`]), a dead group is only
+    /// freed by the next [`Self::wait`].
+    pub(crate) fn drop_buf_group(&self, id: BufGroupId) {
+        let mut groups = self.groups.borrow_mut();
+        groups.release(id);
+        if let Ok(core) = self.core.try_borrow() {
+            groups.free_dead(&core.ring);
+        }
     }
 
-    pub(crate) fn take_buf(&mut self, gid: BufGroupId, bid: BufId) -> NonNull<u8> {
-        self.groups.take(gid, bid)
+    pub(crate) fn take_buf(&self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
+        self.groups.borrow_mut().take(id, bid)
     }
 
-    pub(crate) fn return_buf(&mut self, gid: BufGroupId, bid: BufId) {
-        self.groups.recycle(gid, bid);
-        self.groups.release(gid);
+    pub(crate) fn return_buf(&self, id: BufGroupId, bid: BufId) {
+        let mut groups = self.groups.borrow_mut();
+        groups.recycle(id, bid);
+        groups.release(id);
     }
 }
 
 impl Drop for Uring {
     fn drop(&mut self) {
-        let _ = self.ring.unregister_buffers();
-        let _ = self.ring.unregister_files();
+        let ring = &self.core.get_mut().ring;
+        let _ = ring.unregister_buffers();
+        let _ = ring.unregister_files();
     }
 }

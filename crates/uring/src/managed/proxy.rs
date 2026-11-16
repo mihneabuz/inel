@@ -1,4 +1,5 @@
 use core::{ptr::NonNull, task::Waker};
+use std::rc::Rc;
 
 use rustix::io::Errno;
 
@@ -13,11 +14,11 @@ use crate::{
     sys::Sqe,
 };
 
-/// Provides access to a [`Uring`] with interior mutability.
+/// Provides access to a [`Uring`].
 ///
 /// This trait makes it possible to define types which are generic over the way they
-/// obtain access to a [`Uring`], allowing for it to be wrapped in a `ThreadLocal` or
-/// [`Rc<RefCell<>>`].
+/// obtain access to a [`Uring`], allowing for it to be stored in a thread local or
+/// an [`std::rc::Rc`], or just using it by reference.
 ///
 /// # Safety
 ///
@@ -27,7 +28,7 @@ pub unsafe trait UringProxy: Clone {
     /// Runs `f` on the proxied [`Uring`].
     fn with<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut Uring) -> T;
+        F: FnOnce(&Uring) -> T;
 
     /// Submits any pending ops and reaps completions.
     fn wait(&self) {
@@ -45,19 +46,37 @@ pub unsafe trait UringProxy: Clone {
     }
 }
 
+// SAFETY: copies of the reference all point to the same `Uring`
+unsafe impl UringProxy for &Uring {
+    fn with<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&Uring) -> T,
+    {
+        f(self)
+    }
+}
+
+// SAFETY: every clone shares the same `Uring` through the `Rc`
+unsafe impl UringProxy for Rc<Uring> {
+    fn with<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&Uring) -> T,
+    {
+        f(self)
+    }
+}
+
 // SAFETY: forwards to `U`, so it reaches the same ring
 unsafe impl<U: UringProxy> UringProxy for &U {
     fn with<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut Uring) -> T,
+        F: FnOnce(&Uring) -> T,
     {
         (*self).with(f)
     }
 }
 
-/// The ring protocol used by the managed types. Crate-private and implemented
-/// for every proxy, so it can neither be called nor overridden from outside:
-/// its methods trust their keys and buffer ids.
+/// Extension trait containing crate-private functions used by managed types.
 pub(crate) trait UringProxyExt: UringProxy {
     /// Submits a single-shot `op`, returning a `Key` for the completion entry.
     fn submit<O: SingleOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {

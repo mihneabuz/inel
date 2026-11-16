@@ -170,8 +170,9 @@ unsafe impl<U: UringProxy, B: IoBuf, O: Offset> SingleOp<U> for Write<'_, B, O> 
 /// A read into a buffer the kernel picks from `group` once data is available,
 /// so idle reads don't tie up memory.
 ///
-/// Holds its own handle to the group, so it has no lifetime and the group
-/// stays alive until the op is done.
+/// Holds its own handle to the group, which is kept until the op's final CQE
+/// (also when cancelled), so the group stays alive while the kernel may pick
+/// from it.
 ///
 /// Fails with `ENOBUFS` if the group has no free buffer at that point; on
 /// pollable fds nothing was read then, so the read can simply be retried.
@@ -202,7 +203,7 @@ impl<'a, U: UringProxy> ReadSelect<'a, U, At> {
 }
 
 // SAFETY: the SQE references no memory, the kernel picks a buffer from the
-// group, which the ring keeps alive while the op is in flight
+// group, whose handle is handed over on cancel
 unsafe impl<U: UringProxy, O: Offset> Op for ReadSelect<'_, U, O> {
     fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         let size = self.group.buffer_size();
@@ -210,6 +211,10 @@ unsafe impl<U: UringProxy, O: Offset> Op for ReadSelect<'_, U, O> {
         sqe.prep_read(self.src.raw_fd(), ptr::null_mut(), size, offset);
         sqe.add_flag(self.src.flags());
         sqe.buffer_select(self.group.id().as_raw());
+    }
+
+    fn cancel(self) -> (Cancellation, bool) {
+        (self.group.into(), true)
     }
 }
 

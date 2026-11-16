@@ -384,3 +384,27 @@ fn group_dropped_with_blocked_op() {
     drop(fut);
     ring.drain();
 }
+
+#[test]
+fn cancelled_op_keeps_group_until_final_cqe() {
+    let ring = TestRing::new();
+    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let gid = group.id();
+    let (rx, _tx) = pipe::pipe().unwrap();
+
+    let mut fut = Box::pin(ReadSelect::new(&rx, &group).run_on(ring.clone()));
+    submit(fut.as_mut());
+    drop(group);
+    drop(fut);
+
+    // the cancellation still holds the last handle, so the slot is taken
+    let other = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    assert_ne!(other.id(), gid);
+    drop(other);
+
+    // the final CQE drops the cancellation from inside `wait`, and the group
+    // is freed at the end of it
+    ring.drain();
+    let reused = SelectGroup::new(1, 8, ring).unwrap();
+    assert_eq!(reused.id(), gid);
+}

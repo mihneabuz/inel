@@ -60,6 +60,8 @@ impl Scratch {
 /// - Memory the kernel accesses while the op runs (usually buffers) must be owned by the op
 ///   and stay valid until its final CQE is posted. If the op is cancelled, [`Self::cancel`]
 ///   must move it into the returned [`Cancellation`], which is kept until that CQE arrives.
+///   This includes the buffer group an op selects from: it must hold a [`SelectGroup`]
+///   handle for it and move that into the [`Cancellation`].
 ///
 /// - Memory the kernel only reads while preparing the request in `io_uring_enter`, and
 ///   copies (e.g. the path of an open, the address of a connect), only has to stay valid
@@ -73,6 +75,7 @@ impl Scratch {
 /// original type.
 ///
 /// [`InFlight`]: super::buffer::InFlight
+/// [`SelectGroup`]: super::SelectGroup
 pub unsafe trait Op {
     /// Prep the op into `sqe`, and `scratch` can be used to allocate temporary storage
     /// which lives until `sqe` is submitted to the kernel.
