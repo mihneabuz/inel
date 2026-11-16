@@ -102,9 +102,9 @@ impl UringOptions {
         Ok(Uring {
             ring,
             comp,
+            active: 0,
             groups: BufGroups::new(),
             scratch: Scratch::default(),
-            in_kernel: 0,
         })
     }
 }
@@ -122,9 +122,9 @@ impl UringOptions {
 pub struct Uring {
     ring: IoUring,
     comp: Completions,
+    active: u32,
     groups: BufGroups,
     scratch: Scratch,
-    in_kernel: u32,
 }
 
 impl Uring {
@@ -190,7 +190,7 @@ impl Uring {
             self.groups.acquire(group);
         }
 
-        self.in_kernel += 1;
+        self.active += 1;
         key
     }
 
@@ -222,22 +222,11 @@ impl Uring {
     }
 
     pub(crate) fn cancel(&mut self, key: &Key, handle: Cancellation, entry: bool) {
-        let pending = self.comp.cancel(key, handle, |result| {
-            if let Some(gid) = key.group_id() {
-                if let Some(bid) = result.buffer_id() {
-                    self.groups.recycle(gid, bid);
-                }
-                if !result.has_more() {
-                    self.groups.release(gid);
-                }
-            }
+        let pending = self.comp.cancel(key, handle, |missed| {
+            self.groups.handle_lost(key, &missed);
         });
 
-        if !pending {
-            return;
-        }
-
-        if entry {
+        if pending && entry {
             // SAFETY: the cancel only carries the key, it references no memory
             unsafe {
                 self.prep_detached(|sqe| {
@@ -250,11 +239,7 @@ impl Uring {
     pub(crate) fn result(&mut self, key: &Key) -> Option<CompletionResult> {
         let result = self.comp.result(key)?;
 
-        if let Some(gid) = key.group_id()
-            && !result.has_more()
-        {
-            self.groups.release(gid);
-        }
+        self.groups.handle_result(key, &result);
 
         Some(result)
     }
@@ -272,16 +257,11 @@ impl Uring {
             let stored = self.comp.notify(&key, result);
 
             if !result.has_more() {
-                self.in_kernel -= 1;
+                self.active -= 1;
             }
 
-            if !stored && let Some(gid) = key.group_id() {
-                if let Some(bid) = result.buffer_id() {
-                    self.groups.recycle(gid, bid);
-                }
-                if !result.has_more() {
-                    self.groups.release(gid);
-                }
+            if !stored {
+                self.groups.handle_lost(&key, &result);
             }
         });
 
@@ -291,7 +271,7 @@ impl Uring {
     }
 
     pub fn shutdown(&mut self) {
-        while self.in_kernel > 0 {
+        while self.active > 0 {
             // SAFETY: the cancel references no memory
             unsafe {
                 self.prep_detached(|sqe| {

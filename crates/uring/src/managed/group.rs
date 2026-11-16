@@ -10,7 +10,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use rustix::io::Errno;
 
 use crate::{
-    managed::{UringProxy, UringProxyExt},
+    managed::{CompletionResult, UringProxy, UringProxyExt, completion::Key},
     sys::{IoBufRing, IoUring},
     utils::Slab,
 };
@@ -301,6 +301,26 @@ impl BufGroups {
         Self {
             groups: Slab::new(),
             dead: Vec::with_capacity(16),
+        }
+    }
+
+    pub fn handle_result(&mut self, key: &Key, result: &CompletionResult) {
+        if let Some(gid) = key.group_id()
+            && !result.has_more()
+        {
+            self.release(gid);
+        }
+    }
+
+    pub fn handle_lost(&mut self, key: &Key, result: &CompletionResult) {
+        if let Some(gid) = key.group_id() {
+            if let Some(bid) = result.buffer_id() {
+                self.recycle(gid, bid);
+            }
+
+            if !result.has_more() {
+                self.release(gid);
+            }
         }
     }
 
