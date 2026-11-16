@@ -5,13 +5,17 @@ use std::{
 };
 
 use futures::{Stream, future::FusedFuture};
-use rustix::{io::Errno, io_uring::IoringTimeoutFlags, pipe};
+use rustix::{
+    io::Errno,
+    io_uring::{IoringAsyncCancelFlags, IoringTimeoutFlags},
+    pipe,
+};
 
 use crate::{
     managed::{
         Read, UringProxy,
         submission::Submission,
-        tests::{CancelAll, Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag},
+        tests::{Nop, OwnedOp, TestRing, TestWaker, Timeout, block_on, dropped, flag},
     },
     sys::TIMEOUT_MULTISHOT,
 };
@@ -270,9 +274,12 @@ fn single_cancelled_result() {
     assert!(fut.as_mut().poll(&mut cx).is_pending());
 
     // cancel everything from the outside
-    ring.with(|ring| {
-        ring.submit_detached(CancelAll);
-    });
+    // SAFETY: the cancel references no memory and selects no buffer
+    unsafe {
+        ring.with(|ring| {
+            ring.prep_detached(|sqe| sqe.prep_cancel(0, IoringAsyncCancelFlags::ANY));
+        });
+    }
 
     assert_eq!(block_on(&ring, fut), ECANCELED);
 }

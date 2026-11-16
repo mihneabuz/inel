@@ -273,6 +273,7 @@ unsafe impl IoBuf for String {
 /// the end of that region is clamped to it:
 /// - writes send the range of the initialized bytes (`raw_buf`).
 /// - reads fill the range of the writable region (`raw_buf_mut`).
+#[derive(Debug, Clone)]
 pub struct View<B, R> {
     buf: B,
     range: R,
@@ -387,6 +388,7 @@ unsafe impl<B: IoBufMut, R: RangeBounds<usize>> IoBufMut for View<B, R> {
 ///
 /// Always reserve capacity before reading, a full `Vec<u8>` has no spare
 /// capacity and reads 0 bytes, which looks like EOF.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Accumulating(Vec<u8>);
 
 impl Accumulating {

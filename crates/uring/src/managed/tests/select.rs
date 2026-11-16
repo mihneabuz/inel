@@ -11,12 +11,12 @@ use rustix::{
 };
 
 use crate::managed::{
-    IoSource, ReadSelect, SelectBuf, SelectGroup, UringProxy,
+    IoSrc, ReadSelect, SelectBuf, SelectGroup, UringProxy,
     submission::Submission,
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
-fn read(ring: &TestRing, src: &impl IoSource, group: &SelectGroup<TestRing>) -> ReadResult {
+fn read(ring: &TestRing, src: &impl IoSrc, group: &SelectGroup<TestRing>) -> ReadResult {
     let fut = pin!(Submission::new(ReadSelect::new(src, group), ring.clone()));
     block_on(ring, fut)
 }

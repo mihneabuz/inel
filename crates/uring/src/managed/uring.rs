@@ -1,15 +1,15 @@
 use core::{ptr::NonNull, task::Waker};
 
-use rustix::io::Errno;
+use rustix::{io::Errno, io_uring::IoringAsyncCancelFlags};
 
 use crate::{
     managed::{
         cancellation::Cancellation,
         completion::{CompletionEntry, CompletionResult, Completions, Key},
         group::{BufGroupId, BufGroups, BufId},
-        submission::{AsyncCancel, DetachOp, MultiOp, Op, SingleOp},
+        submission::{MultiOp, Op, SingleOp},
     },
-    sys::IoUring,
+    sys::{IoUring, Sqe},
 };
 
 /// Access to a [`Uring`], wrapped in whatever the consumer likes (a
@@ -54,16 +54,19 @@ unsafe impl<P: UringProxy> UringProxy for &P {
 /// for every proxy, so it can neither be called nor overridden from outside:
 /// its methods trust their keys and buffer ids.
 pub trait UringProxyExt: UringProxy {
-    fn submit<O: SingleOp>(&self, op: &mut O, waker: Waker) -> Key {
-        self.with(|uring| uring.submit(op, waker))
+    fn submit<O: SingleOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {
+        self.with(|uring| uring.submit::<Self, _>(op, waker))
     }
 
-    fn submit_multi<O: MultiOp>(&self, op: &mut O, waker: Waker) -> Key {
-        self.with(|uring| uring.submit_multi(op, waker))
+    fn submit_multi<O: MultiOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {
+        self.with(|uring| uring.submit_multi::<Self, _>(op, waker))
     }
 
-    fn submit_detached<O: DetachOp>(&mut self, op: O) {
-        self.with(|uring| uring.submit_detached(op))
+    /// # Safety
+    /// See [`Uring::prep_detached`].
+    unsafe fn prep_detached<F: FnOnce(&mut Sqe)>(&self, prep: F) {
+        // SAFETY: forwarded to the caller
+        self.with(|uring| unsafe { uring.prep_detached(prep) })
     }
 
     fn cancel(&self, key: Key, handle: Cancellation, entry: bool) {
@@ -166,13 +169,21 @@ impl Uring {
         self.comp.is_empty()
     }
 
-    pub(crate) fn submit<O: SingleOp>(&mut self, op: &mut O, waker: Waker) -> Key {
+    pub(crate) fn submit<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
+    where
+        U: UringProxy,
+        O: SingleOp<U>,
+    {
         let mut key = self.comp.insert_single(waker);
         self.push(op, &mut key);
         key
     }
 
-    pub(crate) fn submit_multi<O: MultiOp>(&mut self, op: &mut O, waker: Waker) -> Key {
+    pub(crate) fn submit_multi<U, O>(&mut self, op: &mut O, waker: Waker) -> Key
+    where
+        U: UringProxy,
+        O: MultiOp<U>,
+    {
         let mut key = self.comp.insert_multi(waker);
         self.push(op, &mut key);
         key
@@ -196,12 +207,22 @@ impl Uring {
         self.in_kernel += 1;
     }
 
-    pub(crate) fn submit_detached<O: DetachOp>(&mut self, mut op: O) {
-        // SAFETY: DetachOp implementation must guarantee safety
+    /// Submits an SQE built by `prep` without tracking it: a successful
+    /// completion is skipped, a failed one ignored.
+    ///
+    /// # Safety
+    /// Nothing waits for the completion, so the SQE must not reference any
+    /// memory (beyond what the kernel copies while preparing it), nor select a
+    /// buffer from a group, since the CQE carrying it is ignored.
+    pub(crate) unsafe fn prep_detached<F>(&mut self, prep: F)
+    where
+        F: FnOnce(&mut Sqe),
+    {
+        // SAFETY: the caller guarantees the SQE references no memory
         unsafe {
             self.ring
                 .push_sqe(|sqe| {
-                    op.prep(sqe);
+                    prep(sqe);
                     sqe.user_data(Key::IGNORE.as_raw());
                     sqe.skip_success_cqe();
                 })
@@ -232,7 +253,12 @@ impl Uring {
         }
 
         if entry {
-            self.submit_detached(AsyncCancel::new(key));
+            // SAFETY: the cancel only carries the key, it references no memory
+            unsafe {
+                self.prep_detached(|sqe| {
+                    sqe.prep_cancel(key.as_raw(), IoringAsyncCancelFlags::empty());
+                });
+            };
         }
     }
 
@@ -299,7 +325,12 @@ impl Uring {
             // resubmitted every round: requests run in any order, so a cancel
             // can miss an op that the kernel picks up after it. Each round
             // posts at least one CQE, the cancel's -ENOENT if nothing matched.
-            self.submit_detached(AsyncCancel::all());
+            // SAFETY: the cancel references no memory
+            unsafe {
+                self.prep_detached(|sqe| {
+                    sqe.prep_cancel(0, IoringAsyncCancelFlags::ANY);
+                });
+            };
             self.wait();
         }
     }

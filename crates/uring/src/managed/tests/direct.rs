@@ -1,17 +1,15 @@
 // Opening files needs -Zmiri-disable-isolation, so these don't run under miri.
 #![cfg(not(miri))]
 
-use std::{ffi::CStr, fs, path::PathBuf, pin::pin};
+use std::{ffi::CStr, fs, marker::PhantomData, path::PathBuf, pin::pin};
 
 use rustix::{
-    fd::RawFd,
     fs::{Mode, OFlags},
     io::Errno,
-    io_uring::IoringSqeFlags,
 };
 
 use crate::managed::{
-    DirectFd, IoSource, OpenDirect, Read, Write,
+    DirectFd, IoSrc, OpenDirect, RawSrc, Read, Write,
     submission::Submission,
     tests::{TestRing, TestWaker, block_on},
 };
@@ -19,7 +17,7 @@ use crate::managed::{
 const CARGO_TOML: &CStr = c"Cargo.toml";
 
 fn open(ring: &TestRing, path: &CStr, flags: OFlags) -> Result<DirectFd<TestRing>, Errno> {
-    let op = OpenDirect::new(path, flags, Mode::empty(), ring.clone());
+    let op = OpenDirect::new(path, flags, Mode::empty());
     block_on(ring, pin!(Submission::new(op, ring.clone())))
 }
 
@@ -35,7 +33,7 @@ fn open_retrying(ring: &TestRing, path: &CStr) -> DirectFd<TestRing> {
     panic!("the table stayed full");
 }
 
-fn read_at(ring: &TestRing, src: &impl IoSource, len: usize, at: usize) -> Result<Vec<u8>, Errno> {
+fn read_at(ring: &TestRing, src: &impl IoSrc, len: usize, at: usize) -> Result<Vec<u8>, Errno> {
     let op = Read::new_at(src, vec![0; len], at);
     let (buf, res) = block_on(ring, pin!(Submission::new(op, ring.clone())));
     res.map(|n| buf[..n].to_vec())
@@ -44,13 +42,9 @@ fn read_at(ring: &TestRing, src: &impl IoSource, len: usize, at: usize) -> Resul
 /// A slot of the table, owned by nobody.
 struct Slot(u32);
 
-impl IoSource for Slot {
-    fn raw_fd(&self) -> RawFd {
-        self.0 as RawFd
-    }
-
-    fn flags(&self) -> IoringSqeFlags {
-        IoringSqeFlags::FIXED_FILE
+impl IoSrc for Slot {
+    fn raw_src(&self) -> RawSrc<'_> {
+        RawSrc::Direct(self.0, PhantomData)
     }
 }
 

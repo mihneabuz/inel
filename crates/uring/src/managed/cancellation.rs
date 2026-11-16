@@ -21,7 +21,7 @@ use std::{ffi::CString, rc::Rc};
 ///
 /// This struct layout keeps the size small - since this is technically the
 /// "slow" path, we don't want to bloat the completion entries with it's size.
-///
+#[derive(Debug)]
 pub struct Cancellation {
     ptr: *mut (),
     metadata: usize,
