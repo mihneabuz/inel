@@ -288,22 +288,22 @@ impl Uring {
         Ok(id)
     }
 
-    pub(crate) fn clone_buf_group(&mut self, id: BufGroupId) {
-        self.groups.clone_handle(id);
+    pub(crate) fn clone_buf_group(&mut self, gid: BufGroupId) {
+        self.groups.acquire(gid);
     }
 
-    pub(crate) fn drop_buf_group(&mut self, id: BufGroupId) {
-        self.groups.drop_handle(id);
+    pub(crate) fn drop_buf_group(&mut self, gid: BufGroupId) {
+        self.groups.release(gid);
         self.groups.free_dead(&self.ring);
     }
 
-    pub(crate) fn take_buf(&mut self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
-        self.groups.take(id, bid)
+    pub(crate) fn take_buf(&mut self, gid: BufGroupId, bid: BufId) -> NonNull<u8> {
+        self.groups.take(gid, bid)
     }
 
-    pub(crate) fn return_buf(&mut self, id: BufGroupId, bid: BufId) {
-        self.groups.recycle(id, bid);
-        self.groups.release(id);
+    pub(crate) fn return_buf(&mut self, gid: BufGroupId, bid: BufId) {
+        self.groups.recycle(gid, bid);
+        self.groups.release(gid);
     }
 }
 

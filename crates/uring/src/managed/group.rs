@@ -180,9 +180,8 @@ impl<U: UringProxy> Drop for SelectBuf<U> {
 
 /// The ring-side state of every buffer group.
 ///
-/// A group lives until every [`SelectGroup`] handle is dropped and it has no
-/// users left. It then goes on the `dead` list and is unregistered and freed
-/// by [`BufGroups::free_dead`].
+/// A group lives until it has no users left. It then goes on the `dead` list
+/// and is unregistered and freed by [`BufGroups::free_dead`].
 pub struct BufGroups {
     groups: Slab<BufGroup>,
     dead: Vec<BufGroupId>,
@@ -198,12 +197,9 @@ struct BufGroup<A: Allocator = Global> {
     /// `count * size` bytes, buffer `bid` at offset `bid * size`.
     mem: NonNull<u8>,
 
-    /// In-flight ops that may pick a buffer, plus live `SelectBuf`s. The
-    /// memory can't be freed while either exists.
+    /// Live `SelectGroup` handles, in-flight ops that may pick a buffer, and
+    /// live `SelectBuf`s. The memory can't be freed while any of them exists.
     users: u32,
-    /// Live `SelectGroup` handles. Once they are all gone, buffers are no longer
-    /// put back in the ring.
-    handles: u32,
 
     alloc: A,
 }
@@ -234,8 +230,7 @@ impl<A: Allocator> BufGroup<A> {
             size,
             count,
             mem,
-            users: 0,
-            handles: 1,
+            users: 1,
             alloc,
         };
 
@@ -287,8 +282,8 @@ impl Drop for BufGroups {
     fn drop(&mut self) {
         for group in self.groups.drain() {
             // an op in flight may still pick (and write) one of its buffers,
-            // or a `SelectBuf` still points into it: leak both the buffers
-            // and the ring the kernel picks them from
+            // or a `SelectBuf` or handle still points into it: leak both the
+            // buffers and the ring the kernel picks them from
             if group.users > 0 {
                 mem::forget(group);
             }
@@ -342,7 +337,8 @@ impl BufGroups {
         Ok(id)
     }
 
-    /// An op that may pick a buffer from the group was submitted.
+    /// A `SelectGroup` handle was cloned, or an op that may pick a buffer from
+    /// the group was submitted.
     pub fn acquire(&mut self, id: BufGroupId) {
         self.get(id).users += 1;
     }
@@ -355,37 +351,22 @@ impl BufGroups {
         group.buf(bid)
     }
 
-    /// An op or `SelectBuf` is done with the group.
+    /// A handle, op or `SelectBuf` is done with the group.
     pub fn release(&mut self, id: BufGroupId) {
         self.get(id).users -= 1;
         self.mark_if_dead(id);
     }
 
-    /// Puts buffer `bid` back in the ring, unless every handle is gone.
+    /// Puts buffer `bid` back in the ring.
     pub fn recycle(&mut self, id: BufGroupId, bid: BufId) {
-        let group = self.get(id);
-        if group.handles > 0 {
-            group.recycle(bid);
-        }
+        self.get(id).recycle(bid);
     }
 
-    /// A `SelectGroup` handle was cloned.
-    pub fn clone_handle(&mut self, id: BufGroupId) {
-        self.get(id).handles += 1;
-    }
-
-    /// A `SelectGroup` handle was dropped.
-    pub fn drop_handle(&mut self, id: BufGroupId) {
-        self.get(id).handles -= 1;
-        self.mark_if_dead(id);
-    }
-
-    /// Queues the group for [`Self::free_dead`] once it has neither handles
-    /// nor users. Each happens exactly once, since nothing can bring either
-    /// count back up after that.
+    /// Queues the group for [`Self::free_dead`] once it has no users. This
+    /// happens exactly once, since nothing can bring the count back up after
+    /// that.
     fn mark_if_dead(&mut self, id: BufGroupId) {
-        let group = self.get(id);
-        if group.handles == 0 && group.users == 0 {
+        if self.get(id).users == 0 {
             self.dead.push(id);
         }
     }
