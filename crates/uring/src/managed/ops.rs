@@ -176,14 +176,14 @@ unsafe impl<U: UringProxy, B: IoBuf, O: Offset> SingleOp<U> for Write<'_, B, O> 
 ///
 /// Fails with `ENOBUFS` if the group has no free buffer at that point; on
 /// pollable fds nothing was read then, so the read can simply be retried.
-pub struct ReadSelect<'a, U: UringProxy, O: Offset = Current> {
+pub struct ReadSelect<'a, O: Offset = Current> {
     src: RawSrc<'a>,
-    group: SelectGroup<U>,
+    group: SelectGroup,
     offset: O,
 }
 
-impl<'a, U: UringProxy> ReadSelect<'a, U> {
-    pub fn new(src: &'a impl IoSrc, group: &SelectGroup<U>) -> Self {
+impl<'a> ReadSelect<'a> {
+    pub fn new(src: &'a impl IoSrc, group: &SelectGroup) -> Self {
         Self {
             src: src.raw_src(),
             group: group.clone(),
@@ -192,8 +192,8 @@ impl<'a, U: UringProxy> ReadSelect<'a, U> {
     }
 }
 
-impl<'a, U: UringProxy> ReadSelect<'a, U, At> {
-    pub fn new_at(src: &'a impl IoSrc, group: &SelectGroup<U>, offset: usize) -> Self {
+impl<'a> ReadSelect<'a, At> {
+    pub fn new_at(src: &'a impl IoSrc, group: &SelectGroup, offset: usize) -> Self {
         Self {
             src: src.raw_src(),
             group: group.clone(),
@@ -204,7 +204,7 @@ impl<'a, U: UringProxy> ReadSelect<'a, U, At> {
 
 // SAFETY: the SQE references no memory, the kernel picks a buffer from the
 // group, whose handle is handed over on cancel
-unsafe impl<U: UringProxy, O: Offset> Op for ReadSelect<'_, U, O> {
+unsafe impl<O: Offset> Op for ReadSelect<'_, O> {
     fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
         let size = self.group.buffer_size();
         let offset = self.offset.position();
@@ -219,8 +219,8 @@ unsafe impl<U: UringProxy, O: Offset> Op for ReadSelect<'_, U, O> {
 }
 
 // SAFETY: a plain (not multishot) read, one CQE
-unsafe impl<U: UringProxy, O: Offset> SingleOp<U> for ReadSelect<'_, U, O> {
-    type Output = Result<SelectBuf<U>, Errno>;
+unsafe impl<U: UringProxy, O: Offset> SingleOp<U> for ReadSelect<'_, O> {
+    type Output = Result<SelectBuf, Errno>;
 
     fn result(self, cqe: CompletionResult, _: &U) -> Self::Output {
         match (expect_positive(&cqe), cqe.buffer_id()) {

@@ -1,14 +1,13 @@
-use core::{ptr::NonNull, task::Waker};
+use core::task::Waker;
 use std::rc::Rc;
 
 use rustix::io::Errno;
 
 use crate::{
     managed::{
-        Uring,
+        SelectGroup, Uring,
         cancellation::Cancellation,
         completion::{CompletionResult, Key},
-        group::{BufGroupId, BufId},
         submission::{MultiOp, SingleOp},
     },
     sys::Sqe,
@@ -111,28 +110,8 @@ pub(crate) trait UringProxyExt: UringProxy {
     }
 
     /// Allocates and registers a group of `count` buffers of `size` bytes.
-    fn create_buf_group(&self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
+    fn create_buf_group(&self, count: u16, size: u32) -> Result<SelectGroup, Errno> {
         self.with(|uring| uring.create_buf_group(count, size))
-    }
-
-    /// A handle to the group was cloned.
-    fn clone_buf_group(&self, id: BufGroupId) {
-        self.with(|uring| uring.clone_buf_group(id))
-    }
-
-    /// A handle to the group was dropped.
-    fn drop_buf_group(&self, id: BufGroupId) {
-        self.with(|uring| uring.drop_buf_group(id))
-    }
-
-    /// Hands out buffer `bid` of group `id`.
-    fn take_buf(&self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
-        self.with(|uring| uring.take_buf(id, bid))
-    }
-
-    /// Puts a buffer from [`Self::take_buf`] back in its group.
-    fn return_buf(&self, id: BufGroupId, bid: BufId) {
-        self.with(|uring| uring.return_buf(id, bid))
     }
 }
 

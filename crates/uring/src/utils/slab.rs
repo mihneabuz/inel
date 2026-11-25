@@ -187,21 +187,11 @@ impl<T, A: Allocator> Slab<T, A> {
         }
     }
 
-    pub fn insert(&mut self, value: T) -> u32 {
-        let key = self.free;
-
-        if key as usize == self.slots.len() {
-            self.slots.push(Entry::Occupied(value));
-            self.free = key + 1;
-        } else {
-            self.free = match self.slots.get(key as usize) {
-                Some(Entry::Vacant(next)) => *next,
-                _ => unreachable!(),
-            };
-            self.slots[key as usize] = Entry::Occupied(value);
-        };
-
-        key
+    pub const fn vacant_entry(&mut self) -> VacantEntry<'_, T, A> {
+        VacantEntry {
+            key: self.free,
+            slab: self,
+        }
     }
 
     pub fn remove(&mut self, key: u32) -> T {
@@ -214,10 +204,10 @@ impl<T, A: Allocator> Slab<T, A> {
         }
     }
 
-    pub fn get_mut(&mut self, key: u32) -> &mut T {
+    pub fn get_mut(&mut self, key: u32) -> Option<&mut T> {
         match &mut self.slots[key as usize] {
-            Entry::Occupied(value) => value,
-            Entry::Vacant(_) => panic!("tried to access vacant entry"),
+            Entry::Occupied(value) => Some(value),
+            Entry::Vacant(_) => None,
         }
     }
 
@@ -227,6 +217,37 @@ impl<T, A: Allocator> Slab<T, A> {
             Entry::Occupied(value) => Some(value),
             Entry::Vacant(_) => None,
         })
+    }
+}
+
+pub struct VacantEntry<'a, T, A: Allocator = Global> {
+    slab: &'a mut Slab<T, A>,
+    key: u32,
+}
+
+impl<'a, T, A: Allocator> VacantEntry<'a, T, A> {
+    pub const fn key(&self) -> u32 {
+        self.key
+    }
+
+    pub fn insert(self, value: T) -> &'a mut T {
+        let Self { slab, key } = self;
+
+        if key as usize == slab.slots.len() {
+            slab.slots.push(Entry::Occupied(value));
+            slab.free = key + 1;
+        } else {
+            slab.free = match slab.slots[key as usize] {
+                Entry::Vacant(next) => next,
+                Entry::Occupied(_) => unreachable!(),
+            };
+            slab.slots[key as usize] = Entry::Occupied(value);
+        }
+
+        match &mut slab.slots[key as usize] {
+            Entry::Occupied(value) => value,
+            Entry::Vacant(_) => unreachable!(),
+        }
     }
 }
 

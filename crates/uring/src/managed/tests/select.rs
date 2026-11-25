@@ -15,12 +15,12 @@ use crate::managed::{
     tests::{BadFd, Nop, TestRing, TestWaker, block_on},
 };
 
-fn read(ring: &TestRing, src: &impl IoSrc, group: &SelectGroup<TestRing>) -> ReadResult {
+fn read(ring: &TestRing, src: &impl IoSrc, group: &SelectGroup) -> ReadResult {
     let fut = pin!(ReadSelect::new(src, group).run_on(ring.clone()));
     block_on(ring, fut)
 }
 
-type ReadResult = Result<SelectBuf<TestRing>, Errno>;
+type ReadResult = Result<SelectBuf, Errno>;
 
 /// Polls `fut` once, which submits it.
 fn submit<F: Future>(fut: Pin<&mut F>) {
@@ -32,7 +32,7 @@ fn submit<F: Future>(fut: Pin<&mut F>) {
 #[test]
 fn read_select() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(4, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(4, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"hello").unwrap();
 
@@ -43,7 +43,7 @@ fn read_select() {
 #[test]
 fn waits_for_data() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     let writer = thread::spawn(move || {
@@ -59,7 +59,7 @@ fn waits_for_data() {
 #[test]
 fn reads_at_most_one_buffer() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 4, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 4, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"abcdef").unwrap();
 
@@ -72,7 +72,7 @@ fn reads_at_most_one_buffer() {
 #[test]
 fn eof_gives_empty_buffer() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     drop(tx);
 
@@ -83,7 +83,7 @@ fn eof_gives_empty_buffer() {
 #[test]
 fn buffers_are_recycled() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     for i in 0..10 {
@@ -97,7 +97,7 @@ fn buffers_are_recycled() {
 #[test]
 fn held_buffers_are_not_reused() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(4, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(4, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     let held = (0..4)
@@ -115,7 +115,7 @@ fn held_buffers_are_not_reused() {
 #[test]
 fn concurrent_reads_get_different_buffers() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 16, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 16, &ring).unwrap();
     let (rx1, tx1) = pipe::pipe().unwrap();
     let (rx2, tx2) = pipe::pipe().unwrap();
 
@@ -136,8 +136,8 @@ fn concurrent_reads_get_different_buffers() {
 #[test]
 fn two_groups() {
     let ring = TestRing::new();
-    let small = SelectGroup::new(1, 2, ring.clone()).unwrap();
-    let big = SelectGroup::new(1, 16, ring.clone()).unwrap();
+    let small = SelectGroup::new(1, 2, &ring).unwrap();
+    let big = SelectGroup::new(1, 16, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"abcdef").unwrap();
 
@@ -148,7 +148,7 @@ fn two_groups() {
 #[test]
 fn no_buffers() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"one").unwrap();
 
@@ -164,7 +164,7 @@ fn no_buffers() {
 #[test]
 fn no_buffers_fails_without_waiting() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"one").unwrap();
     let _held = read(&ring, &rx, &group).unwrap();
@@ -176,7 +176,7 @@ fn no_buffers_fails_without_waiting() {
 #[test]
 fn bad_fd_keeps_buffer() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     assert_eq!(read(&ring, &BadFd, &group).err(), Some(Errno::BADF));
 
     let (rx, tx) = pipe::pipe().unwrap();
@@ -187,7 +187,7 @@ fn bad_fd_keeps_buffer() {
 #[test]
 fn write_only_fd() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     assert_eq!(read(&ring, &tx, &group).err(), Some(Errno::BADF));
 
@@ -200,7 +200,7 @@ fn write_only_fd() {
 #[cfg_attr(miri, ignore = "miri can't open directories")]
 fn error_after_pick_recycles_buffer() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let dir = rustix::fd::OwnedFd::from(std::fs::File::open(".").unwrap());
 
     // the kernel picks the buffer before the read fails, and hands it back
@@ -214,7 +214,7 @@ fn error_after_pick_recycles_buffer() {
 #[test]
 fn drop_blocked() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     submit(pin!(ReadSelect::new(&rx, &group).run_on(ring.clone())));
@@ -227,7 +227,7 @@ fn drop_blocked() {
 #[test]
 fn drop_in_flight() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 128, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 128, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, &[1; 64]).unwrap();
 
@@ -250,7 +250,7 @@ fn drop_in_flight() {
 #[test]
 fn drop_completed_unread() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"abc").unwrap();
 
@@ -272,7 +272,7 @@ fn drop_completed_unread() {
 #[test]
 fn drop_completed_unread_last_handle() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"abc").unwrap();
 
@@ -296,16 +296,16 @@ fn drop_completed_unread_last_handle() {
 #[test]
 fn drop_unsubmitted() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
-    drop(ReadSelect::new(&rx, &group).run_on(ring));
+    drop(ReadSelect::new(&rx, &group).run_on(&ring));
 }
 
 #[test]
 fn invalid_group() {
     let ring = TestRing::new();
     for (count, size) in [(0, 8), (1, 0), ((1 << 15) + 1, 8)] {
-        let group = SelectGroup::new(count, size, ring.clone());
+        let group = SelectGroup::new(count, size, &ring);
         assert_eq!(group.err(), Some(Errno::INVAL));
     }
 }
@@ -313,7 +313,7 @@ fn invalid_group() {
 #[test]
 fn clone_outlives_original() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let other = group.clone();
     drop(group);
 
@@ -327,25 +327,36 @@ fn clone_outlives_original() {
 #[test]
 fn buf_outlives_group() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
     io::write(&tx, b"abc").unwrap();
 
     let buf = read(&ring, &rx, &group).unwrap();
     drop(group);
     assert_eq!(&*buf, b"abc");
-    drop(buf);
+}
 
-    // the group was freed, and a new one can take its place
-    let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
-    io::write(&tx, b"xyz").unwrap();
-    assert_eq!(&*read(&ring, &rx, &group).unwrap(), b"xyz");
+#[test]
+#[cfg_attr(miri, ignore = "leaks the group on purpose")]
+fn buf_outlives_ring() {
+    let ring = TestRing::new();
+    let group = SelectGroup::new(2, 8, &ring).unwrap();
+    let (rx, tx) = pipe::pipe().unwrap();
+    io::write(&tx, b"abc").unwrap();
+
+    let buf = read(&ring, &rx, &group).unwrap();
+    drop(group);
+    ring.drain();
+    drop(ring);
+
+    // the buffer still holds a handle, so the ring leaked the group
+    assert_eq!(&*buf, b"abc");
 }
 
 #[test]
 fn op_outlives_group() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     // an op that was never submitted keeps the group alive too
@@ -360,7 +371,7 @@ fn op_outlives_group() {
 #[test]
 fn in_flight_op_outlives_group() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, tx) = pipe::pipe().unwrap();
 
     let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
@@ -375,7 +386,7 @@ fn in_flight_op_outlives_group() {
 #[test]
 fn group_dropped_with_blocked_op() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
 
     let mut fut = Box::pin(ReadSelect::new(&rx, &group).run_on(ring.clone()));
@@ -388,7 +399,7 @@ fn group_dropped_with_blocked_op() {
 #[test]
 fn cancelled_op_keeps_group_until_final_cqe() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(1, 8, &ring).unwrap();
     let gid = group.id();
     let (rx, _tx) = pipe::pipe().unwrap();
 
@@ -398,13 +409,13 @@ fn cancelled_op_keeps_group_until_final_cqe() {
     drop(fut);
 
     // the cancellation still holds the last handle, so the slot is taken
-    let other = SelectGroup::new(1, 8, ring.clone()).unwrap();
+    let other = SelectGroup::new(1, 8, &ring).unwrap();
     assert_ne!(other.id(), gid);
     drop(other);
 
     // the final CQE drops the cancellation from inside `wait`, and the group
     // is freed at the end of it
     ring.drain();
-    let reused = SelectGroup::new(1, 8, ring).unwrap();
+    let reused = SelectGroup::new(1, 8, &ring).unwrap();
     assert_eq!(reused.id(), gid);
 }

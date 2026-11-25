@@ -1,5 +1,6 @@
 use core::{
     alloc::Layout,
+    cell::Cell,
     ffi::{c_char, c_void},
     mem, ptr,
     ptr::NonNull,
@@ -836,7 +837,9 @@ impl IoUring {
 pub struct IoBufRing<A: Allocator = Global> {
     ptr: NonNull<u8>,
     mask: u16,
-    tail: u16,
+    /// Our copy of the tail, published to the kernel by `advance`. The kernel
+    /// never sees this field, only the ring memory.
+    tail: Cell<u16>,
     alloc: A,
 }
 
@@ -864,7 +867,7 @@ impl<A: Allocator> IoBufRing<A> {
         Self {
             ptr: ptr.cast(),
             mask: capacity - 1,
-            tail: 0,
+            tail: Cell::new(0),
             alloc,
         }
     }
@@ -879,8 +882,9 @@ impl<A: Allocator> IoBufRing<A> {
     /// # Safety
     /// `buf` must live until either the `BufRing` is unregistered or it is
     /// used by the kernel to service an opcode.
-    pub const unsafe fn add(&mut self, bid: u16, buf: *mut u8, len: u32) {
-        let slot = (self.tail & self.mask) as usize;
+    pub unsafe fn add(&self, bid: u16, buf: *mut u8, len: u32) {
+        let tail = self.tail.get();
+        let slot = (tail & self.mask) as usize;
 
         // Write the fields through raw pointers: `resv` of the first entry is
         // the tail, which the kernel reads concurrently, so neither a
@@ -892,13 +896,13 @@ impl<A: Allocator> IoBufRing<A> {
             (&raw mut (*entry).bid).write(bid);
         }
 
-        self.tail = self.tail.wrapping_add(1);
+        self.tail.set(tail.wrapping_add(1));
     }
 
     /// Advances the tail of the queue to make any previously added buffers
     /// visible to the kernel
-    pub fn advance(&mut self) {
-        self.tail().store(self.tail, Ordering::Release);
+    pub fn advance(&self) {
+        self.tail().store(self.tail.get(), Ordering::Release);
     }
 
     const fn base_addr(&self) -> NonNull<io_uring_buf> {

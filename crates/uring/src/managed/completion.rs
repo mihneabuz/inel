@@ -68,6 +68,47 @@ impl CompletionResult {
     }
 }
 
+const CREATES_FD: u8 = 1;
+const CREATES_DIRECT_FD: u8 = 1 << 1;
+
+pub struct Hints {
+    flags: u8,
+    gid: Option<BufGroupId>,
+}
+
+impl Hints {
+    pub fn empty() -> Self {
+        Self {
+            flags: 0,
+            gid: None,
+        }
+    }
+
+    pub fn set_creates_fd(&mut self) {
+        self.flags |= CREATES_FD;
+    }
+
+    pub fn creates_fd(&self) -> bool {
+        self.flags & CREATES_FD != 0
+    }
+
+    pub fn set_creates_direct_fd(&mut self) {
+        self.flags |= CREATES_DIRECT_FD;
+    }
+
+    pub fn creates_direct_fd(&self) -> bool {
+        self.flags & CREATES_DIRECT_FD != 0
+    }
+
+    pub fn set_uses_group_id(&mut self, gid: BufGroupId) {
+        self.gid = Some(gid);
+    }
+
+    pub fn uses_group_id(&self) -> Option<BufGroupId> {
+        self.gid
+    }
+}
+
 /// Identifies a submitted op.
 ///
 /// It contains the key to the [`Completions`] slab and it's also written into the

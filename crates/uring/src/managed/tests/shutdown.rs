@@ -67,7 +67,7 @@ fn waits_for_dropped_ops() {
 #[test]
 fn frees_groups_after_shutdown() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 8, &ring).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
     {
         let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));
@@ -82,7 +82,7 @@ fn frees_groups_after_shutdown() {
 #[cfg_attr(miri, ignore = "leaks the group on purpose")]
 fn drop_without_shutdown_leaks_groups_in_use() {
     let ring = TestRing::new();
-    let group = SelectGroup::new(2, 8, ring.clone()).unwrap();
+    let group = SelectGroup::new(2, 8, &ring).unwrap();
     let (rx, _tx) = pipe::pipe().unwrap();
     {
         let mut fut = pin!(ReadSelect::new(&rx, &group).run_on(ring.clone()));

@@ -1,9 +1,11 @@
 use core::{mem, slice};
 use std::{
     alloc::{Layout, handle_alloc_error},
+    cell::{Cell, RefCell},
     num::NonZeroU16,
     ops::Deref,
     ptr::NonNull,
+    rc::Rc,
 };
 
 use allocator_api2::alloc::{Allocator, Global};
@@ -73,18 +75,17 @@ impl BufId {
 /// into the group when those are dropped.
 ///
 /// Cloning gives another handle to the same group, so it can be shared between
-/// tasks without an `Rc`. The memory is owned by the ring and outlives the
-/// handles: it is only freed once every handle (including the ones held by
-/// ops that may still pick a buffer) and every [`SelectBuf`] is gone.
-pub struct SelectGroup<U: UringProxy> {
-    gid: BufGroupId,
-    size: u32,
-    uring: U,
+/// tasks without an `Rc`. Once every handle (including the ones held by ops
+/// that may still pick a buffer) and every [`SelectBuf`] is gone, the ring
+/// unregisters and frees the group.
+#[derive(Clone)]
+pub struct SelectGroup {
+    handle: Rc<BufGroupHandle>,
 }
 
-impl<U: UringProxy> SelectGroup<U> {
+impl SelectGroup {
     /// Allocates `count` buffers of `size` bytes each and registers them with
-    /// the ring as a new group.
+    /// `uring`'s ring as a new group.
     ///
     /// Fails with `EINVAL` if `count` or `size` is 0 or `count` is above
     /// 32768, with `ENOMEM` if the total size overflows, or with whatever the
@@ -92,19 +93,18 @@ impl<U: UringProxy> SelectGroup<U> {
     ///
     /// # Panics
     /// If the ring already has `u16::MAX` groups.
-    pub fn new(count: u16, size: u32, uring: U) -> Result<Self, Errno> {
-        let gid = uring.create_buf_group(count, size)?;
-        Ok(Self { gid, size, uring })
+    pub fn new<U: UringProxy>(count: u16, size: u32, uring: &U) -> Result<Self, Errno> {
+        uring.create_buf_group(count, size)
     }
 
     /// The size of every buffer in the group, and so the most a single
     /// buffer-select read can return.
-    pub const fn buffer_size(&self) -> u32 {
-        self.size
+    pub fn buffer_size(&self) -> u32 {
+        self.handle.size
     }
 
-    pub(crate) const fn id(&self) -> BufGroupId {
-        self.gid
+    pub(crate) fn id(&self) -> BufGroupId {
+        self.handle.gid
     }
 
     /// Takes ownership of buffer `bid`, which holds `len` bytes the kernel
@@ -115,54 +115,36 @@ impl<U: UringProxy> SelectGroup<U> {
     /// be taken only once per CQE. `len` must be at most
     /// [`Self::buffer_size`], and the first `len` bytes must be initialized,
     /// i.e. `len` is the CQE's result (or 0).
-    pub(crate) unsafe fn take(&self, bid: BufId, len: usize) -> SelectBuf<U> {
-        let ptr = self.uring.take_buf(self.gid, bid);
+    pub(crate) unsafe fn take(self, bid: BufId, len: usize) -> SelectBuf {
         SelectBuf {
-            uring: self.uring.clone(),
-            gid: self.gid,
+            ptr: self.handle.buf(bid),
+            handle: self.handle,
             bid,
-            ptr,
             len,
         }
     }
 }
 
-impl<U: UringProxy> Clone for SelectGroup<U> {
-    fn clone(&self) -> Self {
-        self.uring.clone_buf_group(self.gid);
-        Self {
-            gid: self.gid,
-            size: self.size,
-            uring: self.uring.clone(),
-        }
-    }
-}
-
-impl<U: UringProxy> Drop for SelectGroup<U> {
-    fn drop(&mut self) {
-        self.uring.drop_buf_group(self.gid);
-    }
-}
-
 /// Keeps the group alive until the cancelled op's final CQE, since the kernel
 /// may still pick a buffer from it until then.
-impl<U: UringProxy> From<SelectGroup<U>> for Cancellation {
-    fn from(group: SelectGroup<U>) -> Self {
-        Box::new(group).into()
+impl From<SelectGroup> for Cancellation {
+    fn from(group: SelectGroup) -> Self {
+        group.handle.into()
     }
 }
 
 /// A buffer picked by the kernel from a [`SelectGroup`], holding the bytes it
 /// read. Dropping it returns the buffer to the group.
-pub struct SelectBuf<U: UringProxy> {
-    uring: U,
-    gid: BufGroupId,
+pub struct SelectBuf {
+    handle: Rc<BufGroupHandle>,
     bid: BufId,
+    /// The start of the buffer, kept here so reading it doesn't go through
+    /// the `Rc`.
     ptr: NonNull<u8>,
     len: usize,
 }
 
-impl<U: UringProxy> SelectBuf<U> {
+impl SelectBuf {
     /// Returns the buffer to its group, so the kernel can pick it again. Same
     /// as dropping it.
     pub fn release(self) {
@@ -170,29 +152,50 @@ impl<U: UringProxy> SelectBuf<U> {
     }
 }
 
-impl<U: UringProxy> Deref for SelectBuf<U> {
+impl Deref for SelectBuf {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        // SAFETY: the buffer is ours until dropped, and the memory stays
-        // allocated while we hold it
+        // SAFETY: the buffer is ours until dropped, the memory stays allocated
+        // while we hold the group, and its first `len` bytes were written
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
-impl<U: UringProxy> Drop for SelectBuf<U> {
+impl Drop for SelectBuf {
     fn drop(&mut self) {
-        self.uring.return_buf(self.gid, self.bid);
+        self.handle.group.recycle(self.bid);
     }
 }
 
-/// The ring-side state of every buffer group.
+/// What every user of a group shares: [`SelectGroup`]s, the ops and
+/// [`Cancellation`]s holding one, and [`SelectBuf`]s. Once the last of them is
+/// gone, no op can pick from the group anymore, so dropping it queues the
+/// group to be unregistered and freed by the ring.
 ///
-/// A group lives until it has no users left. It then goes on the `dead` list
-/// and is unregistered and freed by [`BufGroups::free_dead`].
-pub struct BufGroups {
-    groups: Slab<BufGroup>,
-    dead: Vec<BufGroupId>,
+/// Copies the fields ops need, so building an SQE or taking a buffer doesn't
+/// go through to the [`BufGroup`].
+struct BufGroupHandle {
+    gid: BufGroupId,
+    size: u32,
+    mem: NonNull<u8>,
+
+    group: Rc<BufGroup>,
+    dead: Rc<DeadList>,
+}
+
+impl BufGroupHandle {
+    /// The start of buffer `bid`. Same as [`BufGroup::buf`].
+    const fn buf(&self, bid: BufId) -> NonNull<u8> {
+        // SAFETY: see `BufGroup::buf`
+        unsafe { self.mem.add(bid.as_raw() as usize * self.size as usize) }
+    }
+}
+
+impl Drop for BufGroupHandle {
+    fn drop(&mut self) {
+        self.dead.push(self.gid);
+    }
 }
 
 /// One group: its buffer ring and the memory of all its buffers.
@@ -204,12 +207,6 @@ struct BufGroup<A: Allocator = Global> {
 
     /// `count * size` bytes, buffer `bid` at offset `bid * size`.
     mem: NonNull<u8>,
-
-    /// Live `SelectGroup` handles and `SelectBuf`s. An op that may pick a
-    /// buffer holds a handle until its final CQE, even when cancelled. The
-    /// memory can't be freed while any of them exists.
-    users: u32,
-
     alloc: A,
 }
 
@@ -234,23 +231,17 @@ impl<A: Allocator> BufGroup<A> {
             .unwrap_or_else(|_| handle_alloc_error(layout))
             .cast::<u8>();
 
-        let mut group = Self {
+        let group = Self {
             ring: IoBufRing::new(count),
-            size,
             count,
+            size,
             mem,
-            users: 1,
             alloc,
         };
 
         for bid in (0..count).map(BufId::from_raw) {
-            let buf = group.buf(bid);
-
-            // SAFETY: the memory lives as long as the group
-            unsafe { group.ring.add(bid.as_raw(), buf.as_ptr(), size) };
+            group.recycle(bid);
         }
-
-        group.ring.advance();
 
         Ok(group)
     }
@@ -269,7 +260,7 @@ impl<A: Allocator> BufGroup<A> {
     }
 
     /// Puts buffer `bid` back in the ring and makes it visible to the kernel.
-    fn recycle(&mut self, bid: BufId) {
+    fn recycle(&self, bid: BufId) {
         let buf = self.buf(bid);
         // SAFETY: the memory lives as long as the group, which stays
         // registered until it is freed
@@ -287,106 +278,123 @@ impl<A: Allocator> Drop for BufGroup<A> {
     }
 }
 
-impl Drop for BufGroups {
-    fn drop(&mut self) {
-        for group in self.groups.drain() {
-            // an op in flight may still pick (and write) one of its buffers,
-            // or a `SelectBuf` or handle still points into it: leak both the
-            // buffers and the ring the kernel picks them from
-            if group.users > 0 {
-                mem::forget(group);
-            }
+/// List of gids for groups whose last [`BufGroupHandle`] was dropped.
+///
+/// Once it is in this list, we know there are no more outside users of this group, so
+/// we can unregister it and free the memory.
+struct DeadList {
+    queue: RefCell<Vec<BufGroupId>>,
+    empty: Cell<bool>,
+}
+
+impl DeadList {
+    const fn new() -> Self {
+        Self {
+            queue: RefCell::new(Vec::new()),
+            empty: Cell::new(true),
         }
     }
+
+    /// Mark the group with `gid` as dead.
+    fn push(&self, gid: BufGroupId) {
+        self.queue.borrow_mut().push(gid);
+        self.empty.set(false);
+    }
+
+    /// Calls `f` on every queued group, emptying the queue.
+    fn pop_for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(BufGroupId),
+    {
+        if self.empty.replace(true) {
+            return;
+        }
+
+        let mut queue = self.queue.borrow_mut();
+        for gid in queue.drain(..) {
+            f(gid)
+        }
+    }
+}
+
+/// Registry of active buffer groups.
+///
+/// The groups slab is keyed by the gid, and the dead list contains the gid of groups
+/// whose last [`BufGroupHandle`] was dropped, meaning no outside users exist anymore.
+pub struct BufGroups {
+    groups: Slab<Rc<BufGroup>>,
+    dead: Rc<DeadList>,
 }
 
 impl BufGroups {
     pub fn new() -> Self {
         Self {
             groups: Slab::new(),
-            dead: Vec::with_capacity(16),
+            dead: Rc::new(DeadList::new()),
         }
+    }
+
+    /// Allocates and registers a new group with `count` number of `size` buffers.
+    ///
+    /// # Panics
+    /// If there are already `u16::MAX` groups.
+    pub fn create(&mut self, count: u16, size: u32, ring: &IoUring) -> Result<SelectGroup, Errno> {
+        let entry = self.groups.vacant_entry();
+        let gid = BufGroupId::from_slot(entry.key()).expect("cannot create more buffer groups");
+
+        let group = BufGroup::new(count, size)?;
+
+        // SAFETY: the group is only freed by `Self::cleanup_dead`, which
+        // unregisters it first
+        unsafe { ring.register_buf_ring(&group.ring, gid.as_raw(), 0)? };
+
+        let group = entry.insert(Rc::new(group)).clone();
+
+        let handle = BufGroupHandle {
+            gid,
+            size,
+            mem: group.mem,
+            group,
+            dead: self.dead.clone(),
+        };
+
+        Ok(SelectGroup {
+            handle: Rc::new(handle),
+        })
     }
 
     /// Puts the buffer of a result nobody will read (its op was cancelled)
     /// back in the ring.
     pub fn handle_lost(&mut self, key: &Key, result: &CompletionResult) {
-        if let (Some(gid), Some(bid)) = (key.group_id(), result.buffer_id()) {
-            self.recycle(gid, bid);
+        if let (Some(gid), Some(bid)) = (key.group_id(), result.buffer_id())
+            && let Some(group) = self.groups.get_mut(gid.as_slot())
+        {
+            group.recycle(bid);
         }
     }
 
-    fn get(&mut self, id: BufGroupId) -> &mut BufGroup {
-        self.groups.get_mut(id.as_slot())
-    }
-
-    /// Allocates a group with every buffer in its ring. It still has to be
-    /// registered with [`Self::register_or_drop`].
+    /// Unregisters and frees every group whose last handle was dropped.
     ///
-    /// # Panics
-    /// If there are already `u16::MAX` groups.
-    pub fn insert(&mut self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
-        let group = BufGroup::new(count, size)?;
+    /// Must not run between a cancelled op's final CQE dropping its handle and
+    /// [`Self::handle_lost`] recycling that CQE's buffer.
+    pub fn cleanup_dead(&mut self, ring: &IoUring) {
+        self.dead.pop_for_each(|gid| {
+            let group = self.groups.remove(gid.as_slot());
+            debug_assert_eq!(Rc::strong_count(&group), 1);
 
-        let id = BufGroupId::from_slot(self.groups.insert(group))
-            .expect("cannot create more buffer groups");
-
-        Ok(id)
-    }
-
-    /// A `SelectGroup` handle was cloned.
-    pub fn acquire(&mut self, id: BufGroupId) {
-        self.get(id).users += 1;
-    }
-
-    /// Hands buffer `bid` out to a `SelectBuf`, which counts as a user until
-    /// it is returned.
-    pub fn take(&mut self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
-        let group = self.get(id);
-        group.users += 1;
-        group.buf(bid)
-    }
-
-    /// A handle or `SelectBuf` is done with the group.
-    pub fn release(&mut self, id: BufGroupId) {
-        self.get(id).users -= 1;
-        self.mark_if_dead(id);
-    }
-
-    /// Puts buffer `bid` back in the ring.
-    pub fn recycle(&mut self, id: BufGroupId, bid: BufId) {
-        self.get(id).recycle(bid);
-    }
-
-    /// Queues the group for [`Self::free_dead`] once it has no users. This
-    /// happens exactly once, since nothing can bring the count back up after
-    /// that.
-    fn mark_if_dead(&mut self, id: BufGroupId) {
-        if self.get(id).users == 0 {
-            self.dead.push(id);
-        }
-    }
-
-    /// Registers the ring of a freshly inserted group with the kernel. If that
-    /// fails, the group is removed and freed right away; nothing can be using
-    /// it yet.
-    pub fn register_or_drop(&mut self, id: BufGroupId, ring: &IoUring) -> Result<(), Errno> {
-        let buf_ring = &self.get(id).ring;
-
-        if let Err(err) = unsafe { ring.register_buf_ring(buf_ring, id.as_raw(), 0) } {
-            drop(self.groups.remove(id.as_slot()));
-            Err(err)
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Unregisters and frees every dead group. Unregistering first means the
-    /// kernel can't pick from a ring whose memory is gone.
-    pub fn free_dead(&mut self, ring: &IoUring) {
-        for gid in self.dead.drain(..) {
+            // SAFETY: no handle is left, so no op can pick a buffer from it
+            // and no `SelectBuf` holds one
             let _ = unsafe { ring.unregister_buf_ring(gid.as_raw()) };
-            drop(self.groups.remove(gid.as_slot()))
+        })
+    }
+
+    /// Frees every dead group, and leaks the rest: both the buffers and the
+    /// ring the kernel picks them from, since an op still in flight may hold a
+    /// handle and pick (and write) one of its buffers.
+    pub fn leak_alive(&mut self, ring: &IoUring) {
+        self.cleanup_dead(ring);
+        for group in self.groups.drain() {
+            mem::forget(group);
         }
     }
 }

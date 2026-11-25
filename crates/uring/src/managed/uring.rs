@@ -1,13 +1,13 @@
-use core::{cell::RefCell, ptr::NonNull, task::Waker};
+use core::{cell::RefCell, task::Waker};
 
 use rustix::{io::Errno, io_uring::IoringAsyncCancelFlags};
 
 use crate::{
     managed::{
-        UringProxy,
+        SelectGroup, UringProxy,
         cancellation::Cancellation,
         completion::{CompletionResult, Completions, Key, mark_detached, parse_cqe},
-        group::{BufGroupId, BufGroups, BufId},
+        group::BufGroups,
         submission::{MultiOp, Op, Scratch, SingleOp},
     },
     sys::{IoUring, Sqe},
@@ -105,8 +105,8 @@ impl UringOptions {
                 comp,
                 active: 0,
                 scratch: Scratch::default(),
+                groups: BufGroups::new(),
             }),
-            groups: RefCell::new(BufGroups::new()),
         })
     }
 }
@@ -121,21 +121,16 @@ impl UringOptions {
 /// Most other types and APIs should not use [`Uring`] directly, but instead prefer to be
 /// generic over the [`UringProxy`] trait, which allows users to define their own logic to
 /// provide access to the actual [`Uring`] instance.
-///
-/// The buffer groups are kept apart from the rest, so a [`Cancellation`] dropped while
-/// the ring is busy (e.g. from [`Self::wait`]) can still release the group handles and
-/// buffers it holds.
 pub struct Uring {
     core: RefCell<Core>,
-    groups: RefCell<BufGroups>,
 }
 
-/// Everything in [`Uring`] except the buffer groups.
 struct Core {
     ring: IoUring,
     comp: Completions,
     active: u32,
     scratch: Scratch,
+    groups: BufGroups,
 }
 
 impl Core {
@@ -246,14 +241,11 @@ impl Uring {
         self.core.borrow_mut().comp.result(key)
     }
 
-    /// The `handle` may hold group handles or buffers, so it can be dropped here
-    /// while `groups` is free: missed results only borrow it one at a time.
     pub(crate) fn cancel(&self, key: &Key, handle: Cancellation, entry: bool) {
         let mut core = self.core.borrow_mut();
+        let Core { comp, groups, .. } = &mut *core;
 
-        let pending = core.comp.cancel(key, handle, |missed| {
-            self.groups.borrow_mut().handle_lost(key, &missed);
-        });
+        let pending = comp.cancel(key, handle, |missed| groups.handle_lost(key, &missed));
 
         if pending && entry {
             // SAFETY: the cancel only carries the key, it references no memory
@@ -272,6 +264,7 @@ impl Uring {
             comp,
             active,
             scratch,
+            groups,
         } = &mut *core;
 
         ring.submit_and_wait(1).expect(Self::FAILED_TO_ENTER_ERROR);
@@ -281,24 +274,20 @@ impl Uring {
                 return;
             };
 
-            // may drop a `Cancellation`, which can release group handles and
-            // buffers, so `groups` must not be borrowed here
             let stored = comp.notify(&key, result);
 
             if !result.has_more() {
                 *active -= 1;
             }
 
-            // a group released above is only freed below, so the buffer can
-            // still be recycled into it
             if !stored {
-                self.groups.borrow_mut().handle_lost(&key, &result);
+                groups.handle_lost(&key, &result);
             }
         });
 
         scratch.reset();
 
-        self.groups.borrow_mut().free_dead(ring);
+        groups.cleanup_dead(ring);
     }
 
     pub fn shutdown(&self) {
@@ -313,43 +302,17 @@ impl Uring {
         }
     }
 
-    pub(crate) fn create_buf_group(&self, count: u16, size: u32) -> Result<BufGroupId, Errno> {
-        let mut groups = self.groups.borrow_mut();
-        let id = groups.insert(count, size)?;
-        groups.register_or_drop(id, &self.core.borrow().ring)?;
-        Ok(id)
-    }
-
-    pub(crate) fn clone_buf_group(&self, id: BufGroupId) {
-        self.groups.borrow_mut().acquire(id);
-    }
-
-    /// Releases a group handle. If the ring is busy (the handle was dropped from a
-    /// [`Cancellation`] in [`Self::wait`] or [`Self::cancel`]), a dead group is only
-    /// freed by the next [`Self::wait`].
-    pub(crate) fn drop_buf_group(&self, id: BufGroupId) {
-        let mut groups = self.groups.borrow_mut();
-        groups.release(id);
-        if let Ok(core) = self.core.try_borrow() {
-            groups.free_dead(&core.ring);
-        }
-    }
-
-    pub(crate) fn take_buf(&self, id: BufGroupId, bid: BufId) -> NonNull<u8> {
-        self.groups.borrow_mut().take(id, bid)
-    }
-
-    pub(crate) fn return_buf(&self, id: BufGroupId, bid: BufId) {
-        let mut groups = self.groups.borrow_mut();
-        groups.recycle(id, bid);
-        groups.release(id);
+    pub(crate) fn create_buf_group(&self, count: u16, size: u32) -> Result<SelectGroup, Errno> {
+        let core = &mut *self.core.borrow_mut();
+        core.groups.create(count, size, &core.ring)
     }
 }
 
 impl Drop for Uring {
     fn drop(&mut self) {
-        let ring = &self.core.get_mut().ring;
-        let _ = ring.unregister_buffers();
-        let _ = ring.unregister_files();
+        let core = self.core.get_mut();
+        core.groups.leak_alive(&core.ring);
+        let _ = core.ring.unregister_buffers();
+        let _ = core.ring.unregister_files();
     }
 }
