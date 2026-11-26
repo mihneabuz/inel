@@ -1,19 +1,17 @@
 use core::task::Waker;
 
-use crate::{
-    managed::{
-        cancellation::Cancellation,
-        completion::{Completions, Key},
-        tests::{TestWaker, dropped, flag, ok, ok_more},
-    },
-    sys::Sqe,
+use crate::managed::{
+    cancellation::Cancellation,
+    completion::Completions,
+    key::Key,
+    tests::{TestWaker, dropped, flag, ok, ok_more},
 };
 
-/// Inserts a single-shot entry for an SQE that never reaches a ring.
+/// Inserts a single-shot entry for an op that never reaches a ring.
 fn insert_single(comp: &mut Completions, waker: Waker) -> Key {
     // SAFETY: no kernel posts for it, and the tests deliver at most one result
     // to each single-shot entry
-    unsafe { comp.insert_single(&mut Sqe::zeroed(), waker) }
+    unsafe { comp.insert_single(waker) }
 }
 
 #[test]
@@ -60,7 +58,7 @@ fn multi_completion_stream() {
     let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
-    let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());
+    let key = comp.insert_multi(tw.waker());
 
     comp.notify(&key, ok_more(1));
     assert!(tw.was_woken());
@@ -114,7 +112,7 @@ fn cancel_pending_multi() {
     let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
-    let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());
+    let key = comp.insert_multi(tw.waker());
     comp.notify(&key, ok_more(1));
 
     let handle: Cancellation = Box::new(tracked).into();
@@ -169,7 +167,7 @@ fn cancel_multi_waits_for_final_completion() {
     let mut comp = Completions::with_capacity(16);
     let tw = TestWaker::new();
 
-    let key = comp.insert_multi(&mut Sqe::zeroed(), tw.waker());
+    let key = comp.insert_multi(tw.waker());
     let handle: Cancellation = Box::new(tracked).into();
     assert!(comp.cancel(&key, handle, |_| {}));
 

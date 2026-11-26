@@ -7,7 +7,8 @@ use crate::{
     managed::{
         SelectGroup, Uring,
         cancellation::Cancellation,
-        completion::{CompletionResult, Key},
+        completion::CompletionResult,
+        key::Key,
         submission::{MultiOp, SingleOp},
     },
     sys::Sqe,
@@ -76,7 +77,7 @@ unsafe impl<U: UringProxy> UringProxy for &U {
 }
 
 /// Extension trait containing crate-private functions used by managed types.
-pub(crate) trait UringProxyExt: UringProxy {
+pub trait UringProxyExt: UringProxy {
     /// Submits a single-shot `op`, returning a `Key` for the completion entry.
     fn submit<O: SingleOp<Self>>(&self, op: &mut O, waker: Waker) -> Key {
         self.with(|uring| uring.submit::<Self, _>(op, waker))

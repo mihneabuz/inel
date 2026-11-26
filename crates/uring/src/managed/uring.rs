@@ -6,8 +6,9 @@ use crate::{
     managed::{
         SelectGroup, UringProxy,
         cancellation::Cancellation,
-        completion::{CompletionResult, Completions, Key, mark_detached, parse_cqe},
+        completion::{CompletionResult, Completions, parse_cqe},
         group::BufGroups,
+        key::{Hints, Key},
         submission::{MultiOp, Op, Scratch, SingleOp},
     },
     sys::{IoUring, Sqe},
@@ -100,7 +101,7 @@ impl UringOptions {
         let comp = Completions::with_capacity(ring.sq_size());
 
         Ok(Uring {
-            core: RefCell::new(Core {
+            core: RefCell::new(UringCore {
                 ring,
                 comp,
                 active: 0,
@@ -122,10 +123,10 @@ impl UringOptions {
 /// generic over the [`UringProxy`] trait, which allows users to define their own logic to
 /// provide access to the actual [`Uring`] instance.
 pub struct Uring {
-    core: RefCell<Core>,
+    core: RefCell<UringCore>,
 }
 
-struct Core {
+struct UringCore {
     ring: IoUring,
     comp: Completions,
     active: u32,
@@ -133,24 +134,26 @@ struct Core {
     groups: BufGroups,
 }
 
-impl Core {
-    fn push<O, F>(&mut self, op: &mut O, insert: F) -> Key
-    where
-        O: Op,
-        F: FnOnce(&mut Completions, &mut Sqe) -> Key,
-    {
-        // SAFETY: Op implementation must guarantee safety
-        let key = unsafe {
+impl UringCore {
+    const SUBMISSION_QUEUE_FULL_ERROR: &str =
+        "Submission queue full. Consider configuring with more `sq_entries`.";
+    const FAILED_TO_ENTER_ERROR: &str = "Failed to enter io_uring";
+
+    fn prep<O: Op>(&mut self, op: &mut O, key: &mut Key) {
+        let mut hints = Hints::empty();
+
+        // SAFETY: guaranteed by the `Op` impl
+        unsafe {
             self.ring
                 .push_sqe(|sqe| {
-                    op.prep(sqe, &self.scratch);
-                    insert(&mut self.comp, sqe)
+                    op.prep(sqe, &mut hints, &self.scratch);
+                    key.set_hints(hints);
+                    sqe.user_data(key.as_raw());
                 })
-                .expect(Uring::SUBMISSION_QUEUE_FULL_ERROR)
-        };
+                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
+        }
 
         self.active += 1;
-        key
     }
 
     /// # Safety
@@ -164,19 +167,80 @@ impl Core {
             self.ring
                 .push_sqe(|sqe| {
                     prep(sqe);
-                    mark_detached(sqe);
+                    sqe.user_data(Key::ignored().as_raw());
                     sqe.skip_success_cqe();
                 })
-                .expect(Uring::SUBMISSION_QUEUE_FULL_ERROR)
+                .expect(Self::SUBMISSION_QUEUE_FULL_ERROR)
+        }
+    }
+
+    fn cancel(&mut self, key: &Key, handle: Cancellation, entry: bool) {
+        let pending = self.comp.cancel(key, handle, |missed| {
+            if let Some(gid) = key.hints().used_group_id() {
+                self.groups.handle_lost(gid, &missed);
+            }
+        });
+
+        if pending && entry {
+            // SAFETY: the cancel only carries the key, it references no memory
+            unsafe {
+                self.prep_detached(|sqe| {
+                    sqe.prep_cancel(key.as_raw(), IoringAsyncCancelFlags::empty());
+                });
+            };
+        }
+    }
+
+    fn wait(&mut self) {
+        self.ring
+            .submit_and_wait(1)
+            .expect(Self::FAILED_TO_ENTER_ERROR);
+
+        self.ring.for_each_cqe(|cqe| {
+            let Some((key, result)) = parse_cqe(cqe) else {
+                return;
+            };
+
+            let stored = self.comp.notify(&key, result);
+
+            if !result.has_more() {
+                self.active -= 1;
+            }
+
+            if !stored {
+                if let Some(gid) = key.hints().used_group_id() {
+                    self.groups.handle_lost(gid, &result);
+                }
+            }
+        });
+
+        self.scratch.reset();
+
+        self.groups.cleanup_dead(&self.ring);
+    }
+
+    fn shutdown(&mut self) {
+        while self.active > 0 {
+            // SAFETY: the cancel references no memory
+            unsafe {
+                self.prep_detached(|sqe| {
+                    sqe.prep_cancel(0, IoringAsyncCancelFlags::ANY);
+                });
+            };
+            self.wait();
         }
     }
 }
 
-impl Uring {
-    const SUBMISSION_QUEUE_FULL_ERROR: &str =
-        "Submission queue full. Consider configuring with more `sq_entries`.";
-    const FAILED_TO_ENTER_ERROR: &str = "Failed to enter io_uring";
+impl Drop for UringCore {
+    fn drop(&mut self) {
+        self.groups.leak_alive(&self.ring);
+        let _ = self.ring.unregister_buffers();
+        let _ = self.ring.unregister_files();
+    }
+}
 
+impl Uring {
     /// Creates a ring with the default options.
     pub fn new() -> Result<Self, Errno> {
         Self::options().build()
@@ -193,6 +257,16 @@ impl Uring {
         self.core.borrow().comp.is_empty()
     }
 
+    /// Enters the ring and waits for events.
+    pub fn wait(&self) {
+        self.core.borrow_mut().wait();
+    }
+
+    /// Attempts to shutdown the ring by cancelling all in-flight ops.
+    pub fn shutdown(&self) {
+        self.core.borrow_mut().shutdown();
+    }
+
     /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
     /// Returns a `Key` which can be used to retrieve the result of the op.
     pub(crate) fn submit<U, O>(&self, op: &mut O, waker: Waker) -> Key
@@ -200,10 +274,11 @@ impl Uring {
         U: UringProxy,
         O: SingleOp<U>,
     {
-        self.core.borrow_mut().push(op, |comp, sqe| {
-            // SAFETY: SingleOp implementation guarantees it generates exactly one CQE.
-            unsafe { comp.insert_single(sqe, waker) }
-        })
+        let mut core = self.core.borrow_mut();
+        // SAFETY: guaranteed by the `SingleOp` impl
+        let mut key = unsafe { core.comp.insert_single(waker) };
+        core.prep(op, &mut key);
+        key
     }
 
     /// Submits an SQE built by [`O::prep`] and creates a completion handler for it.
@@ -213,9 +288,10 @@ impl Uring {
         U: UringProxy,
         O: MultiOp<U>,
     {
-        self.core
-            .borrow_mut()
-            .push(op, |comp, sqe| comp.insert_multi(sqe, waker))
+        let mut core = self.core.borrow_mut();
+        let mut key = core.comp.insert_multi(waker);
+        core.prep(op, &mut key);
+        key
     }
 
     /// Submits an SQE built by `prep` without tracking it: a successful completion is
@@ -242,77 +318,11 @@ impl Uring {
     }
 
     pub(crate) fn cancel(&self, key: &Key, handle: Cancellation, entry: bool) {
-        let mut core = self.core.borrow_mut();
-        let Core { comp, groups, .. } = &mut *core;
-
-        let pending = comp.cancel(key, handle, |missed| groups.handle_lost(key, &missed));
-
-        if pending && entry {
-            // SAFETY: the cancel only carries the key, it references no memory
-            unsafe {
-                core.prep_detached(|sqe| {
-                    sqe.prep_cancel(key.as_raw(), IoringAsyncCancelFlags::empty());
-                });
-            };
-        }
-    }
-
-    pub fn wait(&self) {
-        let mut core = self.core.borrow_mut();
-        let Core {
-            ring,
-            comp,
-            active,
-            scratch,
-            groups,
-        } = &mut *core;
-
-        ring.submit_and_wait(1).expect(Self::FAILED_TO_ENTER_ERROR);
-
-        ring.for_each_cqe(|cqe| {
-            let Some((key, result)) = parse_cqe(cqe) else {
-                return;
-            };
-
-            let stored = comp.notify(&key, result);
-
-            if !result.has_more() {
-                *active -= 1;
-            }
-
-            if !stored {
-                groups.handle_lost(&key, &result);
-            }
-        });
-
-        scratch.reset();
-
-        groups.cleanup_dead(ring);
-    }
-
-    pub fn shutdown(&self) {
-        while self.core.borrow().active > 0 {
-            // SAFETY: the cancel references no memory
-            unsafe {
-                self.prep_detached(|sqe| {
-                    sqe.prep_cancel(0, IoringAsyncCancelFlags::ANY);
-                });
-            };
-            self.wait();
-        }
+        self.core.borrow_mut().cancel(key, handle, entry);
     }
 
     pub(crate) fn create_buf_group(&self, count: u16, size: u32) -> Result<SelectGroup, Errno> {
         let core = &mut *self.core.borrow_mut();
         core.groups.create(count, size, &core.ring)
-    }
-}
-
-impl Drop for Uring {
-    fn drop(&mut self) {
-        let core = self.core.get_mut();
-        core.groups.leak_alive(&core.ring);
-        let _ = core.ring.unregister_buffers();
-        let _ = core.ring.unregister_files();
     }
 }

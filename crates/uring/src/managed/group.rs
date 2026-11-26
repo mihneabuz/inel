@@ -12,7 +12,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use rustix::io::Errno;
 
 use crate::{
-    managed::{Cancellation, CompletionResult, UringProxy, UringProxyExt, completion::Key},
+    managed::{Cancellation, CompletionResult, UringProxy, UringProxyExt},
     sys::{IoBufRing, IoUring},
     utils::Slab,
 };
@@ -365,10 +365,8 @@ impl BufGroups {
 
     /// Puts the buffer of a result nobody will read (its op was cancelled)
     /// back in the ring.
-    pub fn handle_lost(&mut self, key: &Key, result: &CompletionResult) {
-        if let (Some(gid), Some(bid)) = (key.group_id(), result.buffer_id())
-            && let Some(group) = self.groups.get_mut(gid.as_slot())
-        {
+    pub fn handle_lost(&mut self, gid: BufGroupId, result: &CompletionResult) {
+        if let (Some(group), Some(bid)) = (self.groups.get_mut(gid.as_slot()), result.buffer_id()) {
             group.recycle(bid);
         }
     }

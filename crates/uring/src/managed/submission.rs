@@ -13,7 +13,8 @@ use crate::{
     managed::{
         UringProxy, UringProxyExt,
         cancellation::Cancellation,
-        completion::{CompletionResult, Key},
+        completion::CompletionResult,
+        key::{Hints, Key},
     },
     sys::Sqe,
 };
@@ -68,6 +69,11 @@ impl Scratch {
 ///   until the next submit. It can be allocated from `scratch`, which lives exactly that
 ///   long, and [`Self::cancel`] doesn't need to keep it.
 ///
+/// The [`Hints`] set in [`Self::prep`] must describe the SQE: an op selecting a buffer
+/// must set the group it selects from (the ring recycles the buffers of results nobody
+/// reads into it), and an op whose result is a new fd must say so, and which kind (the
+/// ring may close fds of results nobody reads).
+///
 /// Implementations of Op must also be careful of aliasing rules, as it is not safe for
 /// the kernel to touch memory that the op owns under strict aliasing. To avoid this
 /// possibility, owned buffers can be wrapped in an [`InFlight`], which converts it into
@@ -77,9 +83,9 @@ impl Scratch {
 /// [`InFlight`]: super::buffer::InFlight
 /// [`SelectGroup`]: super::SelectGroup
 pub unsafe trait Op {
-    /// Prep the op into `sqe`, and `scratch` can be used to allocate temporary storage
-    /// which lives until `sqe` is submitted to the kernel.
-    fn prep(&mut self, sqe: &mut Sqe, scratch: &Scratch);
+    /// Prep the op into `sqe` and describe it in `hints`. `scratch` can be used to
+    /// allocate temporary storage which lives until `sqe` is submitted to the kernel.
+    fn prep(&mut self, sqe: &mut Sqe, hints: &mut Hints, scratch: &Scratch);
 
     /// Turn the op into a [`Cancellation`] that keeps alive everything the kernel may
     /// still access, and return whether the ring should also submit an `AsyncCancel` for

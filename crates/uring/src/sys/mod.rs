@@ -44,13 +44,6 @@ pub const TIMEOUT_MULTISHOT: IoringTimeoutFlags = IoringTimeoutFlags::from_bits_
 pub struct Sqe(io_uring_sqe);
 
 impl Sqe {
-    /// An all-zeroes SQE, for tests that need one outside a ring.
-    #[cfg(test)]
-    pub(crate) const fn zeroed() -> Self {
-        // SAFETY: all-zeroes is a valid `io_uring_sqe`
-        Self(unsafe { mem::zeroed() })
-    }
-
     pub(crate) const fn init(&mut self) {
         // SAFETY: all-zeroes is a valid `io_uring_sqe`
         self.0 = unsafe { mem::zeroed() };

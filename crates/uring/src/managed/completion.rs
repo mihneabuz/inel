@@ -3,18 +3,10 @@ use core::task::Waker;
 use rustix::io_uring::*;
 
 use crate::{
-    managed::{cancellation::Cancellation, group::BufGroupId, group::BufId},
-    sys::{Cqe, Sqe},
+    managed::{cancellation::Cancellation, group::BufId, key::Key},
+    sys::Cqe,
     utils::{Deque, UnsafeSlab},
 };
-
-/// Marks a prepared SQE as detached.
-///
-/// Its completions will be skipped and we don't need to insert an entry for it in
-/// [`Completions`].
-pub const fn mark_detached(sqe: &mut Sqe) {
-    sqe.user_data(Key::IGNORE);
-}
 
 /// Decodes a CQE.
 ///
@@ -22,7 +14,8 @@ pub const fn mark_detached(sqe: &mut Sqe) {
 /// of [`Key`], which can be used to identify the SQE, and [`CompletionResult`] which
 /// contains the actual result and flags from `cqe`.
 pub const fn parse_cqe(cqe: &Cqe) -> Option<(Key, CompletionResult)> {
-    if cqe.user_data() == Key::IGNORE {
+    let key = Key::from_raw(cqe.user_data());
+    if key.should_ignore() {
         return None;
     }
 
@@ -31,7 +24,7 @@ pub const fn parse_cqe(cqe: &Cqe) -> Option<(Key, CompletionResult)> {
         flags: cqe.flags(),
     };
 
-    Some((Key::from_raw(cqe.user_data()), result))
+    Some((key, result))
 }
 
 /// The results of a CQE.
@@ -68,100 +61,6 @@ impl CompletionResult {
     }
 }
 
-const CREATES_FD: u8 = 1;
-const CREATES_DIRECT_FD: u8 = 1 << 1;
-
-pub struct Hints {
-    flags: u8,
-    gid: Option<BufGroupId>,
-}
-
-impl Hints {
-    pub fn empty() -> Self {
-        Self {
-            flags: 0,
-            gid: None,
-        }
-    }
-
-    pub fn set_creates_fd(&mut self) {
-        self.flags |= CREATES_FD;
-    }
-
-    pub fn creates_fd(&self) -> bool {
-        self.flags & CREATES_FD != 0
-    }
-
-    pub fn set_creates_direct_fd(&mut self) {
-        self.flags |= CREATES_DIRECT_FD;
-    }
-
-    pub fn creates_direct_fd(&self) -> bool {
-        self.flags & CREATES_DIRECT_FD != 0
-    }
-
-    pub fn set_uses_group_id(&mut self, gid: BufGroupId) {
-        self.gid = Some(gid);
-    }
-
-    pub fn uses_group_id(&self) -> Option<BufGroupId> {
-        self.gid
-    }
-}
-
-/// Identifies a submitted op.
-///
-/// It contains the key to the [`Completions`] slab and it's also written into the
-/// SQE's `user_data` field, so it can be retrieved from the CQE.
-///
-/// This is the only way to smuggle information between the SQE and CQE, so we also
-/// use it to store the buffer group id for buffer select ops.
-///
-/// Because we have to write it into the `user_data` field, it is required to keep it
-/// at or under 8 bytes. Right now, we are also using `repr(packed)` to keep the
-/// `SubmissionState` that holds it under 8 bytes. This is a nice optimization that
-/// we would like to keep - since it benefits all ops.
-///
-/// # Safety
-///
-/// A `Key` must not be used anymore after a using it to cancel the op or witnessing
-/// the final result CQE - since the handler it identifies will be cleaned up.
-#[repr(Rust, packed)]
-#[derive(PartialEq, Eq, Debug)]
-pub struct Key {
-    slot: u32,
-    gid: Option<BufGroupId>,
-}
-
-impl Key {
-    /// The `user_data` of ops whose completions are ignored (detached).
-    /// Valid keys should never reach this value.
-    const IGNORE: u64 = u32::MAX as u64;
-
-    /// The buffer group the op picks a buffer from, if any.
-    pub const fn group_id(&self) -> Option<BufGroupId> {
-        self.gid
-    }
-
-    /// Encodes the key as `user_data`: slot in bits 0..32, group in 32..48.
-    pub const fn as_raw(&self) -> u64 {
-        let gid = match self.gid {
-            Some(gid) => gid.as_raw(),
-            None => 0,
-        };
-
-        self.slot as u64 | (gid as u64) << 32
-    }
-
-    /// Decodes a CQE's `user_data`. Inverse of [`Self::as_raw`].
-    const fn from_raw(raw: u64) -> Self {
-        Self {
-            slot: raw as u32,
-            gid: BufGroupId::from_raw((raw >> 32) as u16),
-        }
-    }
-}
-
 /// The slab keeping the completion states.
 ///
 /// Contains the state machine for each SQE which is currently active in the kernel.
@@ -193,26 +92,19 @@ impl Completions {
     ///
     /// # Safety
     /// The SQE prepped in `sqe` must post a single CQE.
-    pub unsafe fn insert_single(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
-        self.insert(sqe, CompletionHandler::new_single(waker))
+    pub unsafe fn insert_single(&mut self, waker: Waker) -> Key {
+        self.insert(CompletionHandler::new_single(waker))
     }
 
     /// Registers the multi-shot op prepared in `sqe` and sets its `user_data`.
     /// Must be called after prep, so the key records the buffer group the SQE selects from.
     /// Unlike [`Self::insert_single`], this is safe since it can handle any number of CQEs.
-    pub fn insert_multi(&mut self, sqe: &mut Sqe, waker: Waker) -> Key {
-        self.insert(sqe, CompletionHandler::new_multi(waker))
+    pub fn insert_multi(&mut self, waker: Waker) -> Key {
+        self.insert(CompletionHandler::new_multi(waker))
     }
 
-    fn insert(&mut self, sqe: &mut Sqe, handler: CompletionHandler) -> Key {
-        let key = Key {
-            slot: self.slab.insert(handler),
-            gid: sqe.buf_group().and_then(BufGroupId::from_raw),
-        };
-
-        sqe.user_data(key.as_raw());
-
-        key
+    fn insert(&mut self, handler: CompletionHandler) -> Key {
+        Key::from_slot(self.slab.insert(handler))
     }
 
     fn with_completion<T, F>(&mut self, key: &Key, fun: F) -> T
@@ -224,10 +116,10 @@ impl Completions {
         // guaranteed today by the unsafe boundaries. We would have to either add
         // the explitic contract somwhere or move to a safer design where keys are
         // passed by value.
-        let completion = unsafe { self.slab.get_mut(key.slot) };
+        let completion = unsafe { self.slab.get_mut(key.as_slot()) };
         let value = fun(completion);
         if completion.is_finished() {
-            unsafe { self.slab.remove(key.slot) };
+            unsafe { self.slab.remove(key.as_slot()) };
         }
         value
     }

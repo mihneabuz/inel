@@ -13,6 +13,7 @@ use crate::{
         buffer::{InFlight, IoBuf, IoBufMut},
         cancellation::Cancellation,
         completion::CompletionResult,
+        key::Hints,
         submission::{Op, Scratch, SingleOp},
     },
     sys::{FILE_INDEX_ALLOC, Sqe},
@@ -88,7 +89,7 @@ impl<'a, B: IoBufMut> Read<'a, B, At> {
 // SAFETY: the SQE only references the buffer, which lives behind `InFlight`
 // and is handed over on cancel
 unsafe impl<B: IoBufMut, O: Offset> Op for Read<'_, B, O> {
-    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
+    fn prep(&mut self, sqe: &mut Sqe, _hints: &mut Hints, _scratch: &Scratch) {
         let (ptr, len) = self.buf.raw_buf_mut();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
         sqe.prep_read(self.src.raw_fd(), ptr, len, self.offset.position());
@@ -144,7 +145,7 @@ impl<'a, B: IoBuf> Write<'a, B, At> {
 // SAFETY: the SQE only references the buffer, which lives behind `InFlight`
 // and is handed over on cancel
 unsafe impl<B: IoBuf, O: Offset> Op for Write<'_, B, O> {
-    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
+    fn prep(&mut self, sqe: &mut Sqe, _hints: &mut Hints, _scratch: &Scratch) {
         let (ptr, len) = self.buf.raw_buf();
         let len = u32::try_from(len).unwrap_or(u32::MAX);
         sqe.prep_write(self.src.raw_fd(), ptr, len, self.offset.position());
@@ -205,12 +206,13 @@ impl<'a> ReadSelect<'a, At> {
 // SAFETY: the SQE references no memory, the kernel picks a buffer from the
 // group, whose handle is handed over on cancel
 unsafe impl<O: Offset> Op for ReadSelect<'_, O> {
-    fn prep(&mut self, sqe: &mut Sqe, _scratch: &Scratch) {
+    fn prep(&mut self, sqe: &mut Sqe, hints: &mut Hints, _scratch: &Scratch) {
         let size = self.group.buffer_size();
         let offset = self.offset.position();
         sqe.prep_read(self.src.raw_fd(), ptr::null_mut(), size, offset);
         sqe.add_flag(self.src.flags());
         sqe.buffer_select(self.group.id().as_raw());
+        hints.set_used_group_id(self.group.id());
     }
 
     fn cancel(self) -> (Cancellation, bool) {
@@ -264,13 +266,14 @@ impl<'a> Open<'a> {
 // SAFETY: the SQE only references the path's copy in scratch, which the
 // kernel reads during submit, so the borrowed path only has to live for prep
 unsafe impl Op for Open<'_> {
-    fn prep(&mut self, sqe: &mut Sqe, scratch: &Scratch) {
+    fn prep(&mut self, sqe: &mut Sqe, hints: &mut Hints, scratch: &Scratch) {
         sqe.prep_openat(
             CWD.as_raw_fd(),
             scratch.alloc_cstr(self.path),
             self.flags,
             self.mode.bits(),
         );
+        hints.set_creates_raw_fd();
     }
 }
 
@@ -312,7 +315,7 @@ impl<'a> OpenDirect<'a> {
 // SAFETY: the SQE only references the path's copy in scratch, which the
 // kernel reads during submit, so the borrowed path only has to live for prep
 unsafe impl Op for OpenDirect<'_> {
-    fn prep(&mut self, sqe: &mut Sqe, scratch: &Scratch) {
+    fn prep(&mut self, sqe: &mut Sqe, hints: &mut Hints, scratch: &Scratch) {
         sqe.prep_openat(
             CWD.as_raw_fd(),
             scratch.alloc_cstr(self.path),
@@ -320,6 +323,7 @@ unsafe impl Op for OpenDirect<'_> {
             self.mode.bits(),
         );
         sqe.set_file_index(FILE_INDEX_ALLOC);
+        hints.set_creates_direct_fd();
     }
 }
 
