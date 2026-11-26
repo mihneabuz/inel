@@ -1,7 +1,7 @@
 // Opening files needs -Zmiri-disable-isolation, so these don't run under miri.
 #![cfg(not(miri))]
 
-use std::{ffi::CStr, fs, marker::PhantomData, path::PathBuf, pin::pin};
+use std::{ffi::CStr, fs, marker::PhantomData, path::PathBuf, pin::pin, task::Context};
 
 use rustix::{
     fs::{Mode, OFlags},
@@ -9,7 +9,7 @@ use rustix::{
 };
 
 use crate::managed::{
-    DirectFd, IoSrc, Op, OpenDirect, RawSrc, Read, Write,
+    DirectFd, IoSrc, Op, OpenDirect, RawSrc, Read, UringProxy, Write,
     tests::{TestRing, TestWaker, block_on},
 };
 
@@ -167,4 +167,40 @@ fn shutdown_with_open_fd() {
     let ring = TestRing::new();
     let _fd = open(&ring, CARGO_TOML, OFlags::RDONLY).unwrap();
     crate::managed::UringProxy::shutdown(&ring);
+}
+
+/// Submits an open into the table and drops it unread, either once its result
+/// is stored or right away (racing the open against its cancel).
+fn open_and_lose(ring: &TestRing, wait_for_result: bool) {
+    let mut fut =
+        Box::pin(OpenDirect::new(CARGO_TOML, OFlags::RDONLY, Mode::empty()).run_on(ring.clone()));
+    let tw = TestWaker::new();
+    assert!(
+        fut.as_mut()
+            .poll(&mut Context::from_waker(&tw.waker()))
+            .is_pending()
+    );
+    while wait_for_result && !tw.was_woken() {
+        ring.wait();
+    }
+    drop(fut);
+}
+
+#[test]
+fn lost_result_closes_slot() {
+    let ring = TestRing::with_direct_files(1);
+    open_and_lose(&ring, true);
+    ring.drain();
+
+    // the only slot comes back
+    open_retrying(&ring, CARGO_TOML);
+}
+
+#[test]
+fn dropped_before_completion_closes_slot() {
+    let ring = TestRing::with_direct_files(1);
+    open_and_lose(&ring, false);
+    ring.drain();
+
+    open_retrying(&ring, CARGO_TOML);
 }

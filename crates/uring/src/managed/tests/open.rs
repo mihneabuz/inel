@@ -1,7 +1,13 @@
 // Opening files needs -Zmiri-disable-isolation, so these don't run under miri.
 #![cfg(not(miri))]
 
-use std::{ffi::CStr, fs, path::PathBuf, pin::pin};
+use std::{
+    ffi::{CStr, CString},
+    fs,
+    path::{Path, PathBuf},
+    pin::pin,
+    task::Context,
+};
 
 use rustix::{
     fs::{Mode, OFlags},
@@ -9,8 +15,8 @@ use rustix::{
 };
 
 use crate::managed::{
-    IoSrc, Op, Open, Read, UringFd, Write,
-    tests::{TestRing, block_on},
+    IoSrc, Op, Open, Read, UringFd, UringProxy, Write,
+    tests::{Nop, TestRing, TestWaker, block_on},
 };
 
 const CARGO_TOML: &CStr = c"Cargo.toml";
@@ -80,4 +86,90 @@ fn shutdown_with_open_fd() {
     let ring = TestRing::new();
     let _fd = open(&ring, CARGO_TOML, OFlags::RDONLY).unwrap();
     crate::managed::UringProxy::shutdown(&ring);
+}
+
+/// A file only this test opens, so we can tell whether its fd leaked even with
+/// other tests opening files in parallel.
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("inel-{}-{name}", std::process::id()));
+        fs::write(&path, b"").unwrap();
+        Self(fs::canonicalize(path).unwrap())
+    }
+
+    fn cpath(&self) -> CString {
+        CString::new(self.0.clone().into_os_string().into_encoded_bytes()).unwrap()
+    }
+
+    /// Whether any fd of the process refers to the file.
+    fn is_open(&self) -> bool {
+        fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| fs::read_link(entry.ok()?.path()).ok())
+            .any(|target| Path::new(&target) == self.0)
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Submits an open of `path` and drops it unread, either once its result is
+/// stored or right away (racing the open against its cancel).
+fn open_and_lose(ring: &TestRing, path: &CStr, wait_for_result: bool) {
+    let mut fut = Box::pin(Open::new(path, OFlags::RDONLY, Mode::empty()).run_on(ring.clone()));
+    let tw = TestWaker::new();
+    assert!(
+        fut.as_mut()
+            .poll(&mut Context::from_waker(&tw.waker()))
+            .is_pending()
+    );
+    while wait_for_result && !tw.was_woken() {
+        ring.wait();
+    }
+    drop(fut);
+}
+
+/// Waits until the ring closed `file`'s lost fd. The close is submitted with
+/// the next op, and may run after it in the fake.
+fn assert_closed(ring: &TestRing, file: &TempFile) {
+    ring.drain();
+    for _ in 0..100 {
+        if !file.is_open() {
+            return;
+        }
+        block_on(ring, pin!(Nop.run_on(ring.clone())));
+    }
+    panic!("the lost fd was never closed");
+}
+
+#[test]
+fn lost_result_closes_fd() {
+    let ring = TestRing::new();
+    let file = TempFile::new("lost_result_closes_fd");
+    open_and_lose(&ring, &file.cpath(), true);
+    assert_closed(&ring, &file);
+}
+
+#[test]
+fn dropped_before_completion_closes_fd() {
+    let ring = TestRing::new();
+    let file = TempFile::new("dropped_before_completion_closes_fd");
+    open_and_lose(&ring, &file.cpath(), false);
+    assert_closed(&ring, &file);
+}
+
+#[test]
+fn ring_drop_closes_lost_fd() {
+    let ring = TestRing::new();
+    let file = TempFile::new("ring_drop_closes_lost_fd");
+    open_and_lose(&ring, &file.cpath(), true);
+    assert!(file.is_open());
+    ring.shutdown();
+    drop(ring);
+    assert!(!file.is_open());
 }

@@ -106,6 +106,7 @@ impl UringOptions {
                 comp,
                 active: 0,
                 scratch: Scratch::default(),
+                lost_fds: LostFdList::new(),
                 groups: BufGroups::new(),
             }),
         })
@@ -131,6 +132,7 @@ struct UringCore {
     comp: Completions,
     active: u32,
     scratch: Scratch,
+    lost_fds: LostFdList,
     groups: BufGroups,
 }
 
@@ -179,6 +181,10 @@ impl UringCore {
             if let Some(gid) = key.hints().used_group_id() {
                 self.groups.handle_lost(gid, &missed);
             }
+
+            if key.hints().creates_any_fd() {
+                self.lost_fds.push_lost(&key.hints(), &missed);
+            }
         });
 
         if pending && entry {
@@ -192,6 +198,8 @@ impl UringCore {
     }
 
     fn wait(&mut self) {
+        self.close_lost_fds();
+
         self.ring
             .submit_and_wait(1)
             .expect(Self::FAILED_TO_ENTER_ERROR);
@@ -210,6 +218,10 @@ impl UringCore {
             if !stored {
                 if let Some(gid) = key.hints().used_group_id() {
                     self.groups.handle_lost(gid, &result);
+                }
+
+                if key.hints().creates_any_fd() {
+                    self.lost_fds.push_lost(&key.hints(), &result);
                 }
             }
         });
@@ -230,10 +242,20 @@ impl UringCore {
             self.wait();
         }
     }
+
+    fn close_lost_fds(&mut self) {
+        while let Some(lost) = self.lost_fds.pop() {
+            // SAFETY: the close references no memory
+            unsafe {
+                self.prep_detached(|sqe| lost.prep_close(sqe));
+            }
+        }
+    }
 }
 
 impl Drop for UringCore {
     fn drop(&mut self) {
+        self.lost_fds.close_all_sync();
         self.groups.leak_alive(&self.ring);
         let _ = self.ring.unregister_buffers();
         let _ = self.ring.unregister_files();
@@ -324,5 +346,55 @@ impl Uring {
     pub(crate) fn create_buf_group(&self, count: u16, size: u32) -> Result<SelectGroup, Errno> {
         let core = &mut *self.core.borrow_mut();
         core.groups.create(count, size, &core.ring)
+    }
+}
+
+enum LostFd {
+    Raw(i32),
+    Direct(u32),
+}
+
+impl LostFd {
+    const fn prep_close(&self, sqe: &mut Sqe) {
+        match *self {
+            Self::Raw(fd) => sqe.prep_close(fd),
+            Self::Direct(fd) => sqe.prep_close_direct(fd),
+        }
+    }
+}
+
+struct LostFdList {
+    list: Vec<LostFd>,
+}
+
+impl LostFdList {
+    const fn new() -> Self {
+        Self { list: Vec::new() }
+    }
+
+    #[cold]
+    fn push_lost(&mut self, hints: &Hints, result: &CompletionResult) {
+        let raw = result.result();
+        if raw < 0 {
+            return;
+        }
+
+        if hints.creates_raw_fd() {
+            self.list.push(LostFd::Raw(raw));
+        } else if hints.creates_direct_fd() {
+            self.list.push(LostFd::Direct(raw as u32))
+        }
+    }
+
+    fn pop(&mut self) -> Option<LostFd> {
+        self.list.pop()
+    }
+
+    fn close_all_sync(&mut self) {
+        for lost in self.list.drain(..) {
+            if let LostFd::Raw(fd) = lost {
+                unsafe { rustix::io::close(fd) };
+            }
+        }
     }
 }

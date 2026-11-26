@@ -9,49 +9,6 @@ const FLAGS_OFFSET: u64 = BUF_GROUP_OFFSET + 16;
 const CREATES_RAW_FD_FLAG: u64 = 1 << FLAGS_OFFSET;
 const CREATES_DIRECT_FD_FLAG: u64 = 1 << (FLAGS_OFFSET + 1);
 
-#[repr(transparent)]
-#[derive(PartialEq, Eq, Debug)]
-pub struct Hints(u64);
-
-impl Hints {
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    pub const fn set_creates_raw_fd(&mut self) {
-        self.0 |= CREATES_RAW_FD_FLAG;
-    }
-
-    pub const fn set_creates_direct_fd(&mut self) {
-        self.0 |= CREATES_DIRECT_FD_FLAG;
-    }
-
-    pub const fn creates_any_fd(&self) -> bool {
-        self.0 & (CREATES_DIRECT_FD_FLAG | CREATES_RAW_FD_FLAG) != 0
-    }
-
-    pub const fn creates_raw_fd(&self) -> bool {
-        self.0 & CREATES_RAW_FD_FLAG != 0
-    }
-
-    pub const fn creates_direct_fd(&self) -> bool {
-        self.0 & CREATES_DIRECT_FD_FLAG != 0
-    }
-
-    pub const fn set_used_group_id(&mut self, gid: BufGroupId) {
-        self.0 |= (gid.as_raw() as u64) << BUF_GROUP_OFFSET;
-    }
-
-    pub const fn used_group_id(&self) -> Option<BufGroupId> {
-        if self.0 & BUF_GROUP_ID_MASK == 0 {
-            None
-        } else {
-            let raw = (self.0 & BUF_GROUP_ID_MASK) >> BUF_GROUP_OFFSET;
-            BufGroupId::from_raw(raw as u16)
-        }
-    }
-}
-
 /// Identifies a submitted op.
 ///
 /// It contains the key to the [`Completions`] slab and it's also written into the
@@ -104,5 +61,56 @@ impl Key {
 
     pub const fn hints(&self) -> Hints {
         Hints(self.0)
+    }
+}
+
+/// Hints used to smuggle information about the op.
+///
+/// The CQE's `user_data` field is the only way to smuggle information from the SQE,
+/// so we use this type to allow ops to add hints to the [`Key`], which the managed
+/// [`Uring`] can then use to ensure resources are cleaned up on lost results.
+///
+/// All hints must fit in the upper 32 bits of the inner u64, as the rest are used
+/// for the index into the [`Completions`] slab.
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct Hints(u64);
+
+impl Hints {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn set_creates_raw_fd(&mut self) {
+        self.0 |= CREATES_RAW_FD_FLAG;
+    }
+
+    pub const fn set_creates_direct_fd(&mut self) {
+        self.0 |= CREATES_DIRECT_FD_FLAG;
+    }
+
+    pub const fn creates_any_fd(&self) -> bool {
+        self.0 & (CREATES_DIRECT_FD_FLAG | CREATES_RAW_FD_FLAG) != 0
+    }
+
+    pub const fn creates_raw_fd(&self) -> bool {
+        self.0 & CREATES_RAW_FD_FLAG != 0
+    }
+
+    pub const fn creates_direct_fd(&self) -> bool {
+        self.0 & CREATES_DIRECT_FD_FLAG != 0
+    }
+
+    pub const fn set_used_group_id(&mut self, gid: BufGroupId) {
+        self.0 |= (gid.as_raw() as u64) << BUF_GROUP_OFFSET;
+    }
+
+    pub const fn used_group_id(&self) -> Option<BufGroupId> {
+        if self.0 & BUF_GROUP_ID_MASK == 0 {
+            None
+        } else {
+            let raw = (self.0 & BUF_GROUP_ID_MASK) >> BUF_GROUP_OFFSET;
+            BufGroupId::from_raw(raw as u16)
+        }
     }
 }

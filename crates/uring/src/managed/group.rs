@@ -365,6 +365,7 @@ impl BufGroups {
 
     /// Puts the buffer of a result nobody will read (its op was cancelled)
     /// back in the ring.
+    #[cold]
     pub fn handle_lost(&mut self, gid: BufGroupId, result: &CompletionResult) {
         if let (Some(group), Some(bid)) = (self.groups.get_mut(gid.as_slot()), result.buffer_id()) {
             group.recycle(bid);

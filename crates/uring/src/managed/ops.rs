@@ -244,9 +244,6 @@ unsafe impl<U: UringProxy, O: Offset> SingleOp<U> for ReadSelect<'_, O> {
 /// Opens a file (relative to the current directory) as a [`UringFd`].
 ///
 /// `O_CLOEXEC` is always added, like `std` does.
-///
-/// Dropping the submission after the kernel opened the file leaks the fd: the
-/// result is discarded unread.
 pub struct Open<'a> {
     path: &'a CStr,
     flags: OFlags,
@@ -293,9 +290,6 @@ unsafe impl<U: UringProxy> SingleOp<U> for Open<'_> {
 ///
 /// `O_CLOEXEC` is ignored: direct descriptors aren't inherited anyway. Fails
 /// with `ENFILE` when the table is full.
-///
-/// Dropping the submission after the kernel opened the file leaks the slot
-/// (until the ring is dropped): the result is discarded unread.
 pub struct OpenDirect<'a> {
     path: &'a CStr,
     flags: OFlags,
