@@ -4,7 +4,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
-use crate::managed::cancellation::Cancellation;
+use crate::managed::{UringProxy, cancellation::Cancellation};
 
 /// A buffer that can be converted to/from a raw form.
 ///
@@ -49,8 +49,17 @@ pub unsafe trait RawBuf: Sized {
     /// Turn `raw` into a [`Cancellation`] which releases the buffer once the
     /// kernel is done with it. This must not access the buffer itself.
     fn raw_cancel(raw: Self::Raw) -> Cancellation;
+
+    /// If the buffer was registered in a ring, returns it's id, otherwise `None`.
+    fn raw_fixed_id(_raw: Self::Raw) -> Option<FixedBufId> {
+        None
+    }
 }
 
+type FixedBufId = u16;
+
+/// [`Box`] has strict ownership of it's allocation, so we need to convert it
+/// to a [`NonNull`] before we can run any ops with it.
 unsafe impl<T> RawBuf for Box<[T]> {
     type Raw = NonNull<[T]>;
 
@@ -69,97 +78,54 @@ unsafe impl<T> RawBuf for Box<[T]> {
     }
 }
 
-unsafe impl RawBuf for &'static [u8] {
-    type Raw = Self;
+/// A buffer with a self raw form.
+///
+/// It's just meant as a simpler way to get a `RawBuf` impl, for buffers which don't
+/// have strict aliasing rules. The automatically generated `RawBuf` impl will have
+/// `Raw = ManuallyDrop<Self>` which guards aginst double dropping.
+///
+/// Seems like this approach is sufficient for all buffer types but [`Box`].
+trait RawBufSelf: Sized {
+    fn cancel(self) -> Cancellation;
+}
+
+unsafe impl<T: RawBufSelf> RawBuf for T {
+    type Raw = ManuallyDrop<T>;
 
     fn into_raw(self) -> Self::Raw {
-        self
+        ManuallyDrop::new(self)
     }
 
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        raw
+    unsafe fn from_raw(mut raw: Self::Raw) -> Self {
+        unsafe { ManuallyDrop::take(&mut raw) }
     }
 
-    fn raw_cancel(_raw: Self::Raw) -> Cancellation {
-        Cancellation::default()
-    }
-}
-
-unsafe impl RawBuf for &'static str {
-    type Raw = Self;
-
-    fn into_raw(self) -> Self::Raw {
-        self
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        raw
-    }
-
-    fn raw_cancel(_raw: Self::Raw) -> Cancellation {
-        Cancellation::default()
+    fn raw_cancel(mut raw: Self::Raw) -> Cancellation {
+        unsafe { ManuallyDrop::take(&mut raw).cancel() }
     }
 }
 
-/// Raw parts of a `Vec<u8>` which can also be used for `Vec`-like buffers.
-pub struct RawVec {
-    ptr: NonNull<u8>,
-    len: usize,
-    cap: usize,
-}
-
-impl RawVec {
-    fn new(vec: Vec<u8>) -> Self {
-        let mut vec = ManuallyDrop::new(vec);
-        Self {
-            // SAFETY: `vec` is a valid `Vec<u8>`, so it can't be null.
-            ptr: unsafe { NonNull::new_unchecked(vec.as_mut_ptr()) },
-            len: vec.len(),
-            cap: vec.capacity(),
-        }
-    }
-
-    fn into_vec(self) -> Vec<u8> {
-        // SAFETY: `self` comes from a valid `Vec<u8>`.
-        unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.cap) }
-    }
-
-    const fn into_cancel(self) -> Cancellation {
-        // SAFETY: `self` comes from a valid `Vec<u8>`.
-        unsafe { Cancellation::from_assume_vec(self.ptr.as_ptr(), self.cap) }
+impl RawBufSelf for &'static [u8] {
+    fn cancel(self) -> Cancellation {
+        Cancellation::empty()
     }
 }
 
-unsafe impl RawBuf for Vec<u8> {
-    type Raw = RawVec;
-
-    fn into_raw(self) -> Self::Raw {
-        RawVec::new(self)
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        raw.into_vec()
-    }
-
-    fn raw_cancel(raw: Self::Raw) -> Cancellation {
-        raw.into_cancel()
+impl RawBufSelf for &'static str {
+    fn cancel(self) -> Cancellation {
+        Cancellation::empty()
     }
 }
 
-unsafe impl RawBuf for String {
-    type Raw = RawVec;
-
-    fn into_raw(self) -> Self::Raw {
-        RawVec::new(self.into_bytes())
+impl RawBufSelf for Vec<u8> {
+    fn cancel(self) -> Cancellation {
+        self.into()
     }
+}
 
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        // SAFETY: the bytes came from a `String` and were not written to
-        unsafe { Self::from_utf8_unchecked(raw.into_vec()) }
-    }
-
-    fn raw_cancel(raw: Self::Raw) -> Cancellation {
-        raw.into_cancel()
+impl RawBufSelf for String {
+    fn cancel(self) -> Cancellation {
+        self.into()
     }
 }
 
@@ -176,11 +142,6 @@ unsafe impl RawBuf for String {
 pub unsafe trait IoBuf: RawBuf {
     /// The pointer and size of the raw form.
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize);
-
-    /// Restricts the buffer to `range` of its initialized bytes.
-    fn view<R: RangeBounds<usize>>(self, range: R) -> View<Self, R> {
-        View::new(self, range)
-    }
 }
 
 /// A buffer that can be used for read ops, where the kernel writes into it.
@@ -212,6 +173,15 @@ pub unsafe trait IoBufMut: RawBuf {
     unsafe fn set_init(raw: &mut Self::Raw, n: usize) {}
 }
 
+pub trait IoBufExt: RawBuf {
+    /// Restricts the buffer to `range` of its initialized bytes.
+    fn view<R: RangeBounds<usize>>(self, range: R) -> View<Self, R> {
+        View::new(self, range)
+    }
+}
+
+impl<T: RawBuf> IoBufExt for T {}
+
 unsafe impl IoBuf for &'static [u8] {
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
         (raw.as_ptr(), raw.len())
@@ -239,7 +209,7 @@ unsafe impl IoBufMut for Box<[u8]> {
 /// Writes send `[0..len)`.
 unsafe impl IoBuf for Vec<u8> {
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.ptr.as_ptr(), raw.len)
+        (raw.as_ptr(), raw.len())
     }
 }
 
@@ -248,18 +218,18 @@ unsafe impl IoBuf for Vec<u8> {
 /// discarded). To append instead, use [`Accumulating`].
 unsafe impl IoBufMut for Vec<u8> {
     fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize) {
-        (raw.ptr.as_ptr(), raw.cap)
+        (raw.as_ptr() as *mut _, raw.capacity())
     }
 
     unsafe fn set_init(raw: &mut Self::Raw, n: usize) {
-        raw.len = n;
+        unsafe { raw.set_len(n) };
     }
 }
 
 /// Only for writes, reads could produce invalid UTF-8.
 unsafe impl IoBuf for String {
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.ptr.as_ptr(), raw.len)
+        (raw.as_ptr(), raw.len())
     }
 }
 
@@ -433,36 +403,30 @@ impl DerefMut for Accumulating {
     }
 }
 
-unsafe impl RawBuf for Accumulating {
-    type Raw = RawVec;
-
-    fn into_raw(self) -> Self::Raw {
-        RawVec::new(self.0)
-    }
-
-    unsafe fn from_raw(raw: Self::Raw) -> Self {
-        Self(raw.into_vec())
-    }
-
-    fn raw_cancel(raw: Self::Raw) -> Cancellation {
-        raw.into_cancel()
+impl RawBufSelf for Accumulating {
+    fn cancel(self) -> Cancellation {
+        self.0.into()
     }
 }
 
 unsafe impl IoBuf for Accumulating {
     fn raw_buf(raw: &Self::Raw) -> (*const u8, usize) {
-        (raw.ptr.as_ptr(), raw.len)
+        (raw.0.as_ptr(), raw.0.len())
     }
 }
 
 unsafe impl IoBufMut for Accumulating {
     fn raw_buf_mut(raw: &Self::Raw) -> (*mut u8, usize) {
         // SAFETY: `len <= cap`, so the pointer stays in (or one past) the buffer
-        (unsafe { raw.ptr.as_ptr().add(raw.len) }, raw.cap - raw.len)
+        (
+            unsafe { raw.0.as_ptr().add(raw.len()) as *mut _ },
+            raw.capacity() - raw.len(),
+        )
     }
 
     unsafe fn set_init(raw: &mut Self::Raw, n: usize) {
-        raw.len += n;
+        let new_len = raw.0.len() + n;
+        unsafe { raw.0.set_len(new_len) };
     }
 }
 
@@ -530,7 +494,7 @@ impl<B: IoBufMut> InFlight<B> {
 
 impl<B: RawBuf> Drop for InFlight<B> {
     fn drop(&mut self) {
-        // only reached for an op that was never submitted or cancelled.
+        // SAFETY: self has ownership of the buffer and was just dropped.
         drop(unsafe { B::from_raw(ptr::read(&self.raw)) });
     }
 }
